@@ -159,7 +159,15 @@ export default function ChhathCountdown() {
   return (
     <div
       className="flex flex-col items-center gap-2 text-center select-none"
-      style={{ minWidth: 160 }}
+      style={{
+        minWidth: 160,
+        background: "rgba(0,0,0,0.50)",
+        backdropFilter: "blur(10px)",
+        WebkitBackdropFilter: "blur(10px)",
+        border: "1px solid rgba(249,115,22,0.22)",
+        borderRadius: "16px",
+        padding: "10px 16px",
+      }}
     >
       {/* Header */}
       <p

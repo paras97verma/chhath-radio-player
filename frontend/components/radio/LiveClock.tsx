@@ -89,13 +89,21 @@ export default function LiveClock() {
           -webkit-text-fill-color: transparent;
           background-clip: text;
           filter: drop-shadow(0 1px 0 rgba(120,40,0,0.45));
-          opacity: 0.65;
+          opacity: 1;
           font-weight: 600;
           letter-spacing: 0.06em;
         }
       `}</style>
       <div
         data-testid="live-clock"
+        style={{
+          background: "rgba(0,0,0,0.50)",
+          backdropFilter: "blur(10px)",
+          WebkitBackdropFilter: "blur(10px)",
+          border: "1px solid rgba(249,115,22,0.22)",
+          borderRadius: "16px",
+          padding: "8px 14px",
+        }}
         className="text-center tabular-nums select-none"
         aria-live="off"
         aria-label={`Current time: ${timeStr}, date: ${dateStr}`}
@@ -114,7 +122,8 @@ export default function LiveClock() {
         {/* Format badge */}
         <span
           data-testid="clock-format-badge"
-          className="ml-2 text-orange-200/30 text-xs font-mono align-middle"
+          className="ml-2 text-xs font-mono align-middle"
+          style={{ color: "rgba(255,255,255,0.5)" }}
           aria-hidden="true"
         >
           {modeLabel}

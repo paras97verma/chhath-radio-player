@@ -20,7 +20,7 @@ import LiveClock from "@/components/radio/LiveClock";
 import ChhathCountdown from "@/components/radio/ChhathCountdown";
 import ChhathFacts from "@/components/radio/ChhathFacts";
 import GeometricBg from "@/components/radio/GeometricBg";
-import GhatAmbience from "@/components/radio/GhatAmbience";
+
 import { UpiDonateModal } from "@/components/radio/Footer";
 
 const LINKEDIN_URL = "https://linkedin.com/in/parasverma";
@@ -127,11 +127,6 @@ export default function PageClient() {
       {/* Layer 20: Top-right — live clock */}
       <div className="absolute top-4 right-4 z-20">
         <LiveClock />
-      </div>
-
-      {/* Layer 20: Bottom-right — Ghat Ambience toggle (above footer) */}
-      <div className="absolute bottom-[82px] right-4 z-20">
-        <GhatAmbience />
       </div>
 
       {/* Layer 20: Center-bottom — Chhath facts ticker (above player) */}
