@@ -140,12 +140,20 @@ export default function GhatAmbience() {
         ctxRef.current = new AudioContext();
       }
       ctx = ctxRef.current;
-      // resume() is async but the gesture is already captured by the sync new AudioContext() above
+      // resume() must be awaited — sources started into a suspended context produce silence.
+      // Awaiting ctx.resume() is safe here: the user gesture is already captured by the
+      // synchronous new AudioContext() call above, and browsers whitelist ctx.resume() for await.
       if (ctx.state === "suspended") {
-        ctx.resume().catch(() => {}); // fire-and-forget; audio will play once resumed
+        await ctx.resume();
       }
     } catch (err) {
-      console.error("[GhatAmbience] AudioContext creation failed:", err);
+      console.error("[GhatAmbience] AudioContext creation/resume failed:", err);
+      return;
+    }
+
+    // Guard: if context still isn't running after resume, bail out
+    if (ctxRef.current?.state !== "running") {
+      console.warn("[GhatAmbience] AudioContext not running after resume, aborting");
       return;
     }
 
