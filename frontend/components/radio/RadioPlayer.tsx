@@ -17,8 +17,6 @@ import { fetchRadioQueue } from "@/lib/api";
 import { YouTubeIFramePlayerAdapter } from "@/lib/youtube-adapter";
 import { useRadioStore } from "@/lib/radio-store";
 import type { Song } from "@/lib/api";
-import ShareButton from "@/components/radio/ShareButton";
-
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
 const IconPrev = () => (
@@ -628,8 +626,6 @@ export default function RadioPlayer() {
                 <IconList />
               </button>
 
-              {/* Share */}
-              <ShareButton />
             </div>
           </div>
 

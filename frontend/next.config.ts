@@ -39,7 +39,7 @@ const nextConfig: NextConfig = {
               "default-src 'self'",
               "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://www.youtube.com https://s.ytimg.com",
               "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
-              "img-src 'self' data: https://i.ytimg.com https://api.qrserver.com",
+              "img-src 'self' data: https://i.ytimg.com https://img.youtube.com https://api.qrserver.com",
               // Allow API calls from the browser to the backend (both localhost and Docker hostname)
               "connect-src 'self' http://localhost:8000 http://chhath_backend:8000",
               "media-src 'self' blob:",

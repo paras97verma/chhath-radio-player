@@ -74,8 +74,10 @@ export default function ShareModal({ onClose }: ShareModalProps) {
   const siteUrl = SITE_URL;
   const songTitle = currentSong?.title ?? "Chhath Geet";
   const songArtist = currentSong?.artist ?? "Various Artists";
+  // Use the /yt-thumb proxy so the image is served from the same origin.
+  // This prevents CORS canvas taint when html-to-image captures the ShareCard.
   const albumArtUrl = currentSong?.youtube_video_id
-    ? `https://img.youtube.com/vi/${currentSong.youtube_video_id}/hqdefault.jpg`
+    ? `/yt-thumb?v=${currentSong.youtube_video_id}`
     : null;
 
   // Fetch listener count once on open
@@ -91,11 +93,14 @@ export default function ShareModal({ onClose }: ShareModalProps) {
     setGenerating(true);
     setError(false);
     try {
-      // Give the DOM a tick to fully render the card
-      await new Promise((r) => setTimeout(r, 120));
+      // Give the DOM time to fully render the card (fonts, images, layout)
+      await new Promise((r) => setTimeout(r, 300));
       const png = await toPng(cardRef.current, {
         pixelRatio: 2,
         cacheBust: true,
+        // Ensure same-origin images are included; cross-origin ones are already
+        // proxied through /yt-thumb so this is just a safety net
+        includeQueryParams: true,
       });
       setDataUrl(png);
     } catch (e) {
@@ -270,11 +275,12 @@ export default function ShareModal({ onClose }: ShareModalProps) {
             </div>
           </div>
 
-          {/* Card preview area */}
+          {/* Card preview area — portrait 9:16 ratio to match ShareCard */}
           <div
             style={{
               width: "100%",
-              minHeight: 200,
+              minHeight: 460,
+              aspectRatio: "9 / 16",
               borderRadius: 16,
               overflow: "hidden",
               border: "1px solid rgba(249,115,22,0.15)",
