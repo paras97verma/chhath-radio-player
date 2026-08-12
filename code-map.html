@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Chhath Radio - Code Map</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0a1e;color:#e2e8f0;font-family:'Segoe UI',system-ui,sans-serif;overflow:hidden;height:100vh;width:100vw}
+#topbar{position:fixed;top:0;left:0;right:0;height:52px;background:rgba(10,10,30,.97);border-bottom:1px solid #2d2d5e;display:flex;align-items:center;padding:0 20px;gap:16px;z-index:1000;backdrop-filter:blur(8px)}
+#topbar h1{font-size:16px;font-weight:700;color:#f59e0b;letter-spacing:.5px}
+#topbar .sub{font-size:12px;color:#64748b}
+.legend{display:flex;gap:12px;margin-left:auto;align-items:center;flex-wrap:wrap}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:#94a3b8}
+.legend-dot{width:10px;height:10px;border-radius:50%}
+#filter-bar{position:fixed;top:62px;left:16px;display:flex;flex-direction:column;gap:6px;z-index:999}
+.filter-btn{padding:5px 14px;border-radius:20px;border:1px solid #2d2d5e;background:rgba(15,15,40,.92);color:#94a3b8;font-size:11px;cursor:pointer;transition:all .2s;text-align:left}
+.filter-btn:hover,.filter-btn.active{background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.4);color:#f59e0b}
+#info-panel{position:fixed;top:62px;right:16px;width:290px;background:rgba(12,12,35,.98);border:1px solid #2d2d5e;border-radius:12px;padding:16px;z-index:999;display:none;backdrop-filter:blur(12px)}
+#info-panel.visible{display:block}
+#info-panel h3{font-size:14px;font-weight:700;color:#f59e0b;margin-bottom:3px}
+.info-path{font-size:10px;color:#475569;font-family:monospace;margin-bottom:10px;word-break:break-all}
+.info-desc{font-size:12px;color:#cbd5e1;line-height:1.65}
+.info-deps{margin-top:10px}
+.info-deps h4{font-size:10px;color:#64748b;margin-bottom:6px;text-transform:uppercase;letter-spacing:.8px}
+.dep-tag{display:inline-block;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);color:#f59e0b;font-size:10px;padding:2px 7px;border-radius:4px;margin:2px;font-family:monospace}
+.close-btn{position:absolute;top:10px;right:10px;background:none;border:none;color:#475569;cursor:pointer;font-size:16px;line-height:1}
+.close-btn:hover{color:#e2e8f0}
+#controls{position:fixed;bottom:20px;right:20px;display:flex;flex-direction:column;gap:8px;z-index:1000}
+.ctrl-btn{width:36px;height:36px;background:rgba(20,20,55,.92);border:1px solid #3d3d7e;border-radius:8px;color:#e2e8f0;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
+.ctrl-btn:hover{background:rgba(60,60,120,.9)}
+#canvas{position:fixed;top:52px;left:0;right:0;bottom:0;cursor:grab}
+#canvas:active{cursor:grabbing}
+#tooltip{position:fixed;background:rgba(12,12,35,.97);border:1px solid #3d3d7e;border-radius:8px;padding:7px 11px;font-size:11px;color:#e2e8f0;pointer-events:none;z-index:2000;display:none;max-width:220px;line-height:1.5}
+#search-box{position:fixed;top:62px;left:50%;transform:translateX(-50%);z-index:999}
+#search-input{background:rgba(15,15,40,.95);border:1px solid #2d2d5e;border-radius:20px;color:#e2e8f0;font-size:12px;padding:6px 16px;width:220px;outline:none}
+#search-input:focus{border-color:rgba(245,158,11,.5)}
+#search-input::placeholder{color:#475569}
+</style>
+</head>
+<body>
+<div id="topbar">
+  <h1>🪔 Chhath Radio — Interactive Code Map</h1>
+  <span class="sub">Click nodes to inspect • Drag to pan • Scroll to zoom</span>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>Pages</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>Components</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div>Lib/Store</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div>API Routes</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>Services</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#64748b"></div>Models/Infra</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#475569"></div>Tests</div>
+  </div>
+</div>
+<div id="filter-bar">
+  <button class="filter-btn active" data-filter="all">All layers</button>
+  <button class="filter-btn" data-filter="frontend">Frontend</button>
+  <button class="filter-btn" data-filter="backend">Backend</button>
+  <button class="filter-btn" data-filter="infra">Infra</button>
+  <button class="filter-btn" data-filter="tests">Tests</button>
+</div>
+<div id="search-box"><input id="search-input" type="text" placeholder="Search nodes..."/></div>
+<div id="info-panel">
+  <button class="close-btn" onclick="closePanel()">✕</button>
+  <h3 id="panel-title"></h3>
+  <div class="info-path" id="panel-path"></div>
+  <div class="info-desc" id="panel-desc"></div>
+  <div class="info-deps" id="panel-deps"></div>
+</div>
+<div id="controls">
+  <button class="ctrl-btn" id="zoom-in" title="Zoom in">+</button>
+  <button class="ctrl-btn" id="zoom-out" title="Zoom out">−</button>
+  <button class="ctrl-btn" id="zoom-reset" title="Reset">⌂</button>
+</div>
+<div id="tooltip"></div>
+<svg id="canvas" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <marker id="arr-green" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#10b981" opacity=".7"/></marker>
+  <marker id="arr-blue" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#3b82f6" opacity=".7"/></marker>
+  <marker id="arr-purple" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#8b5cf6" opacity=".7"/></marker>
+  <marker id="arr-amber" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#f59e0b" opacity=".7"/></marker>
+  <marker id="arr-red" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#ef4444" opacity=".7"/></marker>
+  <marker id="arr-gray" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#64748b" opacity=".7"/></marker>
+</defs>
+<g id="root-g"></g>
+</svg>
+<script>
+const NODES=[
+  {id:'page-home',label:'page.tsx',sub:'Home Page',color:'#f59e0b',layer:'frontend',group:'pages',x:560,y:130,path:'frontend/app/page.tsx',desc:'Main public page. Layers GhatSceneLoader (3D bg z=-10), gradient overlay, RadioPlayer UI (z=10), LiveClock, Footer.',deps:['RadioPlayer','GhatSceneLoader','LiveClock','Footer']},
+  {id:'page-admin',label:'admin/page.tsx',sub:'Admin Panel',color:'#f59e0b',layer:'frontend',group:'pages',x:560,y:210,path:'frontend/app/admin/page.tsx',desc:'Admin dashboard for managing songs and channels. Protected by JWT auth token.',deps:['api-ts','radio-store']},
+  {id:'page-share',label:'share/page.tsx',sub:'Share Card',color:'#f59e0b',layer:'frontend',group:'pages',x:560,y:290,path:'frontend/app/share/page.tsx',desc:'Social share page with OG image route for currently playing song.',deps:[]},
+  {id:'RadioPlayer',label:'RadioPlayer',sub:'Root audio component',color:'#3b82f6',layer:'frontend',group:'components',x:340,y:170,path:'frontend/components/radio/RadioPlayer.tsx',desc:'Top-level client component. Fetches queue via api.ts, initializes YouTubeIFramePlayerAdapter, loads Zustand store, renders all UI sub-components.',deps:['api-ts','youtube-adapter','radio-store','NowPlaying','Controls','UpNext','ListenerCount','ChhathFacts','WhatsAppRequest','JalArghya','GhatAmbience','ChhathCountdown']},
+  {id:'NowPlaying',label:'NowPlaying',sub:'Current song display',color:'#3b82f6',layer:'frontend',group:'components',x:100,y:80,path:'frontend/components/radio/NowPlaying.tsx',desc:'Displays currently playing song title, artist, YouTube thumbnail. Reads from Zustand radio-store.',deps:['radio-store']},
+  {id:'Controls',label:'Controls',sub:'Play / Pause / Skip',color:'#3b82f6',layer:'frontend',group:'components',x:100,y:160,path:'frontend/components/radio/Controls.tsx',desc:'Play, pause, skip controls. Dispatches to Zustand store which delegates to YouTubeIFramePlayerAdapter.',deps:['radio-store']},
+  {id:'UpNext',label:'UpNext',sub:'Queue preview',color:'#3b82f6',layer:'frontend',group:'components',x:100,y:240,path:'frontend/components/radio/UpNext.tsx',desc:'Shows next 3 songs in queue. Reads queue state from Zustand store.',deps:['radio-store']},
+  {id:'ListenerCount',label:'ListenerCount',sub:'SSE live count',color:'#3b82f6',layer:'frontend',group:'components',x:100,y:320,path:'frontend/components/radio/ListenerCount.tsx',desc:'Connects to /api/events SSE stream for real-time listener count. Auto-reconnects with exponential backoff.',deps:['api-events']},
+  {id:'ChhathFacts',label:'ChhathFacts',sub:'Rotating facts',color:'#3b82f6',layer:'frontend',group:'components',x:100,y:400,path:'frontend/components/radio/ChhathFacts.tsx',desc:'Displays rotating Chhath Puja cultural facts from /api/facts. Cycles every 15 seconds.',deps:['api-facts']},
+  {id:'WhatsAppRequest',label:'WhatsAppRequest',sub:'Song request',color:'#3b82f6',layer:'frontend',group:'components',x:100,y:480,path:'frontend/components/radio/WhatsAppRequest.tsx',desc:'WhatsApp deep-link button for song requests. Generates pre-filled WhatsApp message URL.',deps:[]},
+  {id:'JalArghya',label:'JalArghya',sub:'Ritual animation',color:'#3b82f6',layer:'frontend',group:'components',x:100,y:560,path:'frontend/components/radio/JalArghya.tsx',desc:'Animated Jal Arghya ritual overlay triggered at sunrise/sunset times using time-of-day lib.',deps:['time-of-day']},
+  {id:'GhatAmbience',label:'GhatAmbience',sub:'11 ambient sounds',color:'#3b82f6',layer:'frontend',group:'components',x:100,y:640,path:'frontend/components/radio/GhatAmbience.tsx',desc:'Layered ambient MP3s by time slot. 11 sounds across 5 slots: PREDAWN(river,crickets,wind), MORNING(+birds,crowd,bell,splash), AFTERNOON(+aarti), EVENING(conch,crowd,bell,aarti,diya), NIGHT(river,crickets,wind,splash,diya).',deps:['time-of-day','sounds']},
+  {id:'ChhathCountdown',label:'ChhathCountdown',sub:'Festival timer',color:'#3b82f6',layer:'frontend',group:'components',x:100,y:720,path:'frontend/components/radio/ChhathCountdown.tsx',desc:'Countdown to next Chhath Puja festival. Shows days, hours, minutes, seconds live.',deps:[]},
+  {id:'LiveClock',label:'LiveClock',sub:'Real-time clock',color:'#3b82f6',layer:'frontend',group:'components',x:340,y:80,path:'frontend/components/radio/LiveClock.tsx',desc:'Displays current IST time updated every second.',deps:[]},
+  {id:'Footer',label:'Footer',sub:'Creator info',color:'#3b82f6',layer:'frontend',group:'components',x:340,y:290,path:'frontend/components/radio/Footer.tsx',desc:'Footer with creator attribution, social links, customizable branding.',deps:[]},
+  {id:'GhatScene',label:'GhatScene',sub:'Three.js 3D scene',color:'#3b82f6',layer:'frontend',group:'components',x:340,y:370,path:'frontend/components/ghat/GhatScene.tsx',desc:'Three.js WebGL 3D Ghat environment. River, ghats, diyas, sky with time-of-day color lerp. Dynamically imported (no SSR).',deps:['time-of-day']},
+  {id:'GhatSceneLoader',label:'GhatSceneLoader',sub:'Dynamic import wrapper',color:'#3b82f6',layer:'frontend',group:'components',x:340,y:450,path:'frontend/components/ghat/GhatSceneLoader.tsx',desc:'Client component wrapper that dynamically imports GhatScene with ssr:false for Next.js App Router compatibility.',deps:['GhatScene']},
+  {id:'radio-store',label:'radio-store.ts',sub:'Zustand global state',color:'#8b5cf6',layer:'frontend',group:'lib',x:560,y:420,path:'frontend/lib/radio-store.ts',desc:'Zustand store: queue[], currentIndex, isPlaying, volume. Actions: loadQueue, play, pause, skip, setVolume. Delegates playback to YouTubeIFramePlayerAdapter.',deps:['youtube-adapter']},
+  {id:'api-ts',label:'api.ts',sub:'HTTP client',color:'#8b5cf6',layer:'frontend',group:'lib',x:560,y:500,path:'frontend/lib/api.ts',desc:'Typed fetch wrappers: fetchRadioQueue(), fetchFacts(), postPresenceHeartbeat(). Uses NEXT_PUBLIC_API_BASE env var.',deps:[]},
+  {id:'youtube-adapter',label:'youtube-adapter.ts',sub:'YT IFrame API',color:'#8b5cf6',layer:'frontend',group:'lib',x:560,y:580,path:'frontend/lib/youtube-adapter.ts',desc:'Wraps YouTube IFrame Player API. Methods: initialize(), play(), pause(), loadVideo(), destroy(). Hidden iframe (opacity-0) for audio-only playback.',deps:[]},
+  {id:'time-of-day',label:'time-of-day.ts',sub:'Time slot + lerp',color:'#8b5cf6',layer:'frontend',group:'lib',x:560,y:660,path:'frontend/lib/time-of-day.ts',desc:'Returns current time slot (PREDAWN 4-6am / MORNING 6-12pm / AFTERNOON 12-6pm / EVENING 6-9pm / NIGHT 9pm-4am) and sky color lerp values.',deps:[]},
+  {id:'api-songs',label:'/api/songs',sub:'Song queue',color:'#10b981',layer:'backend',group:'api',x:840,y:120,path:'backend/app/api/songs.py',desc:'GET /api/songs returns current radio queue (Redis-cached). POST /api/songs/queue to reorder.',deps:['song-service','model-song']},
+  {id:'api-radio',label:'/api/radio',sub:'Radio state',color:'#10b981',layer:'backend',group:'api',x:840,y:200,path:'backend/app/api/radio.py',desc:'GET /api/radio/now-playing returns current song metadata and channel state.',deps:['song-service','model-channel']},
+  {id:'api-presence',label:'/api/presence',sub:'Listener tracking',color:'#10b981',layer:'backend',group:'api',x:840,y:280,path:'backend/app/api/presence.py',desc:'POST /api/presence/heartbeat registers listener (30s TTL). DELETE removes session. O(1) Redis counter.',deps:['presence-service']},
+  {id:'api-events',label:'/api/events',sub:'SSE stream',color:'#10b981',layer:'backend',group:'api',x:840,y:360,path:'backend/app/api/events.py',desc:'GET /api/events SSE stream pushing listener count every 5s. Clients auto-reconnect.',deps:['presence-service']},
+  {id:'api-facts',label:'/api/facts',sub:'Chhath facts',color:'#10b981',layer:'backend',group:'api',x:840,y:440,path:'backend/app/api/facts.py',desc:'GET /api/facts returns random Chhath Puja cultural facts from chhath_facts.json.',deps:[]},
+  {id:'api-admin-auth',label:'/api/admin/auth',sub:'JWT auth',color:'#10b981',layer:'backend',group:'api',x:840,y:520,path:'backend/app/api/admin/auth.py',desc:'POST /api/admin/login validates credentials, returns JWT token. bcrypt password hashing.',deps:['security','model-admin']},
+  {id:'api-admin-songs',label:'/api/admin/songs',sub:'Song CRUD',color:'#10b981',layer:'backend',group:'api',x:840,y:600,path:'backend/app/api/admin/songs.py',desc:'Protected CRUD: add, edit, delete, reorder songs. Requires JWT Bearer. Invalidates Redis cache on write.',deps:['auth-deps','song-service','model-song']},
+  {id:'presence-service',label:'presence_service',sub:'O(1) Redis counter',color:'#ef4444',layer:'backend',group:'services',x:1080,y:300,path:'backend/app/services/presence_service.py',desc:'Redis O(1) listener counter. Keys: chhath:listeners:count (INCR/DECR), sorted set for session TTL. Sessions expire after 30s inactivity.',deps:['redis']},
+  {id:'song-service',label:'song_service',sub:'Redis queue cache',color:'#ef4444',layer:'backend',group:'services',x:1080,y:420,path:'backend/app/services/song_service.py',desc:'Song queue with Redis cache (TTL 60s). Falls back to PostgreSQL on miss. Handles ordering and now-playing state.',deps:['redis','database','model-song']},
+  {id:'security',label:'security.py',sub:'JWT + bcrypt',color:'#ef4444',layer:'backend',group:'services',x:1080,y:520,path:'backend/app/auth/security.py',desc:'JWT creation/verification via python-jose. bcrypt hashing via passlib. Token expiry from Pydantic settings.',deps:['config']},
+  {id:'auth-deps',label:'dependencies.py',sub:'Auth middleware',color:'#ef4444',layer:'backend',group:'services',x:1080,y:600,path:'backend/app/auth/dependencies.py',desc:'FastAPI dependency get_current_admin(). Validates JWT Bearer from Authorization header. Raises 401 on invalid/expired.',deps:['security']},
+  {id:'config',label:'config.py',sub:'Pydantic settings',color:'#ef4444',layer:'backend',group:'services',x:1080,y:680,path:'backend/app/core/config.py',desc:'Pydantic BaseSettings from .env: DATABASE_URL, REDIS_URL, SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, CORS origins.',deps:[]},
+  {id:'model-song',label:'Song',sub:'SQLAlchemy model',color:'#64748b',layer:'backend',group:'models',x:1080,y:120,path:'backend/app/models/song.py',desc:'ORM: id, title, artist, youtube_video_id, duration_seconds, queue_position, is_active, created_at.',deps:['database']},
+  {id:'model-channel',label:'Channel',sub:'SQLAlchemy model',color:'#64748b',layer:'backend',group:'models',x:1080,y:200,path:'backend/app/models/channel.py',desc:'Radio channel: id, name, description, is_active, current_song_id.',deps:['database']},
+  {id:'model-admin',label:'Admin',sub:'SQLAlchemy model',color:'#64748b',layer:'backend',group:'models',x:1300,y:520,path:'backend/app/models/admin.py',desc:'Admin user: id, username, hashed_password, is_active, created_at.',deps:['database']},
+  {id:'database',label:'PostgreSQL',sub:'Primary DB :5432',color:'#64748b',layer:'infra',group:'infra',x:1300,y:200,path:'docker-compose.yml',desc:'PostgreSQL 16 Alpine. Stores songs, channels, admin users. Managed via SQLAlchemy + Alembic migrations. Port 5432.',deps:[]},
+  {id:'redis',label:'Redis',sub:'Cache + presence :6379',color:'#64748b',layer:'infra',group:'infra',x:1300,y:320,path:'docker-compose.yml',desc:'Redis 7 Alpine. Song queue cache (60s TTL) + O(1) listener presence counter. Port 6379. maxmemory 256mb allkeys-lru.',deps:[]},
+  {id:'gunicorn',label:'Gunicorn',sub:'WSGI server :8000',color:'#64748b',layer:'infra',group:'infra',x:1300,y:440,path:'backend/gunicorn.conf.py',desc:'Gunicorn + Uvicorn workers. WEB_CONCURRENCY env var. Binds 0.0.0.0:8000. Local=prod parity.',deps:[]},
+  {id:'sounds',label:'/public/sounds/',sub:'11 ambient MP3s',color:'#64748b',layer:'infra',group:'infra',x:1300,y:660,path:'frontend/public/sounds/',desc:'11 MP3s: river-flow, birds-morning, birds-day, crickets, wind-gentle, conch-distant, crowd-ghat, ghanti-bell, aarti-chant, water-splash, diya-prayer.',deps:[]},
+  {id:'test-unit-be',label:'Unit Tests (BE)',sub:'pytest unit',color:'#475569',layer:'tests',group:'tests',x:840,y:760,path:'backend/tests/unit/',desc:'pytest: test_presence_service, test_song_service, test_schemas_song, test_security. Mirrored in qa-tests/app/backend/unit/.',deps:['presence-service','song-service','security']},
+  {id:'test-int-be',label:'Integration (BE)',sub:'API integration',color:'#475569',layer:'tests',group:'tests',x:840,y:840,path:'backend/tests/integration/',desc:'pytest: test_admin_auth, test_songs_queue, test_events_sse. Full HTTP request/response cycle.',deps:['api-admin-auth','api-songs','api-events']},
+  {id:'test-unit-fe',label:'Unit Tests (FE)',sub:'vitest unit',color:'#475569',layer:'tests',group:'tests',x:340,y:760,path:'frontend/__tests__/unit/',desc:'Vitest: radio-store, time-of-day, youtube-adapter, jal-arghya, live-clock, footer, whatsapp-request.',deps:['radio-store','time-of-day','youtube-adapter']},
+  {id:'test-e2e',label:'E2E Tests',sub:'Playwright',color:'#475569',layer:'tests',group:'tests',x:340,y:840,path:'frontend/__tests__/e2e/',desc:'Playwright E2E: radio.spec.ts tests full user flow - page load, player init, controls, listener count.',deps:['page-home']},
+  {id:'load-test',label:'Load Test',sub:'asyncio SLO checks',color:'#475569',layer:'tests',group:'tests',x:560,y:800,path:'qa-tests/load/load_test.py',desc:'Concurrent load/stress test. SLOs: P50<100ms, P99<500ms, error_rate<1%. Saves JSON outcome.',deps:['api-songs','api-events','api-presence']},
+  {id:'smoke-test',label:'Smoke Test',sub:'bash smoke.sh',color:'#475569',layer:'tests',group:'tests',x:560,y:880,path:'qa-tests/smoke/smoke.sh',desc:'Bash smoke test hitting /health, /api/songs, /api/facts, /api/events. Quick sanity check.',deps:['api-songs','api-facts','api-events']}
+];
+
+const EDGES=[
+  {from:'page-home',to:'RadioPlayer',color:'#f59e0b'},
+  {from:'page-home',to:'GhatSceneLoader',color:'#f59e0b'},
+  {from:'page-home',to:'LiveClock',color:'#f59e0b'},
+  {from:'page-home',to:'Footer',color:'#f59e0b'},
+  {from:'RadioPlayer',to:'NowPlaying',color:'#3b82f6'},
+  {from:'RadioPlayer',to:'Controls',color:'#3b82f6'},
+  {from:'RadioPlayer',to:'UpNext',color:'#3b82f6'},
+  {from:'RadioPlayer',to:'ListenerCount',color:'#3b82f6'},
+  {from:'RadioPlayer',to:'ChhathFacts',color:'#3b82f6'},
+  {from:'RadioPlayer',to:'WhatsAppRequest',color:'#3b82f6'},
+  {from:'RadioPlayer',to:'JalArghya',color:'#3b82f6'},
+  {from:'RadioPlayer',to:'GhatAmbience',color:'#3b82f6'},
+  {from:'RadioPlayer',to:'ChhathCountdown',color:'#3b82f6'},
+  {from:'RadioPlayer',to:'api-ts',color:'#8b5cf6'},
+  {from:'RadioPlayer',to:'youtube-adapter',color:'#8b5cf6'},
+  {from:'RadioPlayer',to:'radio-store',color:'#8b5cf6'},
+  {from:'NowPlaying',to:'radio-store',color:'#8b5cf6'},
+  {from:'Controls',to:'radio-store',color:'#8b5cf6'},
+  {from:'UpNext',to:'radio-store',color:'#8b5cf6'},
+  {from:'radio-store',to:'youtube-adapter',color:'#8b5cf6'},
+  {from:'JalArghya',to:'time-of-day',color:'#8b5cf6'},
+  {from:'GhatAmbience',to:'time-of-day',color:'#8b5cf6'},
+  {from:'GhatScene',to:'time-of-day',color:'#8b5cf6'},
+  {from:'GhatSceneLoader',to:'GhatScene',color:'#3b82f6'},
+  {from:'ListenerCount',to:'api-events',color:'#10b981'},
+  {from:'ChhathFacts',to:'api-facts',color:'#10b981'},
+  {from:'api-ts',to:'api-songs',color:'#10b981'},
+  {from:'api-ts',to:'api-presence',color:'#10b981'},
+  {from:'api-ts',to:'api-facts',color:'#10b981'},
+  {from:'api-songs',to:'song-service',color:'#ef4444'},
+  {from:'api-radio',to:'song-service',color:'#ef4444'},
+  {from:'api-presence',to:'presence-service',color:'#ef4444'},
+  {from:'api-events',to:'presence-service',color:'#ef4444'},
+  {from:'api-admin-auth',to:'security',color:'#ef4444'},
+  {from:'api-admin-auth',to:'model-admin',color:'#64748b'},
+  {from:'api-admin-songs',to:'auth-deps',color:'#ef4444'},
+  {from:'api-admin-songs',to:'song-service',color:'#ef4444'},
+  {from:'api-admin-songs',to:'model-song',color:'#64748b'},
+{from:'song-service',to:'database',color:'#64748b'},
+  {from:'song-service',to:'model-song',color:'#64748b'},
+  {from:'security',to:'config',color:'#ef4444'},
+  {from:'auth-deps',to:'security',color:'#ef4444'},
+  {from:'model-song',to:'database',color:'#64748b'},
+  {from:'model-channel',to:'database',color:'#64748b'},
+  {from:'model-admin',to:'database',color:'#64748b'},
+  {from:'api-songs',to:'model-song',color:'#64748b'},
+  {from:'api-radio',to:'model-channel',color:'#64748b'},
+  {from:'GhatAmbience',to:'sounds',color:'#64748b'},
+  {from:'test-unit-be',to:'presence-service',color:'#475569'},
+  {from:'test-unit-be',to:'song-service',color:'#475569'},
+  {from:'test-int-be',to:'api-songs',color:'#475569'},
+  {from:'test-int-be',to:'api-events',color:'#475569'},
+  {from:'test-unit-fe',to:'radio-store',color:'#475569'},
+  {from:'test-unit-fe',to:'time-of-day',color:'#475569'},
+  {from:'test-e2e',to:'page-home',color:'#475569'},
+  {from:'load-test',to:'api-songs',color:'#475569'},
+  {from:'load-test',to:'api-events',color:'#475569'},
+  {from:'smoke-test',to:'api-songs',color:'#475569'},
+  {from:'smoke-test',to:'api-facts',color:'#475569'}
+];
+
+const nodeMap=Object.fromEntries(NODES.map(n=>[n.id,n]));
+const W=130,H=52;
+
+function markerFor(c){
+  if(c==='#10b981')return'url(#arr-green)';
+  if(c==='#3b82f6')return'url(#arr-blue)';
+  if(c==='#8b5cf6')return'url(#arr-purple)';
+  if(c==='#f59e0b')return'url(#arr-amber)';
+  if(c==='#ef4444')return'url(#arr-red)';
+  return'url(#arr-gray)';
+}
+
+let tx=80,ty=60,scale=0.72;
+let dragging=false,lastX=0,lastY=0;
+let activeFilter='all';
+
+const svg=document.getElementById('canvas');
+const root=document.getElementById('root-g');
+
+function applyTransform(){root.setAttribute('transform',`translate(${tx},${ty}) scale(${scale})`);}
+
+function build(){
+  root.innerHTML='';
+  const groups={};
+  NODES.forEach(n=>{const k=n.layer+':'+n.group;if(!groups[k])groups[k]={nodes:[],layer:n.layer};groups[k].nodes.push(n);});
+  const gColors={'frontend:pages':'rgba(245,158,11,.06)','frontend:components':'rgba(59,130,246,.05)','frontend:lib':'rgba(139,92,246,.06)','backend:api':'rgba(16,185,129,.05)','backend:services':'rgba(239,68,68,.06)','backend:models':'rgba(100,116,139,.05)','infra:infra':'rgba(100,116,139,.04)','tests:tests':'rgba(71,85,105,.05)'};
+  const gLabels={'frontend:pages':'Pages','frontend:components':'Components','frontend:lib':'Lib / Store','backend:api':'API Routes','backend:services':'Services','backend:models':'Models','infra:infra':'Infrastructure','tests:tests':'Tests'};
+
+  Object.entries(groups).forEach(([k,g])=>{
+    const xs=g.nodes.map(n=>n.x),ys=g.nodes.map(n=>n.y);
+    const pad=24,bx=Math.min(...xs)-pad,by=Math.min(...ys)-pad;
+    const bw=Math.max(...xs)-Math.min(...xs)+W+pad*2,bh=Math.max(...ys)-Math.min(...ys)+H+pad*2;
+    const r=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    r.setAttribute('x',bx);r.setAttribute('y',by);r.setAttribute('width',bw);r.setAttribute('height',bh);
+    r.setAttribute('rx',16);r.setAttribute('fill',gColors[k]||'rgba(255,255,255,.02)');
+    r.setAttribute('stroke','rgba(255,255,255,.06)');r.setAttribute('stroke-width','1');r.setAttribute('pointer-events','none');
+    root.appendChild(r);
+    const lbl=document.createElementNS('http://www.w3.org/2000/svg','text');
+    lbl.setAttribute('x',bx+10);lbl.setAttribute('y',by+16);lbl.setAttribute('fill','rgba(255,255,255,.2)');
+    lbl.setAttribute('font-size','10');lbl.setAttribute('font-weight','700');lbl.setAttribute('letter-spacing','1.5');lbl.setAttribute('pointer-events','none');
+    lbl.textContent=(gLabels[k]||k).toUpperCase();root.appendChild(lbl);
+  });
+
+  EDGES.forEach(e=>{
+    const a=nodeMap[e.from],b=nodeMap[e.to];if(!a||!b)return;
+    const x1=a.x+W/2,y1=a.y+H/2,x2=b.x+W/2,y2=b.y+H/2;
+    const mx=(x1+x2)/2,my=(y1+y2)/2;
+    const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d',`M${x1},${y1} Q${mx},${my} ${x2},${y2}`);
+    p.setAttribute('fill','none');p.setAttribute('stroke',e.color);p.setAttribute('stroke-width','1.5');
+    p.setAttribute('opacity','0.3');p.setAttribute('marker-end',markerFor(e.color));
+    p.dataset.from=e.from;p.dataset.to=e.to;p.classList.add('edge');
+    root.appendChild(p);
+  });
+
+  NODES.forEach(n=>{
+    const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('transform',`translate(${n.x},${n.y})`);g.classList.add('node');g.dataset.id=n.id;g.dataset.layer=n.layer;
+
+    const sh=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    sh.setAttribute('x',3);sh.setAttribute('y',3);sh.setAttribute('width',W);sh.setAttribute('height',H);
+    sh.setAttribute('rx',8);sh.setAttribute('fill','rgba(0,0,0,.4)');g.appendChild(sh);
+
+    const rc=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    rc.setAttribute('width',W);rc.setAttribute('height',H);rc.setAttribute('rx',8);
+    rc.setAttribute('fill',n.color+'22');rc.setAttribute('stroke',n.color);rc.setAttribute('stroke-width','1.5');g.appendChild(rc);
+
+    const bar=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    bar.setAttribute('width',4);bar.setAttribute('height',H);bar.setAttribute('rx',2);bar.setAttribute('fill',n.color);g.appendChild(bar);
+
+    const t1=document.createElementNS('http://www.w3.org/2000/svg','text');
+    t1.setAttribute('x',14);t1.setAttribute('y',22);t1.setAttribute('fill','#fff');t1.setAttribute('font-size','11');t1.setAttribute('font-weight','700');t1.setAttribute('pointer-events','none');
+    t1.textContent=n.label.length>16?n.label.slice(0,15)+'...':n.label;g.appendChild(t1);
+
+    const t2=document.createElementNS('http://www.w3.org/2000/svg','text');
+    t2.setAttribute('x',14);t2.setAttribute('y',38);t2.setAttribute('fill','rgba(255,255,255,.5)');t2.setAttribute('font-size','9');t2.setAttribute('pointer-events','none');
+    t2.textContent=n.sub.length>20?n.sub.slice(0,19)+'...':n.sub;g.appendChild(t2);
+
+    g.addEventListener('click',()=>selectNode(n.id));
+    g.addEventListener('mouseenter',ev=>showTip(ev,n));
+    g.addEventListener('mouseleave',hideTip);
+    root.appendChild(g);
+  });
+  applyTransform();applyFilter(activeFilter);
+}
+
+function selectNode(id){
+  const n=nodeMap[id];if(!n)return;
+  const connected=new Set([id]);
+  document.querySelectorAll('.edge').forEach(e=>{
+    if(e.dataset.from===id||e.dataset.to===id){connected.add(e.dataset.from);connected.add(e.dataset.to);e.setAttribute('opacity','0.85');e.setAttribute('stroke-width','2.5');}
+    else{e.setAttribute('opacity','0.04');e.setAttribute('stroke-width','1');}
+  });
+  document.querySelectorAll('.node').forEach(g=>{
+    if(connected.has(g.dataset.id)){g.style.opacity='1';g.style.filter=g.dataset.id===id?'brightness(1.4)':'brightness(1.1)';}
+    else{g.style.opacity='0.12';g.style.filter='';}
+  });
+  document.getElementById('panel-title').textContent=n.label;
+  document.getElementById('panel-path').textContent=n.path;
+  document.getElementById('panel-desc').textContent=n.desc;
+  const de=document.getElementById('panel-deps');
+  de.innerHTML='<h4>Dependencies</h4>'+(n.deps&&n.deps.length?n.deps.map(d=>`<span class="dep-tag">${d}</span>`).join(''):'<span style="color:#475569;font-size:11px">None</span>');
+  document.getElementById('info-panel').classList.add('visible');
+}
+
+function closePanel(){
+  document.getElementById('info-panel').classList.remove('visible');
+  document.querySelectorAll('.edge').forEach(e=>{e.setAttribute('opacity','0.3');e.setAttribute('stroke-width','1.5');});
+  document.querySelectorAll('.node').forEach(g=>{g.style.opacity='';g.style.filter='';});
+}
+
+function applyFilter(f){
+  activeFilter=f;
+  document.querySelectorAll('.node').forEach(g=>{g.style.display=(f==='all'||g.dataset.layer===f)?'':'none';});
+  document.querySelectorAll('.edge').forEach(e=>{
+    const a=nodeMap[e.dataset.from],b=nodeMap[e.dataset.to];
+    e.style.display=(f==='all'||(a&&a.layer===f)||(b&&b.layer===f))?'':'none';
+  });
+}
+
+document.querySelectorAll('.filter-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');closePanel();applyFilter(btn.dataset.filter);
+  });
+});
+
+document.getElementById('search-input').addEventListener('input',function(){
+  const q=this.value.toLowerCase().trim();
+  if(!q){closePanel();applyFilter(activeFilter);return;}
+  document.querySelectorAll('.node').forEach(g=>{
+    const n=nodeMap[g.dataset.id];
+    const m=n&&(n.label.toLowerCase().includes(q)||n.sub.toLowerCase().includes(q)||n.path.toLowerCase().includes(q));
+    g.style.opacity=m?'1':'0.08';g.style.filter=m?'brightness(1.3)':'';
+  });
+});
+
+const tip=document.getElementById('tooltip');
+function showTip(ev,n){tip.innerHTML=`<strong style="color:${n.color}">${n.label}</strong><br/><span style="color:#64748b;font-size:10px">${n.path}</span>`;tip.style.display='block';moveTip(ev);}
+function moveTip(ev){tip.style.left=(ev.clientX+14)+'px';tip.style.top=(ev.clientY-10)+'px';}
+function hideTip(){tip.style.display='none';}
+svg.addEventListener('mousemove',moveTip);
+
+svg.addEventListener('mousedown',e=>{if(e.target.closest('.node'))return;dragging=true;lastX=e.clientX;lastY=e.clientY;});
+window.addEventListener('mouseup',()=>{dragging=false;});
+window.addEventListener('mousemove',e=>{if(!dragging)return;tx+=e.clientX-lastX;ty+=e.clientY-lastY;lastX=e.clientX;lastY=e.clientY;applyTransform();});
+svg.addEventListener('wheel',e=>{
+  e.preventDefault();const f=e.deltaY<0?1.1:0.9;
+  const r=svg.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+  tx=mx-(mx-tx)*f;ty=my-(my-ty)*f;scale=Math.max(0.2,Math.min(3,scale*f));applyTransform();
+},{passive:false});
+
+document.getElementById('zoom-in').onclick=()=>{scale=Math.min(3,scale*1.2);applyTransform();};
+document.getElementById('zoom-out').onclick=()=>{scale=Math.max(0.2,scale/1.2);applyTransform();};
+document.getElementById('zoom-reset').onclick=()=>{tx=80;ty=60;scale=0.72;applyTransform();};
+
+build();
+</script>
+</body>
+</html>

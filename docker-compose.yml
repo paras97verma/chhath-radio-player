@@ -1,0 +1,133 @@
+
+
+# ============================================================
+# Chhath Radio — Unified Docker Compose
+#
+# This single file works for BOTH local development and production.
+# Local:      docker compose up
+# Production: docker compose --env-file backend/.env.production up -d
+#
+# Services:
+#   db       — PostgreSQL 16 (local dev; use managed DB in prod)
+#   redis    — Redis 7 (presence counter + queue cache)
+#   backend  — FastAPI via Gunicorn + Uvicorn workers
+#   frontend — Next.js (optional; can be deployed to Vercel separately)
+#
+# Environment:
+#   Copy backend/.env.example → backend/.env and fill in values.
+#   In production, set DATABASE_URL to your managed PostgreSQL URL.
+# ============================================================
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: chhath_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-chhath_radio}
+      POSTGRES_USER: ${POSTGRES_USER:-chhath}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chhath_secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - chhath_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chhath} -d ${POSTGRES_DB:-chhath_radio}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # Expose only in local dev; remove port mapping in production
+    ports:
+      - "5432:5432"
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: chhath_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --save 60 1
+      --loglevel warning
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - chhath_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Expose only in local dev
+    ports:
+      - "6379:6379"
+
+  # ── Backend (FastAPI via Gunicorn + Uvicorn) ────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: chhath_backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # Internal service URLs — always use Docker service names
+      DATABASE_URL: postgresql://${POSTGRES_USER:-chhath}:${POSTGRES_PASSWORD:-chhath_secret}@db:5432/${POSTGRES_DB:-chhath_radio}
+      REDIS_URL: redis://redis:6379/0
+      # Gunicorn: 1 worker in local dev (set higher in prod via .env)
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - chhath_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    volumes:
+      # Hot-reload in local dev: mount source code
+      # Comment this out in production for immutable image
+      - ./backend:/app:ro
+
+  # ── Frontend (Next.js) ──────────────────────────────────────────────────────
+  # Optional: deploy to Vercel instead for global CDN.
+  # To run locally: docker compose --profile frontend up
+  frontend:
+    profiles: ["frontend"]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: chhath_frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8000
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - chhath_net
+
+networks:
+  chhath_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
