@@ -11,8 +11,8 @@ export const FOOTER_CONFIG = {
   creatorName: "peivee",
 
   /** Social profile URLs */
-  linkedinUrl: "https://linkedin.com/in/parasverma",
-  instagramUrl: "https://instagram.com/parasverma",
+  linkedinUrl: "https://linkedin.com/in/peivee",
+  instagramUrl: "https://instagram.com/paras0397",
 
   /**
    * Payment provider configuration.
