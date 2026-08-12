@@ -108,9 +108,27 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const { adapter, queue, currentIndex } = get();
     if (!adapter || queue.length === 0) return;
 
+    const currentState = adapter.getState();
+
+    // If already loaded/paused, just resume — don't reload the video
+    if (currentState === "PAUSED" || currentState === "CUED") {
+      await adapter.play();
+      // playState will be updated by the onStateChange → PLAYING handler
+      return;
+    }
+
+    // Otherwise load (and auto-play) the current song
     const song = queue[currentIndex];
     set({ playState: "BUFFERING" });
     await adapter.loadVideo(song.youtube_video_id);
+    // YouTube's loadVideoById auto-plays; if it doesn't fire PLAYING event
+    // within a short window, nudge it with an explicit play() call.
+    setTimeout(async () => {
+      const state = get();
+      if (state.playState === "BUFFERING") {
+        try { await adapter.play(); } catch { /* ignore */ }
+      }
+    }, 1500);
   },
 
   pausePlayback: async () => {

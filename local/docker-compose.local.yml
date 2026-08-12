@@ -94,6 +94,8 @@ services:
     command: sh -c "npm install --legacy-peer-deps && npm run dev"
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      # Server-side rewrite target: Next.js → FastAPI (Docker service name)
+      BACKEND_URL: http://chhath_backend:8000
       # Needed for Next.js HMR inside Docker
       WATCHPACK_POLLING: "true"
       CHOKIDAR_USEPOLLING: "true"

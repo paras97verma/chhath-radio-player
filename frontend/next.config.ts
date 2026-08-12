@@ -1,5 +1,10 @@
 import type { NextConfig } from "next";
 
+// Backend URL for server-side rewrites (Next.js → FastAPI).
+// Inside Docker the backend is reachable via the service name; on the host it's localhost.
+// Set BACKEND_URL in the container environment to override (e.g. http://chhath_backend:8000).
+const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
+
 const nextConfig: NextConfig = {
   // Produce a self-contained build for Docker (copies only what's needed)
   output: "standalone",
@@ -9,7 +14,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/api/:path*",
-        destination: "http://localhost:8000/api/:path*",
+        destination: `${BACKEND_URL}/api/:path*`,
       },
     ];
   },
@@ -35,7 +40,8 @@ const nextConfig: NextConfig = {
               "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://www.youtube.com https://s.ytimg.com",
               "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
               "img-src 'self' data: https://i.ytimg.com https://api.qrserver.com",
-              "connect-src 'self' http://localhost:8000",
+              // Allow API calls from the browser to the backend (both localhost and Docker hostname)
+              "connect-src 'self' http://localhost:8000 http://chhath_backend:8000",
               "media-src 'self' blob:",
               "style-src 'self' 'unsafe-inline'",
               "worker-src blob:",
