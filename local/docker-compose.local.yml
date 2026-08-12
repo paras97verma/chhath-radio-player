@@ -78,7 +78,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -93,9 +93,11 @@ services:
     # Run Next.js dev server (HMR enabled)
     command: sh -c "npm install --legacy-peer-deps && npm run dev"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-      # Server-side rewrite target: Next.js → FastAPI (Docker service name)
+      # BACKEND_URL is used server-side by Next.js rewrites (container → container)
       BACKEND_URL: http://chhath_backend:8000
+      # NEXT_PUBLIC_API_URL: leave empty so browser uses relative /api/* URLs
+      # which are proxied by Next.js rewrites to BACKEND_URL
+      NEXT_PUBLIC_API_URL: ""
       # Needed for Next.js HMR inside Docker
       WATCHPACK_POLLING: "true"
       CHOKIDAR_USEPOLLING: "true"

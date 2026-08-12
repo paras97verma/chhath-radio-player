@@ -486,13 +486,14 @@ export default function RadioPlayer() {
 
         await loadQueue(songs, adapter);
         setIsReady(true);
-        // Auto-play on page load (browser may block if no prior interaction)
-        try {
-          await adapter.play();
-          useRadioStore.setState({ playState: "PLAYING" });
-        } catch {
-          // Browser autoplay policy blocked — user must click play
-        }
+        // autoplay: 1 in playerVars handles auto-play.
+        // The onStateChange → PLAYING event will update playState.
+        // Nudge play() after a short delay in case autoplay was blocked.
+        setTimeout(async () => {
+          if (!cancelled && useRadioStore.getState().playState !== "PLAYING") {
+            try { await adapter.play(); } catch { /* autoplay blocked — user must click */ }
+          }
+        }, 2000);
       } catch (err) {
         if (!cancelled) {
           setError("Could not load radio. Please refresh.");
@@ -520,10 +521,10 @@ export default function RadioPlayer() {
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 
       <div className="relative w-full max-w-2xl" role="region" aria-label="Radio player">
-        {/* Hidden YouTube iframe */}
+        {/* Hidden YouTube iframe — must NOT use overflow-hidden or the player won't initialize */}
         <div
           ref={playerContainerRef}
-          className="absolute opacity-0 pointer-events-none w-1 h-1 overflow-hidden"
+          style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none", top: 0, left: 0 }}
           aria-hidden="true"
         />
 

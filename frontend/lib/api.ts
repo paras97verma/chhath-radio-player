@@ -3,7 +3,9 @@
  * All fetch calls go through this module.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Use relative URLs so Next.js rewrites proxy /api/* → backend.
+// NEXT_PUBLIC_API_URL can override for direct backend access (e.g. production).
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export interface Song {
   id: string;

@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { fetchListenerCount, sendHeartbeat } from "@/lib/api";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
-const POLL_INTERVAL_MS = 30_000;
+const POLL_INTERVAL_MS = 5_000;  // Poll every 5s for near-real-time updates
 const HOT_THRESHOLD = 50; // above this → red heartbeat mode
 
 function getOrCreateSessionId(): string {
@@ -71,19 +71,54 @@ export default function ListenerCount() {
   useEffect(() => {
     sessionId.current = getOrCreateSessionId();
 
+    // Initial heartbeat + count fetch
     sendHeartbeat(sessionId.current).catch(() => {});
     fetchListenerCount()
       .then((c) => { setCount(c); setPrevCount(c); })
-      .catch(() => {});
+      .catch(() => {
+        // Fallback: show at least 1 (the current user)
+        setCount(1);
+        setPrevCount(1);
+      });
 
+    // Heartbeat timer — keeps the Redis session alive
     const heartbeatTimer = setInterval(() => {
       sendHeartbeat(sessionId.current).catch(() => {});
     }, HEARTBEAT_INTERVAL_MS);
 
+    // SSE for real-time listener count updates
+    let sse: EventSource | null = null;
+    let sseRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function connectSSE() {
+      try {
+        sse = new EventSource("/api/events");
+        sse.addEventListener("listener_count", (e: MessageEvent) => {
+          try {
+            const data = JSON.parse(e.data);
+            const c = typeof data.count === "number" ? data.count : data;
+            setPrevCount((prev) => prev ?? c);
+            setCount(c);
+          } catch { /* ignore parse errors */ }
+        });
+        sse.onerror = () => {
+          sse?.close();
+          sse = null;
+          // Retry SSE connection after 5s
+          sseRetryTimer = setTimeout(connectSSE, 5000);
+        };
+      } catch {
+        // SSE not supported or blocked — fall back to polling only
+      }
+    }
+
+    connectSSE();
+
+    // Polling fallback — also updates count every POLL_INTERVAL_MS
     const pollTimer = setInterval(() => {
       fetchListenerCount()
         .then((c) => {
-          setPrevCount((prev) => prev);
+          setPrevCount((prev) => prev ?? c);
           setCount(c);
         })
         .catch(() => {});
@@ -92,10 +127,21 @@ export default function ListenerCount() {
     return () => {
       clearInterval(heartbeatTimer);
       clearInterval(pollTimer);
+      if (sseRetryTimer) clearTimeout(sseRetryTimer);
+      sse?.close();
     };
   }, []);
 
-  if (count === null) return null;
+  // Show a loading skeleton while waiting for first count
+  if (count === null) {
+    return (
+      <div className="flex items-center gap-1.5 opacity-40" aria-hidden="true">
+        <span style={{ fontSize: "0.85rem" }}>👤</span>
+        <span style={{ fontSize: "0.85rem" }}>—</span>
+        <span style={{ fontSize: "0.72rem" }}>online</span>
+      </div>
+    );
+  }
 
   const isHot = count >= HOT_THRESHOLD;
   const formatted = formatCount(count);

@@ -11,7 +11,7 @@
  * Shows speaker icon (playing) or muted speaker icon (stopped).
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { getTimeOfDay, type TimeOfDay } from "@/lib/time-of-day";
 
 // ─── Sound layer definitions ──────────────────────────────────────────────────
@@ -89,15 +89,8 @@ export default function GhatAmbience() {
     return () => clearInterval(t);
   }, []);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      stopAll();
-      ctxRef.current?.close();
-    };
-  }, []);
-
-  function stopAll() {
+  // stopAll as a stable callback so cleanup effects always get the current version
+  const stopAll = useCallback(() => {
     layersRef.current.forEach(({ source, gain }) => {
       try {
         gain.gain.setValueAtTime(0, ctxRef.current?.currentTime ?? 0);
@@ -109,7 +102,15 @@ export default function GhatAmbience() {
       }
     });
     layersRef.current = [];
-  }
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopAll();
+      ctxRef.current?.close().catch(() => {});
+    };
+  }, [stopAll]);
 
   async function fetchAndDecode(ctx: AudioContext, src: string): Promise<AudioBuffer> {
     const cached = bufferCacheRef.current.get(src);
@@ -145,14 +146,19 @@ export default function GhatAmbience() {
       const layers = SOUND_LAYERS[timeOfDay];
       const masterVolume = 0.65;
 
-      // Fetch and decode all layers in parallel
-      const buffers = await Promise.all(
+      // Fetch and decode all layers in parallel; skip any that fail to load
+      const results = await Promise.allSettled(
         layers.map((layer) => fetchAndDecode(ctx, layer.src))
       );
 
-      // Create and connect source nodes
+      // Create and connect source nodes for successfully loaded buffers
       const newLayers: AudioLayer[] = [];
-      buffers.forEach((buffer, i) => {
+      results.forEach((result, i) => {
+        if (result.status === "rejected") {
+          console.warn(`[GhatAmbience] Skipping ${layers[i].src}:`, result.reason);
+          return;
+        }
+        const buffer = result.value;
         const layer = layers[i];
         const source = ctx.createBufferSource();
         source.buffer = buffer;
@@ -167,6 +173,10 @@ export default function GhatAmbience() {
 
         newLayers.push({ source, gain });
       });
+
+      if (newLayers.length === 0) {
+        throw new Error("No audio layers could be loaded");
+      }
 
       layersRef.current = newLayers;
       setIsPlaying(true);

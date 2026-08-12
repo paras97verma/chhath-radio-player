@@ -141,10 +141,12 @@ export class YouTubeIFramePlayerAdapter implements YouTubePlayerAdapter {
         videoId,
         playerVars: {
           // Golden Rule: NO ad-blocking, NO fake controls
-          autoplay: 0,
+          autoplay: 1,
           rel: 0,
           modestbranding: 1,
           enablejsapi: 1,
+          // Needed for autoplay in some browsers
+          playsinline: 1,
         },
         events: {
           onReady: () => resolve(),

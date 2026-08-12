@@ -45,7 +45,8 @@ app.include_router(admin_songs_router)
 app.include_router(chhath_dates_router)
 
 
-@app.get("/health", tags=["health"])
+
+@app.get("/api/health", tags=["health"])
 def health_check() -> dict:
     """Simple health check endpoint."""
     return {"status": "ok", "service": "chhath-radio-api"}
