@@ -20,6 +20,7 @@ import LiveClock from "@/components/radio/LiveClock";
 import ChhathCountdown from "@/components/radio/ChhathCountdown";
 import ChhathFacts from "@/components/radio/ChhathFacts";
 import GeometricBg from "@/components/radio/GeometricBg";
+import ShareFloatingButton from "@/components/radio/ShareFloatingButton";
 
 import { UpiDonateModal } from "@/components/radio/Footer";
 
@@ -242,6 +243,9 @@ export default function PageClient() {
           </div>
         </div>
       </div>
+
+      {/* Layer 30: Fixed 3D share button — right-center edge, independent of radio player */}
+      <ShareFloatingButton />
 
       {/* UPI Donate Modal */}
       {showDonate && <UpiDonateModal onClose={() => setShowDonate(false)} />}
