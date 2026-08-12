@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 COUNTER_KEY = "chhath:listeners:count"
 SESSIONS_KEY = "chhath:listeners:sessions"
-SESSION_TTL_SECONDS = 45  # session expires if no heartbeat for 45 s
+SESSION_TTL_SECONDS = 20  # session expires if no heartbeat for 20 s
 
 # ─── Connection pool (one per process, shared across requests) ────────────────
 

@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["events"])
 
 # How often to push a listener count update (seconds)
-PUSH_INTERVAL = 15
+PUSH_INTERVAL = 5
 
 # How often to send a keepalive heartbeat even if count hasn't changed (seconds)
 HEARTBEAT_INTERVAL = 30
@@ -83,7 +83,9 @@ async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, 
             # Push count if changed or on heartbeat interval
             if count != last_count or (now - last_heartbeat) >= HEARTBEAT_INTERVAL:
                 payload = json.dumps({"type": "listeners", "count": count})
-                yield f"data: {payload}\n\n"
+                # Named event so frontend EventSource.addEventListener("listener_count", ...)
+                # can distinguish it from other event types.
+                yield f"event: listener_count\ndata: {payload}\n\n"
                 last_count = count
                 last_heartbeat = now
 

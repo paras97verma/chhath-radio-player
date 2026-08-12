@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import { fetchListenerCount, sendHeartbeat } from "@/lib/api";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -31,37 +32,6 @@ function formatCount(n: number): string {
   return new Intl.NumberFormat("en-IN").format(n);
 }
 
-/** Modern gradient user avatar SVG — purple→red→orange gradient background */
-function UserAvatarIcon({ size = 22 }: { size?: number }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 128 128"
-      width={size}
-      height={size}
-      aria-hidden="true"
-      style={{ flexShrink: 0 }}
-    >
-      <defs>
-        <linearGradient id="lcBgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#8A2387" />
-          <stop offset="50%" stopColor="#E94057" />
-          <stop offset="100%" stopColor="#F27121" />
-        </linearGradient>
-        <linearGradient id="lcUserGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.95" />
-          <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.75" />
-        </linearGradient>
-      </defs>
-      {/* Rounded square background */}
-      <rect x="8" y="8" width="112" height="112" rx="32" fill="url(#lcBgGrad)" />
-      {/* User head */}
-      <circle cx="64" cy="48" r="20" fill="url(#lcUserGrad)" />
-      {/* User body / shoulders */}
-      <path d="M28 102 C28 82, 44 76, 64 76 C84 76, 100 82, 100 102 Z" fill="url(#lcUserGrad)" />
-    </svg>
-  );
-}
 
 export default function ListenerCount() {
   const [count, setCount] = useState<number | null>(null);
@@ -210,7 +180,14 @@ export default function ListenerCount() {
         aria-label={`${formatted} listener${count !== 1 ? "s" : ""} online`}
       >
         <span className="listener-icon">
-          <UserAvatarIcon size={22} />
+          <Image
+            src="/listener-icon.png"
+            alt=""
+            width={25}
+            height={25}
+            aria-hidden="true"
+            style={{ flexShrink: 0 }}
+          />
         </span>
         <span className="listener-count-3d tabular-nums" style={{ fontSize: "0.85rem" }}>
           {formatted}

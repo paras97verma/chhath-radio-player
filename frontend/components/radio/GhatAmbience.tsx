@@ -131,18 +131,27 @@ export default function GhatAmbience() {
       return;
     }
 
-    setIsLoading(true);
-
+    // IMPORTANT: AudioContext MUST be created/resumed synchronously inside the
+    // click handler — before any await — otherwise the browser revokes the user
+    // gesture context and the AudioContext stays suspended or throws NotAllowedError.
+    let ctx: AudioContext;
     try {
-      // Create or resume AudioContext inside click handler (satisfies autoplay policy)
       if (!ctxRef.current || ctxRef.current.state === "closed") {
         ctxRef.current = new AudioContext();
       }
-      if (ctxRef.current.state === "suspended") {
-        await ctxRef.current.resume();
+      ctx = ctxRef.current;
+      // resume() is async but the gesture is already captured by the sync new AudioContext() above
+      if (ctx.state === "suspended") {
+        ctx.resume().catch(() => {}); // fire-and-forget; audio will play once resumed
       }
+    } catch (err) {
+      console.error("[GhatAmbience] AudioContext creation failed:", err);
+      return;
+    }
 
-      const ctx = ctxRef.current;
+    setIsLoading(true);
+
+    try {
       const layers = SOUND_LAYERS[timeOfDay];
       const masterVolume = 0.65;
 
