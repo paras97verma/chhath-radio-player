@@ -150,19 +150,22 @@ export default function PageClient() {
         <ChhathFacts />
       </div>
 
-      {/* Player row — player pill (centered) | reaction FAB (adjacent right) */}
+      {/* Player row — pill truly centered; ReactionBar absolutely positioned to its right */}
       <div
-        className="fixed left-0 right-0 z-20 flex items-center justify-center gap-3 px-3 sm:px-4"
+        className="fixed left-0 right-0 z-20 flex items-center justify-center px-3 sm:px-4"
         style={{ bottom: "var(--player-bottom)" }}
       >
-        {/* Radio player pill — center, constrained width */}
-        <div className="min-w-0 max-w-lg w-full">
+        {/* Radio player pill — the only flex child, so justify-center truly centers it */}
+        <div className="relative min-w-0 max-w-lg w-full">
           <RadioPlayer hasTunedIn={hasTunedIn} />
-        </div>
 
-        {/* Reaction FAB — adjacent right of player */}
-        <div className="shrink-0 self-center">
-          <ReactionBar onReact={handleReact} />
+          {/* Reaction FAB — out of flow, anchored to the right edge of the pill */}
+          <div
+            className="absolute top-1/2 -translate-y-1/2"
+            style={{ left: "calc(100% + 12px)" }}
+          >
+            <ReactionBar onReact={handleReact} />
+          </div>
         </div>
       </div>
 

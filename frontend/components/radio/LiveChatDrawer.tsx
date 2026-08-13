@@ -154,17 +154,26 @@ export default function LiveChatDrawer({ sessionId }: Props) {
         aria-label={isOpen ? "Close live chat" : "Open live chat"}
         title={isOpen ? "Close chat" : "Live Chat"}
         className="fixed z-[45] w-12 h-12 rounded-full flex items-center justify-center
-                   text-xl cursor-pointer border-none transition-all duration-200"
+                   text-xl cursor-pointer transition-all duration-200"
         style={{
           bottom: "var(--chat-fab-bottom)",
           right: "var(--hud-inset)",
-          background: isOpen ? "linear-gradient(135deg, #fb923c, #ea580c)" : "rgba(15,8,4,0.92)",
+          border: isOpen ? "none" : "1.5px solid rgba(249,115,22,0.55)",
+          background: isOpen ? "linear-gradient(135deg, #fb923c, #ea580c)" : "rgba(20,10,4,0.94)",
           boxShadow: isOpen
             ? "inset 3px 3px 8px rgba(0,0,0,0.55), 0 0 20px rgba(249,115,22,0.45)"
-            : NM_FAB,
+            : `${NM_FAB}, 0 0 14px rgba(249,115,22,0.30)`,
         }}
       >
-        {isOpen ? "✕" : "💬"}
+        {isOpen ? (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white">
+            <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-orange-400">
+            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+          </svg>
+        )}
         {!isOpen && unreadCount > 0 && (
           <span
             className="absolute -top-1 -right-1 w-[18px] h-[18px] rounded-full

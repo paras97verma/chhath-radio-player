@@ -106,12 +106,6 @@ export default function KeyboardHelpButton() {
             </div>
           ))}
 
-          {/* Footer */}
-          <div className="px-3.5 pt-2 border-t border-white/6 mt-1.5">
-            <span className="text-[10px] text-white/25">
-              Shortcuts work when not typing in a field
-            </span>
-          </div>
         </div>
       )}
     </div>

@@ -29,9 +29,9 @@
   /* FABs (reaction, help) sit at vertical center of player */
   --fab-bottom: calc(var(--player-bottom) + var(--player-h) / 2 - 1.5rem);
   /* Facts sit above player with generous gap */
-  --facts-bottom: calc(var(--player-bottom) + var(--player-h) + var(--stack-gap));
+  --facts-bottom: calc(var(--player-bottom) + var(--player-h) + var(--stack-gap) + 2rem);
   /* Chat FAB sits above facts */
-  --chat-fab-bottom: calc(var(--facts-bottom) + 2rem + var(--stack-gap));
+  --chat-fab-bottom: calc(var(--player-bottom) + var(--player-h) + 0.75rem);
 }
 
 /* Responsive overrides at sm (640px+) */

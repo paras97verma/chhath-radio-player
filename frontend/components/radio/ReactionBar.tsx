@@ -52,12 +52,13 @@ export default function ReactionBar({ onReact }: Props) {
   useEffect(() => { setCounts(loadSessionReactions()); }, []);
 
   const handleMouseEnter = () => {
-    if (leaveTimer.current) clearTimeout(leaveTimer.current);
+    if (leaveTimer.current) { clearTimeout(leaveTimer.current); leaveTimer.current = null; }
     setExpanded(true);
   };
 
   const handleMouseLeave = () => {
-    leaveTimer.current = setTimeout(() => setExpanded(false), 250);
+    // Instant collapse — no delay so hover-out feels responsive
+    leaveTimer.current = setTimeout(() => setExpanded(false), 80);
   };
 
   const handleReaction = useCallback((emoji: string) => {
@@ -75,10 +76,12 @@ export default function ReactionBar({ onReact }: Props) {
 
   const totalReactions = Object.values(counts).reduce((a, b) => a + b, 0);
 
-  // Arc: 5 emojis fan UP and to the RIGHT (away from player pill on the left)
-  // Standard math: 270°=up, 360°=right. Range 250°–350° fans upper-right.
-  const arcAngles = [250, 275, 300, 325, 350];
-  const arcRadius = 110;
+  // Arc: 5 emojis fan from mostly-up (280°) to pure-right (360°) — quarter-circle
+  // away from the player pill. 270°=up, 360°=right in standard math coords.
+  // Screen Y is inverted so sin<0 = upward, cos>0 = rightward.
+  // Radius 130: chord ≈ 45px between adjacent 40px buttons — no overlap.
+  const arcAngles = [280, 300, 320, 340, 360];
+  const arcRadius = 130;
 
   return (
     <>
@@ -94,16 +97,16 @@ export default function ReactionBar({ onReact }: Props) {
         onMouseLeave={handleMouseLeave}
         className="relative w-12 h-12"
       >
-        {/* Invisible hover extension upward (covers arc area) */}
+        {/* Invisible hover extension rightward (covers arc area to the right) */}
         {expanded && (
           <div
             style={{
               position: "absolute",
-              bottom: "50%",
+              top: "50%",
               left: "50%",
-              width: arcRadius * 2 + 48,
-              height: arcRadius + 48,
-              transform: "translate(-50%, 24px)",
+              width: arcRadius + 60,
+              height: arcRadius * 2 + 48,
+              transform: "translateY(-50%)",
               pointerEvents: "auto",
               zIndex: 0,
             }}
@@ -149,7 +152,11 @@ export default function ReactionBar({ onReact }: Props) {
           const angleRad = (angleDeg * Math.PI) / 180;
           const tx = Math.cos(angleRad) * arcRadius;
           const ty = Math.sin(angleRad) * arcRadius;
-          const delay = i * 40;
+          // Expand: stagger outward (first button first)
+          // Collapse: reverse stagger (last button first) for a smooth retract
+          const expandDelay = i * 35;
+          const collapseDelay = (REACTIONS.length - 1 - i) * 25;
+          const delay = expanded ? expandDelay : collapseDelay;
 
           return (
             <button
@@ -168,13 +175,17 @@ export default function ReactionBar({ onReact }: Props) {
                   : "translate(-50%, -50%) scale(0.3)",
                 opacity: expanded ? 1 : 0,
                 pointerEvents: expanded ? "auto" : "none",
-                transition: `transform 0.28s cubic-bezier(0.34,1.56,0.64,1) ${delay}ms, opacity 0.2s ease ${delay}ms`,
+                transition: expanded
+                  ? `transform 0.38s cubic-bezier(0.34,1.4,0.64,1) ${delay}ms, opacity 0.25s ease ${delay}ms, box-shadow 0.2s ease`
+                  : `transform 0.22s cubic-bezier(0.4,0,1,1) ${delay}ms, opacity 0.18s ease ${delay}ms, box-shadow 0.2s ease`,
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.transform = `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px)) scale(1.25)`;
+                e.currentTarget.style.transition = `transform 0.18s cubic-bezier(0.34,1.4,0.64,1), box-shadow 0.18s ease`;
+                e.currentTarget.style.transform = `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px)) scale(1.28)`;
                 e.currentTarget.style.boxShadow = NM_ARC_HOVER;
               }}
               onMouseLeave={(e) => {
+                e.currentTarget.style.transition = `transform 0.2s cubic-bezier(0.25,0.46,0.45,0.94), box-shadow 0.2s ease`;
                 e.currentTarget.style.transform = `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px)) scale(1)`;
                 e.currentTarget.style.boxShadow = NM_ARC_BTN;
               }}

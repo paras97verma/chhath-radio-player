@@ -130,7 +130,7 @@ export default function ChhathCountdown() {
 
   return (
     <div
-      className="flex flex-col items-center gap-2 text-center select-none min-w-[160px] rounded-2xl px-4 py-2.5"
+      className="flex flex-col items-center gap-2 text-center select-none w-[200px] rounded-2xl px-4 py-2.5"
       style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_CARD }}
     >
       {/* Header */}
@@ -143,16 +143,16 @@ export default function ChhathCountdown() {
         onClick={() => setActiveDayIndex((activeDayIndex + 1) % days.length)}
         title={`Click to see next day — ${days[(activeDayIndex + 1) % days.length]?.name}`}
         className="flex flex-col items-center gap-0.5 rounded-[18px] px-3.5 py-1.5 cursor-pointer
-                   transition-all duration-200"
+                   transition-all duration-200 w-full"
         style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_BTN }}
         onMouseDown={(e) => { e.currentTarget.style.boxShadow = NM_BTN_PRESSED; }}
         onMouseUp={(e) => { e.currentTarget.style.boxShadow = NM_BTN; }}
         onMouseLeave={(e) => { e.currentTarget.style.boxShadow = NM_BTN; }}
         aria-label={`${selectedDay.name} — click to switch day`}
       >
-        <div className="flex items-center gap-2">
-          <span className="text-xl leading-none">{selectedDay.emoji}</span>
-          <span className="font-semibold text-sm text-white">{selectedDay.name}</span>
+        <div className="flex items-center gap-2 justify-center">
+          <span className="text-xl leading-none shrink-0">{selectedDay.emoji}</span>
+          <span className="font-semibold text-sm text-white whitespace-nowrap">{selectedDay.name}</span>
         </div>
         <span
           className="text-xs font-bold text-orange-400"

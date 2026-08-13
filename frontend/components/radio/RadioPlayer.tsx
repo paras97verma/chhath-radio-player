@@ -106,11 +106,11 @@ function Spectrogram({ isPlaying }: { isPlaying: boolean }) {
 function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }) {
   return (
     <div
-      className="relative w-12 h-12 shrink-0 rounded-full"
+      className="relative w-20 h-20 shrink-0 rounded-full"
       style={{
         boxShadow: isPlaying
-          ? "0 0 22px rgba(249,115,22,0.55), 0 0 8px rgba(249,115,22,0.3)"
-          : "0 2px 10px rgba(0,0,0,0.5)",
+          ? "0 0 32px rgba(249,115,22,0.65), 0 0 14px rgba(249,115,22,0.35)"
+          : "0 2px 14px rgba(0,0,0,0.6)",
         transition: "box-shadow 0.6s ease",
       }}
     >
@@ -151,7 +151,7 @@ function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }
       </div>
       {/* Center spindle */}
       <div
-        className="absolute w-2 h-2 rounded-full bg-orange-500/90 shadow"
+        className="absolute w-3 h-3 rounded-full bg-orange-500/90 shadow"
         style={{ top: "50%", left: "50%", transform: "translate(-50%,-50%)" }}
       />
     </div>
@@ -667,7 +667,7 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
 
         {/* ── Modern glassmorphic pill ── */}
         <div
-          className="flex flex-col rounded-[9999px]"
+          className="flex flex-col rounded-[28px]"
           style={{
             background: "rgba(10, 4, 2, 0.92)",
             backdropFilter: "blur(20px)",
@@ -681,12 +681,9 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
           }}
         >
           {/* Main row */}
-          <div className="flex items-center gap-3 px-5 pt-2.5 pb-1.5">
+          <div className="flex items-center gap-3 px-5 pt-3 pb-2">
             {/* Vinyl art */}
             <VinylArt src={albumArt} isPlaying={isPlaying} />
-
-            {/* Spectrogram — only when playing */}
-            <Spectrogram isPlaying={isPlaying} />
 
             {/* Song info */}
             <div className="flex-1 min-w-0">
