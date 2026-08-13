@@ -42,11 +42,11 @@ from app.services.presence_service import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["events"])
 
-# How often to push a listener count update (seconds)
-PUSH_INTERVAL = 5
+# How often to push a listener count update (seconds) — near-realtime
+PUSH_INTERVAL = 2
 
 # How often to send a keepalive heartbeat even if count hasn't changed (seconds)
-HEARTBEAT_INTERVAL = 30
+HEARTBEAT_INTERVAL = 15
 
 
 async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, None]:

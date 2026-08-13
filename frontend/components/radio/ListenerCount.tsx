@@ -10,6 +10,11 @@
  *
  * Sends a heartbeat every 15 s to keep the Redis session alive.
  * Uses SSE for real-time updates + polling fallback every 5 s.
+ *
+ * Race condition fix: sseConnected ref suppresses poll updates while SSE
+ * is live, preventing stale poll results from overwriting fresh SSE data.
+ * On SSE error, a heartbeat is sent immediately to keep the session alive
+ * during the 3 s reconnect gap, so the count doesn't flicker down.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -17,6 +22,7 @@ import { fetchListenerCount, sendHeartbeat } from "@/lib/api";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const POLL_INTERVAL_MS = 5_000;
+const SSE_RETRY_DELAY_MS = 3_000;
 const HOT_THRESHOLD = 50;
 
 function getOrCreateSessionId(): string {
@@ -131,30 +137,46 @@ export default function ListenerCount() {
     let sse: EventSource | null = null;
     let sseRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
+    // sseConnected: true while SSE is live and delivering events.
+    // The poll fallback checks this ref and discards its result while SSE
+    // is connected, preventing stale poll data from overwriting fresh SSE data.
+    const sseConnected = { current: false };
+
     function connectSSE() {
       try {
         sse = new EventSource(`/api/events?session_id=${sessionId.current}`);
+
         sse.addEventListener("listener_count", (e: MessageEvent) => {
+          sseConnected.current = true;
           try {
             const data = JSON.parse(e.data);
             const c = typeof data.count === "number" ? data.count : data;
             setCount(c);
           } catch { /* ignore parse errors */ }
         });
+
         sse.onerror = () => {
+          sseConnected.current = false;
           sse?.close();
           sse = null;
-          sseRetryTimer = setTimeout(connectSSE, 5000);
+          // Send a heartbeat immediately to keep the Redis session alive
+          // during the reconnect gap — prevents the count from flickering down.
+          sendHeartbeat(sessionId.current).catch(() => {});
+          sseRetryTimer = setTimeout(connectSSE, SSE_RETRY_DELAY_MS);
         };
       } catch {
         // SSE not supported or blocked — fall back to polling only
+        sseConnected.current = false;
       }
     }
 
     connectSSE();
 
-    // Polling fallback
+    // Polling fallback — only updates count when SSE is not connected.
+    // This prevents the race condition where a poll fires during the SSE
+    // reconnect gap and overwrites the last good SSE count with a stale value.
     const pollTimer = setInterval(() => {
+      if (sseConnected.current) return; // SSE is live — discard poll result
       fetchListenerCount()
         .then((c) => setCount(c))
         .catch(() => {});
@@ -164,6 +186,7 @@ export default function ListenerCount() {
       clearInterval(heartbeatTimer);
       clearInterval(pollTimer);
       if (sseRetryTimer) clearTimeout(sseRetryTimer);
+      sseConnected.current = false;
       sse?.close();
     };
   }, []);

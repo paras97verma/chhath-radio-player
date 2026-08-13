@@ -15,6 +15,7 @@
 
 import { useState } from "react";
 import RadioPlayer from "@/components/radio/RadioPlayer";
+import TuneInSplash from "@/components/radio/TuneInSplash";
 import ListenerCount from "@/components/radio/ListenerCount";
 import LiveClock from "@/components/radio/LiveClock";
 import ChhathCountdown from "@/components/radio/ChhathCountdown";
@@ -69,6 +70,7 @@ function IconHeart() {
 
 export default function PageClient() {
   const [showDonate, setShowDonate] = useState(false);
+  const [hasTunedIn, setHasTunedIn] = useState(false);
 
   return (
     <main className="fixed inset-0 overflow-hidden bg-[#0d0505]">
@@ -137,8 +139,13 @@ export default function PageClient() {
 
       {/* Layer 20: Bottom — pill music player (raised above footer) */}
       <div className="absolute bottom-[72px] left-0 right-0 z-20 flex justify-center px-4">
-        <RadioPlayer />
+        <RadioPlayer hasTunedIn={hasTunedIn} />
       </div>
+
+      {/* Layer 100: Tune In splash — shown until user clicks to start */}
+      {!hasTunedIn && (
+        <TuneInSplash onTuneIn={() => setHasTunedIn(true)} />
+      )}
 
       {/* Layer 20: Footer bar */}
       <div

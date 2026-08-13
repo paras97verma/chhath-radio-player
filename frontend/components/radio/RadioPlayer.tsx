@@ -365,7 +365,7 @@ function PlaylistDrawer({
 
 // ─── Main RadioPlayer ─────────────────────────────────────────────────────────
 
-export default function RadioPlayer() {
+export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boolean }) {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<YouTubeIFramePlayerAdapter | null>(null);
   const muteRef = useRef(false);
@@ -466,6 +466,11 @@ export default function RadioPlayer() {
   }, []);
 
   useEffect(() => {
+    // Don't initialize until the user has clicked "Tune In".
+    // That click is a user gesture, which lifts browser autoplay restrictions
+    // so playVideo() works with full sound immediately.
+    if (!hasTunedIn) return;
+
     let cancelled = false;
 
     async function init() {
@@ -485,11 +490,11 @@ export default function RadioPlayer() {
         await loadQueue(songs, adapter);
         setIsReady(true);
 
-        // Attempt play immediately — muted autoplay is allowed by all browsers.
+        // User has already clicked "Tune In" — browser allows unmuted playback.
         try {
           await adapter.play();
         } catch {
-          // If even muted autoplay fails (very rare), user can click play manually.
+          // Extremely rare — user can click play manually.
         }
       } catch (err) {
         if (!cancelled) {
@@ -506,7 +511,7 @@ export default function RadioPlayer() {
       const adapter = adapterRef.current;
       if (adapter) { adapter.destroy(); adapterRef.current = null; }
     };
-  }, [loadQueue]);
+  }, [loadQueue, hasTunedIn]);
 
   const albumArt = currentSong
     ? `https://i.ytimg.com/vi/${currentSong.youtube_video_id}/mqdefault.jpg`
