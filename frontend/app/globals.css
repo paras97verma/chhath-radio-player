@@ -30,8 +30,10 @@
   --fab-bottom: calc(var(--player-bottom) + var(--player-h) / 2 - 1.5rem);
   /* Facts sit above player with generous gap */
   --facts-bottom: calc(var(--player-bottom) + var(--player-h) + var(--stack-gap) + 2rem);
-  /* Chat FAB sits at the same vertical level as the reaction bar (player pill center) */
-  --chat-fab-bottom: var(--fab-bottom);
+  /* Chat FAB sits at the same vertical level as the reaction bar (player pill center).
+     Reaction bar uses absolute top-1/2 on the pill body; chat FAB uses fixed bottom.
+     Offset tuned to visually align centers: fab-bottom + 2rem raises it to match. */
+  --chat-fab-bottom: calc(var(--fab-bottom) + 2rem);
 }
 
 /* Responsive overrides at sm (640px+) */

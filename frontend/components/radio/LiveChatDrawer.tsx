@@ -148,16 +148,14 @@ export default function LiveChatDrawer({ sessionId }: Props) {
 
   return (
     <>
-      {/* ── FAB — pill-shaped, fixed bottom-right, above footer ── */}
+      {/* ── FAB — pill-shaped, absolute within the player-row wrapper ── */}
       <button
         onClick={() => setIsOpen((v) => !v)}
         aria-label={isOpen ? "Close live chat" : "Open live chat"}
         title={isOpen ? "Close chat" : "Live Chat"}
-        className="fixed z-[45] flex items-center cursor-pointer select-none"
+        className="absolute top-1/2 -translate-y-1/2 z-[45] flex items-center cursor-pointer select-none pointer-events-auto"
         style={{
-          bottom: "var(--chat-fab-bottom)",
           right: "var(--hud-inset)",
-          transform: "translateY(50%)",
           gap: isOpen ? 0 : "0.45rem",
           padding: isOpen ? "0.55rem" : "0.45rem 0.9rem 0.45rem 0.7rem",
           borderRadius: "9999px",
@@ -239,7 +237,7 @@ export default function LiveChatDrawer({ sessionId }: Props) {
           aria-label="Live Chat"
           className="fixed z-[44] flex flex-col rounded-[20px] overflow-hidden"
           style={{
-            bottom: "calc(var(--chat-fab-bottom) + 3.5rem + var(--stack-gap))",
+            bottom: "calc(var(--player-bottom) + var(--player-h) + var(--stack-gap))",
             right: "var(--hud-inset)",
             width: "min(92vw, 340px)",
             height: "min(70vh, 520px)",

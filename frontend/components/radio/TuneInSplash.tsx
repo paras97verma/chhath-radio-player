@@ -104,11 +104,6 @@ export default function TuneInSplash({ onTuneIn }: TuneInSplashProps) {
           <span aria-hidden="true">🎵</span>
           Tune In
         </button>
-
-        {/* Hint */}
-        <p className="text-xs text-white/25 tracking-widest">
-          Click anywhere to start
-        </p>
       </div>
     </div>
   );

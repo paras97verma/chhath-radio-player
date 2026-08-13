@@ -159,7 +159,7 @@ export default function PageClient() {
         <ChhathFacts />
       </div>
 
-      {/* Player row — pill truly centered; ReactionBar absolutely positioned to its right */}
+      {/* Player row — pill truly centered; FABs absolutely positioned relative to this row */}
       <div
         className="fixed left-0 right-0 z-20 flex items-center justify-center px-3 sm:px-4"
         style={{ bottom: "var(--player-bottom)" }}
@@ -176,6 +176,17 @@ export default function PageClient() {
             <ReactionBar onReact={handleReact} />
           </div>
         </div>
+
+        {/* Chat FAB — absolutely positioned to the far right of the viewport,
+            vertically centered on the player row (same as ReactionBar) */}
+        {sessionId && (
+          <div
+            className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
+            style={{ right: "var(--hud-inset)" }}
+          >
+            <LiveChatDrawer sessionId={sessionId} />
+          </div>
+        )}
       </div>
 
       {/* Keyboard help "?" — fixed bottom-left, above footer */}
@@ -261,8 +272,6 @@ export default function PageClient() {
       {/* Left-center: 3D share tab */}
       <ShareFloatingButton />
 
-      {/* Right: Live chat drawer + FAB */}
-      {sessionId && <LiveChatDrawer sessionId={sessionId} />}
 
       {/* Milestone celebration */}
       <MilestoneCelebration count={listenerCount} />
