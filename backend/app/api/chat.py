@@ -5,7 +5,8 @@ Endpoints:
   POST /api/chat/messages  — Send a chat message (anonymous)
   GET  /api/chat/messages  — Fetch last N messages (initial load)
 
-Messages are stored in Redis as a capped list (max 100).
+Messages are stored in Redis as a time-sorted set (score = unix timestamp).
+Max 200 messages; messages older than 10 minutes are automatically pruned.
 New messages are broadcast to all active SSE connections via a
 module-level asyncio.Queue registry (imported by events.py).
 
@@ -18,6 +19,7 @@ import logging
 import time
 import uuid
 import random
+from functools import lru_cache
 from typing import Any, Optional
 
 import redis as redis_lib
@@ -31,7 +33,8 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 # ─── Redis key ────────────────────────────────────────────────────────────────
 CHAT_KEY = "chhath:chat:messages"
-MAX_MESSAGES = 100
+MAX_MESSAGES = 200          # hard cap on stored messages
+MESSAGE_TTL_SECONDS = 600   # 10 minutes — messages older than this are pruned
 
 # ─── Rate limiting (in-memory, per IP) ───────────────────────────────────────
 _rate_limit: dict[str, float] = {}
@@ -108,8 +111,12 @@ async def broadcast_message(msg: dict[str, Any]) -> None:
 
 # ─── Redis helpers ────────────────────────────────────────────────────────────
 
-def _get_redis() -> Optional[redis_lib.Redis]:
-    """Get a Redis client using the same pool as presence_service."""
+@lru_cache(maxsize=1)
+def _get_redis_pool() -> Optional[redis_lib.ConnectionPool]:
+    """
+    Create a single connection pool for the process (cached via lru_cache).
+    Returns None if Redis is not configured or unreachable.
+    """
     try:
         pool = redis_lib.ConnectionPool.from_url(
             settings.REDIS_URL,
@@ -118,41 +125,72 @@ def _get_redis() -> Optional[redis_lib.Redis]:
             socket_connect_timeout=2,
             socket_timeout=2,
         )
-        return redis_lib.Redis(connection_pool=pool)
+        redis_lib.Redis(connection_pool=pool).ping()
+        return pool
     except Exception as exc:
-        logger.warning("Redis connection failed: %s", exc)
+        logger.warning("Redis unavailable for chat: %s", exc)
         return None
+
+
+def _get_redis() -> Optional[redis_lib.Redis]:
+    """Return a Redis client from the shared pool, or None if unavailable."""
+    pool = _get_redis_pool()
+    return redis_lib.Redis(connection_pool=pool) if pool else None
 
 # In-memory fallback when Redis is unavailable
 _memory_messages: list[dict[str, Any]] = []
 
 def _store_message(msg: dict[str, Any]) -> None:
-    """Store message in Redis capped list, fall back to memory."""
+    """
+    Store message in Redis sorted set (score = unix timestamp).
+    Prunes messages older than MESSAGE_TTL_SECONDS and enforces MAX_MESSAGES cap.
+    Falls back to in-memory list if Redis is unavailable.
+    """
     try:
         r = _get_redis()
         if r:
-            r.lpush(CHAT_KEY, json.dumps(msg))
-            r.ltrim(CHAT_KEY, 0, MAX_MESSAGES - 1)
+            ts = msg["ts"]
+            cutoff = ts - MESSAGE_TTL_SECONDS
+            pipe = r.pipeline()
+            # Add message; score = unix timestamp for time-ordering
+            pipe.zadd(CHAT_KEY, {json.dumps(msg): ts})
+            # Prune messages older than 10 minutes
+            pipe.zremrangebyscore(CHAT_KEY, "-inf", cutoff)
+            # Enforce hard cap — keep only the newest MAX_MESSAGES entries
+            pipe.zremrangebyrank(CHAT_KEY, 0, -(MAX_MESSAGES + 1))
+            pipe.execute()
             return
     except Exception as exc:
         logger.warning("Redis chat store failed: %s", exc)
     # Memory fallback
     _memory_messages.insert(0, msg)
+    # Prune by time
+    cutoff = time.time() - MESSAGE_TTL_SECONDS
+    _memory_messages[:] = [m for m in _memory_messages if m["ts"] >= cutoff]
+    # Enforce hard cap
     if len(_memory_messages) > MAX_MESSAGES:
-        _memory_messages.pop()
+        _memory_messages[MAX_MESSAGES:] = []
 
 def _load_messages(limit: int = 50) -> list[dict[str, Any]]:
-    """Load last N messages from Redis (newest first → reverse for display)."""
+    """
+    Load last N messages from Redis within the 10-minute window.
+    Returns messages in oldest-first order (for display).
+    Falls back to in-memory list if Redis is unavailable.
+    """
     try:
         r = _get_redis()
         if r:
-            raw = r.lrange(CHAT_KEY, 0, limit - 1)
+            cutoff = time.time() - MESSAGE_TTL_SECONDS
+            # ZRANGEBYSCORE returns members with score >= cutoff, oldest-first
+            raw = r.zrangebyscore(CHAT_KEY, cutoff, "+inf")
             msgs = [json.loads(m) for m in raw]
-            return list(reversed(msgs))  # oldest first for display
+            return msgs[-limit:]  # return the newest `limit` messages, oldest-first
     except Exception as exc:
         logger.warning("Redis chat load failed: %s", exc)
     # Memory fallback
-    return list(reversed(_memory_messages[:limit]))
+    cutoff = time.time() - MESSAGE_TTL_SECONDS
+    recent = [m for m in _memory_messages if m["ts"] >= cutoff]
+    return list(reversed(recent[:limit]))
 
 # ─── Schemas ──────────────────────────────────────────────────────────────────
 

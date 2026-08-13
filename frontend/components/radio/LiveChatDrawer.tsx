@@ -24,8 +24,8 @@ const NM_BTN    = "4px 4px 10px rgba(0,0,0,0.65), -2px -2px 6px rgba(60,30,10,0.
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function getSavedName(): string { try { return localStorage.getItem(NAME_KEY) ?? ""; } catch { return ""; } }
-function saveName(name: string) { try { localStorage.setItem(NAME_KEY, name); } catch { /* ignore */ } }
+function getSavedName(): string { try { return sessionStorage.getItem(NAME_KEY) ?? ""; } catch { return ""; } }
+function saveName(name: string) { try { sessionStorage.setItem(NAME_KEY, name); } catch { /* ignore */ } }
 function formatTime(ts: number): string {
   return new Date(ts * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 }
@@ -77,6 +77,7 @@ export default function LiveChatDrawer({ sessionId }: Props) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [cooldown, setCooldown] = useState(0);
   const [myMessageIds, setMyMessageIds] = useState<Set<string>>(new Set());
+  const [listenerCount, setListenerCount] = useState<number | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -96,6 +97,13 @@ export default function LiveChatDrawer({ sessionId }: Props) {
         const msg: ChatMessage = { id: data.id, name: data.name, text: data.text, ts: data.ts };
         setMessages((prev) => { if (prev.some((m) => m.id === msg.id)) return prev; return [...prev, msg]; });
         if (!isOpenRef.current) setUnreadCount((n) => n + 1);
+      } catch { /* ignore */ }
+    });
+    es.addEventListener("listener_count", (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        const c = typeof data.count === "number" ? data.count : null;
+        if (c !== null) setListenerCount(c);
       } catch { /* ignore */ }
     });
     return () => es.close();
@@ -260,8 +268,18 @@ export default function LiveChatDrawer({ sessionId }: Props) {
                 </p>
               </div>
             </div>
-            <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"
-                 style={{ boxShadow: "0 0 6px #4ade80" }} />
+            <div className="flex items-center gap-1.5">
+              {listenerCount !== null && (
+                <span
+                  className="text-[11px] font-semibold tabular-nums"
+                  style={{ color: "rgba(74,222,128,0.90)" }}
+                >
+                  {new Intl.NumberFormat("en-IN").format(listenerCount)}
+                </span>
+              )}
+              <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"
+                   style={{ boxShadow: "0 0 6px #4ade80" }} />
+            </div>
           </div>
 
           {/* Messages */}

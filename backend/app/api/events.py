@@ -82,6 +82,25 @@ async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, 
             if await request.is_disconnected():
                 break
 
+            # Wait for a chat message OR timeout (whichever comes first).
+            # This makes chat delivery instant: as soon as a message is put
+            # into the queue, wait_for returns immediately instead of sleeping
+            # for the full PUSH_INTERVAL.
+            try:
+                msg = await asyncio.wait_for(chat_q.get(), timeout=PUSH_INTERVAL)
+                payload = json.dumps({"type": "chat_message", **msg})
+                yield f"event: chat_message\ndata: {payload}\n\n"
+                # Drain any additional messages that arrived while we were yielding
+                while not chat_q.empty():
+                    try:
+                        extra = chat_q.get_nowait()
+                        payload = json.dumps({"type": "chat_message", **extra})
+                        yield f"event: chat_message\ndata: {payload}\n\n"
+                    except asyncio.QueueEmpty:
+                        break
+            except asyncio.TimeoutError:
+                pass  # No chat message arrived — fall through to count/heartbeat
+
             now = time.time()
 
             # Refresh heartbeat in Redis
@@ -96,18 +115,6 @@ async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, 
                 yield f"event: listener_count\ndata: {payload}\n\n"
                 last_count = count
                 last_heartbeat = now
-
-            # Drain any pending chat messages (non-blocking)
-            while not chat_q.empty():
-                try:
-                    msg = chat_q.get_nowait()
-                    payload = json.dumps({"type": "chat_message", **msg})
-                    yield f"event: chat_message\ndata: {payload}\n\n"
-                except asyncio.QueueEmpty:
-                    break
-
-            # Wait before next check
-            await asyncio.sleep(PUSH_INTERVAL)
 
     except asyncio.CancelledError:
         pass
