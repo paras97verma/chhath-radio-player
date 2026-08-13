@@ -125,13 +125,15 @@ export default function ChhathFacts() {
 
       <div
         style={{
-          maxWidth: "min(92vw, 672px)",  /* matches player max-w-2xl */
+          maxWidth: "min(92vw, 520px)",
           width: "100%",
           padding: "6px 14px 7px",
           display: "flex",
           alignItems: "center",
+          justifyContent: "center",
           gap: 8,
           overflow: "hidden",
+          textAlign: "center",
           /* No background — fully transparent, just the glowing text */
         }}
         aria-live="polite"
@@ -143,8 +145,7 @@ export default function ChhathFacts() {
             fontSize: "0.85rem",
             flexShrink: 0,
             filter: "drop-shadow(0 0 5px rgba(251,146,60,0.7))",
-            alignSelf: "flex-start",
-            paddingTop: "1px",
+            alignSelf: "center",
           }}
           aria-hidden="true"
         >
