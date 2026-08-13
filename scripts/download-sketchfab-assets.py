@@ -107,11 +107,18 @@ ASSETS = {
         "name": "Sugar Cane",
         "note": "CC Attribution — 564 triangles (ultra-lightweight for instancing)",
     },
-    # ── Boat ────────────────────────────────────────────────────────────────
+    # ── Boats ───────────────────────────────────────────────────────────────
+    # boat.glb  → River Boat (2k triangles) — used for repeated background boats
     "boat.glb": {
-        "uid":  "ae612c0dfeb04c559803bc8c1de12084",
-        "name": "Indian Boat",
-        "note": "NoAI restriction — 35.7k triangles. Do NOT use as AI training data.",
+        "uid":  "8de538d6746d4c41abb3b7821576d587",
+        "name": "River Boat",
+        "note": "CC Attribution — 2k triangles. Ideal for multiple background boats without killing performance.",
+    },
+    # boat_hero.glb → Traditional Bangladeshi Boat — used as the hero/foreground boat
+    "boat_hero.glb": {
+        "uid":  "45ab977c53aa44c3b9c81052dcf19b57",
+        "name": "Traditional Bangladeshi Boat",
+        "note": "CC Attribution — hero boat, higher detail for foreground use.",
     },
     # ── Man ─────────────────────────────────────────────────────────────────
     "man.glb": {
@@ -155,12 +162,32 @@ ASSETS = {
         "name": "Indian Temples",
         "note": "321k triangles — full temple complex",
     },
+    # ── Ghat Stairs (modular) ───────────────────────────────────────────────
+    # Build the ghat from repeated modular stair pieces rather than one giant mesh.
+    # ghat_stairs.glb → ultra-lightweight 176-triangle module, ideal for tiling
+    "ghat_stairs.glb": {
+        "uid":  "e14a06e013c546a7bb5a96a88652cfb8",
+        "name": "Stairs Stone",
+        "note": "CC Attribution — 176 triangles, 1024 texture. Ideal for constructing a large ghat from repeated modules.",
+    },
+    # ghat_stairs_old.glb → game-ready ancient stone staircase, safe for commercial use
+    "ghat_stairs_old.glb": {
+        "uid":  "1a0ad575885848278d93f9dd8c02a923",
+        "name": "Ancient Stone Staircase",
+        "note": "CC Attribution — 7.9k triangles, game-ready. Safer choice for commercial projects.",
+    },
+    # ghat_steps.glb → mossy variant for visual variety
+    "ghat_steps.glb": {
+        "uid":  "2ab420ae72c243f98772a8f58cca0c39",
+        "name": "Mossy Steps",
+        "note": "CC Attribution — 3.3k triangles, game-ready environment asset.",
+    },
 }
 
 # Assets not yet mapped to a Sketchfab model (will be skipped with a warning)
 UNMAPPED = [
-    "thekua.glb",   # No authentic model found — recommend custom geometry
-    "ghats.glb",    # Recommend building from modular stair/wall assets
+    "thekua.glb",   # No authentic model found — recommend custom geometry (thekua_01/02/03.glb)
+    "ghats.glb",    # Replaced by modular ghat_stairs / ghat_stairs_old / ghat_steps assets above
 ]
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
