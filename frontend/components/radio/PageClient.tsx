@@ -4,24 +4,25 @@
  * PageClient — Client Component containing all interactive UI for the main page.
  *
  * Layers (back → front):
- *   z-0  : ghat-bg.png with Ken Burns animation
+ *   z-0  : GhatSceneLoader (Three.js canvas — immersive 3D Chhath Puja ghat)
  *   z-1  : Dark gradient overlay
- *   z-5  : GeometricBg (canvas — animated geometric overlay)
  *   z-10 : Bottom gradient for player readability
  *   z-20 : HUD elements (listener count top-left, countdown top-center, clock top-right)
  *   z-20 : Bottom pill music player
  *   z-20 : Footer bar
+ *   z-30 : ShareFloatingButton
+ *   z-100: TuneInSplash (until user clicks)
  */
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import RadioPlayer from "@/components/radio/RadioPlayer";
 import TuneInSplash from "@/components/radio/TuneInSplash";
 import ListenerCount from "@/components/radio/ListenerCount";
 import LiveClock from "@/components/radio/LiveClock";
 import ChhathCountdown from "@/components/radio/ChhathCountdown";
 import ChhathFacts from "@/components/radio/ChhathFacts";
-import GeometricBg from "@/components/radio/GeometricBg";
 import ShareFloatingButton from "@/components/radio/ShareFloatingButton";
+import GhatSceneLoader from "@/components/ghat/GhatSceneLoader";
 
 import { UpiDonateModal } from "@/components/radio/Footer";
 
@@ -71,29 +72,12 @@ function IconHeart() {
 export default function PageClient() {
   const [showDonate, setShowDonate] = useState(false);
   const [hasTunedIn, setHasTunedIn] = useState(false);
+  const audioNodeRef = useRef<AudioNode | null>(null);
 
   return (
     <main className="fixed inset-0 overflow-hidden bg-[#0d0505]">
-      {/* Layer 0: Ghat background image with Ken Burns animation */}
-      <div
-        className="absolute inset-0 z-0"
-        style={{
-          backgroundImage: "url('/ghat-bg.png')",
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          animation: "kenBurns 30s ease-in-out infinite alternate",
-        }}
-        aria-hidden="true"
-      />
-      <style>{`
-        @keyframes kenBurns {
-          0%   { transform: scale(1.0) translate(0%, 0%); }
-          25%  { transform: scale(1.06) translate(-1%, 0.5%); }
-          50%  { transform: scale(1.04) translate(0.5%, -0.5%); }
-          75%  { transform: scale(1.08) translate(-0.5%, 1%); }
-          100% { transform: scale(1.05) translate(1%, -0.5%); }
-        }
-      `}</style>
+      {/* Layer 0: Immersive 3D Chhath Puja Ghat (Three.js / React Three Fiber) */}
+      <GhatSceneLoader audioNode={audioNodeRef.current} />
 
       {/* Layer 1: Dark gradient overlay for readability */}
       <div
@@ -103,9 +87,6 @@ export default function PageClient() {
         }}
         aria-hidden="true"
       />
-
-      {/* Layer 5: Geometric animated background */}
-      <GeometricBg />
 
       {/* Layer 10: Bottom gradient for player readability */}
       <div

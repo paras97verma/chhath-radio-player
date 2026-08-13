@@ -1,27 +1,33 @@
 "use client";
 
 /**
- * GhatScene — Immersive 3D Chhath Puja Ghat
+ * GhatScene — Immersive 3D Chhath Puja Ghat (upgraded)
  *
  * Built with React Three Fiber + @react-three/drei.
  * Time-of-day aware: sky, lighting, sun/moon, crowd activity all change.
  *
- * Interactions:
- *  - Mouse moves camera slightly (parallax)
- *  - Click on river spawns ripple rings
- *
- * Time slots:
- *  predawn  (4–6 AM)  : Dark, stars, moon, devotees arriving with diyas
- *  morning  (6–10 AM) : Sunrise arghya — golden sky, people in river
- *  afternoon(10–4 PM) : Bright blue sky, river shimmering
- *  evening  (4–7 PM)  : Sunset arghya — crimson sky, crowd offering water
- *  night    (7 PM–4 AM): Stars, moon, floating diyas, aarti glow
+ * New in this version:
+ *  - GPU water shader (replaces CPU vertex displacement)
+ *  - Particle systems (dust, mist, smoke, floating light)
+ *  - Atmospheric effects (sun glow, FogExp2 haze)
+ *  - Animated boats (3 boats with wake)
+ *  - Music reactivity via useAudioReactive hook
+ *  - prefers-reduced-motion support
+ *  - Mobile performance tier (reduced DPR, geometry, counts)
+ *  - onReady callback for loading screen fade-out
  */
 
-import { useRef, useMemo, useEffect, useState, Suspense } from "react";
+import { useRef, useMemo, useEffect, Suspense } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Stars, Float, MeshDistortMaterial, Environment } from "@react-three/drei";
+import { Stars } from "@react-three/drei";
 import * as THREE from "three";
+
+import { GhatWater }        from "./scene/createWater";
+import { GhatParticles }    from "./scene/createParticles";
+import { GhatAtmosphere }   from "./scene/createAtmosphere";
+import { GhatBoats }        from "./scene/createBoats";
+import { useAudioReactive } from "./scene/createAudioReactive";
+import type { AudioBands }  from "./scene/createAudioReactive";
 
 // ─── Time of Day ──────────────────────────────────────────────────────────────
 
@@ -29,8 +35,8 @@ type TOD = "predawn" | "morning" | "afternoon" | "evening" | "night";
 
 function getTOD(): TOD {
   const h = new Date().getHours();
-  if (h >= 4 && h < 6)  return "predawn";
-  if (h >= 6 && h < 10) return "morning";
+  if (h >= 4 && h < 6)   return "predawn";
+  if (h >= 6 && h < 10)  return "morning";
   if (h >= 10 && h < 16) return "afternoon";
   if (h >= 16 && h < 19) return "evening";
   return "night";
@@ -118,11 +124,18 @@ const TOD_CONFIGS: Record<TOD, TODConfig> = {
 
 // ─── Camera Controller ────────────────────────────────────────────────────────
 
-function CameraController({ mouse }: { mouse: React.MutableRefObject<{ x: number; y: number }> }) {
+function CameraController({
+  mouse,
+  prefersReduced,
+}: {
+  mouse: React.MutableRefObject<{ x: number; y: number }>;
+  prefersReduced: boolean;
+}) {
   const { camera } = useThree();
   const target = useRef(new THREE.Vector3(0, 1.5, 0));
 
   useFrame(() => {
+    if (prefersReduced) return;
     const mx = (mouse.current.x - 0.5) * 2;
     const my = (mouse.current.y - 0.5) * 2;
     camera.position.x += (mx * 1.5 - camera.position.x) * 0.03;
@@ -136,15 +149,12 @@ function CameraController({ mouse }: { mouse: React.MutableRefObject<{ x: number
 // ─── Sky Dome ─────────────────────────────────────────────────────────────────
 
 function SkyDome({ config }: { config: TODConfig }) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const matRef  = useRef<THREE.ShaderMaterial>(null);
-
   const shader = useMemo(() => ({
     uniforms: {
-      topColor:    { value: new THREE.Color(config.skyTop) },
-      horizonColor:{ value: new THREE.Color(config.skyHorizon) },
-      offset:      { value: 0.4 },
-      exponent:    { value: 0.6 },
+      topColor:     { value: new THREE.Color(config.skyTop) },
+      horizonColor: { value: new THREE.Color(config.skyHorizon) },
+      offset:       { value: 0.4 },
+      exponent:     { value: 0.6 },
     },
     vertexShader: `
       varying vec3 vWorldPosition;
@@ -169,9 +179,9 @@ function SkyDome({ config }: { config: TODConfig }) {
   }), [config.skyTop, config.skyHorizon]);
 
   return (
-    <mesh ref={meshRef} scale={[100, 100, 100]}>
+    <mesh scale={[100, 100, 100]}>
       <sphereGeometry args={[1, 32, 32]} />
-      <shaderMaterial ref={matRef} attach="material" args={[shader]} />
+      <shaderMaterial attach="material" args={[shader]} />
     </mesh>
   );
 }
@@ -179,16 +189,14 @@ function SkyDome({ config }: { config: TODConfig }) {
 // ─── Sun / Moon ───────────────────────────────────────────────────────────────
 
 function CelestialBody({ config, tod }: { config: TODConfig; tod: TOD }) {
-  const meshRef = useRef<THREE.Mesh>(null);
+  const meshRef  = useRef<THREE.Mesh>(null);
   const lightRef = useRef<THREE.DirectionalLight>(null);
   const t = useRef(0);
 
   useFrame((_, delta) => {
     t.current += delta;
     if (!meshRef.current) return;
-
     if (config.showSun) {
-      // Arc the sun across the sky
       const progress = tod === "morning" ? 0.1 + t.current * 0.008
         : tod === "evening" ? 0.65 + t.current * 0.006
         : 0.5;
@@ -197,12 +205,10 @@ function CelestialBody({ config, tod }: { config: TODConfig; tod: TOD }) {
       meshRef.current.position.y = Math.sin(angle) * 14 + 2;
       meshRef.current.position.z = -20;
     } else {
-      // Moon gentle drift
       meshRef.current.position.x = 8 + Math.sin(t.current * 0.05) * 2;
       meshRef.current.position.y = 10 + Math.cos(t.current * 0.03) * 1;
       meshRef.current.position.z = -18;
     }
-
     if (lightRef.current) {
       lightRef.current.position.copy(meshRef.current.position);
     }
@@ -212,9 +218,7 @@ function CelestialBody({ config, tod }: { config: TODConfig; tod: TOD }) {
   const bodyColor = isSun
     ? (tod === "evening" ? "#ff6622" : tod === "morning" ? "#ffcc44" : "#ffe066")
     : "#fffde0";
-  const emissiveColor = isSun
-    ? (tod === "evening" ? "#cc3300" : "#ffaa00")
-    : "#e8c860";
+  const emissiveColor = isSun ? (tod === "evening" ? "#cc3300" : "#ffaa00") : "#e8c860";
   const bodySize = isSun ? (tod === "afternoon" ? 1.4 : 1.8) : 1.0;
 
   return (
@@ -245,45 +249,6 @@ function CelestialBody({ config, tod }: { config: TODConfig; tod: TOD }) {
   );
 }
 
-// ─── Animated River ───────────────────────────────────────────────────────────
-
-function River({ config }: { config: TODConfig }) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const t = useRef(0);
-
-  useFrame((_, delta) => {
-    t.current += delta * 0.4;
-    if (!meshRef.current) return;
-    const geo = meshRef.current.geometry as THREE.PlaneGeometry;
-    const pos = geo.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i);
-      const z = pos.getZ(i);
-      const wave = Math.sin(x * 0.4 + t.current) * 0.12
-        + Math.cos(z * 0.3 + t.current * 0.7) * 0.08
-        + Math.sin(x * 0.8 + z * 0.5 + t.current * 1.2) * 0.04;
-      pos.setY(i, wave);
-    }
-    pos.needsUpdate = true;
-    geo.computeVertexNormals();
-  });
-
-  return (
-    <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.5, 0]} receiveShadow>
-      <planeGeometry args={[60, 30, 64, 32]} />
-      <meshStandardMaterial
-        color={config.waterColor}
-        emissive={config.waterEmissive}
-        emissiveIntensity={config.waterEmissiveIntensity}
-        metalness={0.6}
-        roughness={0.2}
-        transparent
-        opacity={0.88}
-      />
-    </mesh>
-  );
-}
-
 // ─── Ghat Steps ───────────────────────────────────────────────────────────────
 
 function GhatSteps() {
@@ -294,7 +259,6 @@ function GhatSteps() {
     { y: -0.69, z: 6.8,  w: 19, d: 1.8, h: 0.22, color: "#18120a" },
     { y: -0.47, z: 8.2,  w: 16, d: 1.8, h: 0.22, color: "#120e08" },
   ];
-
   return (
     <group>
       {steps.map((s, i) => (
@@ -303,7 +267,6 @@ function GhatSteps() {
           <meshStandardMaterial color={s.color} roughness={0.95} metalness={0.05} />
         </mesh>
       ))}
-      {/* Ghat floor / platform */}
       <mesh position={[0, -0.25, 10]} receiveShadow>
         <boxGeometry args={[30, 0.3, 8]} />
         <meshStandardMaterial color="#0e0a06" roughness={0.98} />
@@ -317,7 +280,6 @@ function GhatSteps() {
 function Temple() {
   return (
     <group position={[0, 0, 12]}>
-      {/* Main spire */}
       <mesh position={[0, 5, 0]} castShadow>
         <coneGeometry args={[0.8, 6, 8]} />
         <meshStandardMaterial color="#0a0806" roughness={1} />
@@ -326,7 +288,6 @@ function Temple() {
         <boxGeometry args={[4, 3, 3]} />
         <meshStandardMaterial color="#0d0a07" roughness={1} />
       </mesh>
-      {/* Side spires */}
       {[-3.5, 3.5].map((x, i) => (
         <group key={i} position={[x, 0, 0]}>
           <mesh position={[0, 3.5, 0]} castShadow>
@@ -339,7 +300,6 @@ function Temple() {
           </mesh>
         </group>
       ))}
-      {/* Wide base */}
       <mesh position={[0, 0, 0]} castShadow>
         <boxGeometry args={[14, 0.5, 4]} />
         <meshStandardMaterial color="#0a0806" roughness={1} />
@@ -350,25 +310,33 @@ function Temple() {
 
 // ─── Torch Pillars ────────────────────────────────────────────────────────────
 
-function TorchPillar({ position, config }: { position: [number, number, number]; config: TODConfig }) {
+function TorchPillar({
+  position,
+  config,
+  audioBands,
+}: {
+  position: [number, number, number];
+  config: TODConfig;
+  audioBands: React.MutableRefObject<AudioBands>;
+}) {
   const lightRef = useRef<THREE.PointLight>(null);
   const t = useRef(Math.random() * Math.PI * 2);
 
   useFrame((_, delta) => {
     t.current += delta * 4;
     if (lightRef.current) {
-      lightRef.current.intensity = config.diyaIntensity * (0.8 + Math.sin(t.current) * 0.2);
+      const volume = audioBands.current.volume;
+      const flicker = 0.8 + Math.sin(t.current) * 0.2;
+      lightRef.current.intensity = config.diyaIntensity * 2 * flicker * (0.85 + volume * 0.3);
     }
   });
 
   return (
     <group position={position}>
-      {/* Pillar */}
       <mesh position={[0, -1, 0]} castShadow>
         <cylinderGeometry args={[0.12, 0.15, 3.5, 8]} />
         <meshStandardMaterial color="#1a1208" roughness={0.95} />
       </mesh>
-      {/* Flame glow sphere */}
       <mesh position={[0, 1, 0]}>
         <sphereGeometry args={[0.25, 12, 12]} />
         <meshStandardMaterial
@@ -392,10 +360,18 @@ function TorchPillar({ position, config }: { position: [number, number, number];
 
 // ─── Floating Diyas ───────────────────────────────────────────────────────────
 
-function FloatingDiyas({ config }: { config: TODConfig }) {
-  const count = config.diyaCount;
+function FloatingDiyas({
+  config,
+  audioBands,
+  isMobile,
+}: {
+  config: TODConfig;
+  audioBands: React.MutableRefObject<AudioBands>;
+  isMobile: boolean;
+}) {
+  const count = isMobile ? Math.ceil(config.diyaCount * 0.5) : config.diyaCount;
 
-  const diyaData = useMemo(() => Array.from({ length: count }, (_, i) => ({
+  const diyaData = useMemo(() => Array.from({ length: count }, () => ({
     x: (Math.random() - 0.5) * 24,
     z: -2 + Math.random() * -10,
     phase: Math.random() * Math.PI * 2,
@@ -403,25 +379,24 @@ function FloatingDiyas({ config }: { config: TODConfig }) {
     drift: (Math.random() - 0.5) * 0.008,
   })), [count]);
 
-  const refs = useRef<(THREE.Group | null)[]>([]);
+  const refs      = useRef<(THREE.Group | null)[]>([]);
   const lightRefs = useRef<(THREE.PointLight | null)[]>([]);
   const t = useRef(0);
 
   useFrame((_, delta) => {
     t.current += delta;
+    const volume = audioBands.current.volume;
     diyaData.forEach((d, i) => {
       const group = refs.current[i];
       const light = lightRefs.current[i];
       if (!group) return;
-      // Drift along river
       group.position.x += d.drift;
-      if (group.position.x > 14) group.position.x = -14;
+      if (group.position.x > 14)  group.position.x = -14;
       if (group.position.x < -14) group.position.x = 14;
-      // Bob on water
       group.position.y = -1.4 + Math.sin(t.current * d.speed + d.phase) * 0.06;
-      // Flicker
       if (light) {
-        light.intensity = config.diyaIntensity * (0.7 + Math.sin(t.current * 3.5 + d.phase) * 0.3);
+        const flicker = 0.7 + Math.sin(t.current * 3.5 + d.phase) * 0.3;
+        light.intensity = config.diyaIntensity * flicker * (0.85 + volume * 0.3);
       }
     });
   });
@@ -434,12 +409,10 @@ function FloatingDiyas({ config }: { config: TODConfig }) {
           ref={(el) => { refs.current[i] = el; }}
           position={[d.x, -1.4, d.z]}
         >
-          {/* Clay bowl */}
           <mesh>
             <cylinderGeometry args={[0.12, 0.08, 0.06, 12]} />
             <meshStandardMaterial color="#8b4513" roughness={0.9} />
           </mesh>
-          {/* Flame */}
           <mesh position={[0, 0.12, 0]}>
             <coneGeometry args={[0.04, 0.18, 8]} />
             <meshStandardMaterial
@@ -467,11 +440,7 @@ function FloatingDiyas({ config }: { config: TODConfig }) {
 // ─── Crowd Silhouettes ────────────────────────────────────────────────────────
 
 function CrowdPerson({
-  position,
-  color,
-  type,
-  phase,
-  config,
+  position, color, type, phase, config,
 }: {
   position: [number, number, number];
   color: string;
@@ -487,37 +456,28 @@ function CrowdPerson({
   useFrame((_, delta) => {
     t.current += delta;
     if (!groupRef.current) return;
-
-    // Gentle sway
     groupRef.current.rotation.z = Math.sin(t.current * 0.6 + phase) * 0.04;
-
     if (type === "offering" && config.crowdActivity === "arghya") {
-      // Arms raise and lower offering water
       const armAngle = -Math.PI * 0.5 + Math.sin(t.current * 0.5 + phase) * 0.4;
       if (armLRef.current) armLRef.current.rotation.z = armAngle;
       if (armRRef.current) armRRef.current.rotation.z = -armAngle;
     } else if (type === "praying") {
-      // Hands folded, slight bow
       groupRef.current.rotation.x = Math.sin(t.current * 0.3 + phase) * 0.08;
     }
   });
 
-  const h = type === "sitting" ? 0.5 : 1.0;
   const bodyH = type === "sitting" ? 0.4 : 0.7;
 
   return (
     <group ref={groupRef} position={position}>
-      {/* Body */}
       <mesh position={[0, bodyH * 0.5, 0]} castShadow>
         <cylinderGeometry args={[0.12, 0.14, bodyH, 8]} />
         <meshStandardMaterial color={color} roughness={0.9} />
       </mesh>
-      {/* Head */}
       <mesh position={[0, bodyH + 0.14, 0]} castShadow>
         <sphereGeometry args={[0.14, 10, 10]} />
         <meshStandardMaterial color="#c8956c" roughness={0.8} />
       </mesh>
-      {/* Left arm */}
       <mesh
         ref={armLRef}
         position={[-0.16, bodyH * 0.7, 0]}
@@ -527,7 +487,6 @@ function CrowdPerson({
         <cylinderGeometry args={[0.04, 0.04, 0.4, 6]} />
         <meshStandardMaterial color="#c8956c" roughness={0.8} />
       </mesh>
-      {/* Right arm */}
       <mesh
         ref={armRRef}
         position={[0.16, bodyH * 0.7, 0]}
@@ -537,7 +496,6 @@ function CrowdPerson({
         <cylinderGeometry args={[0.04, 0.04, 0.4, 6]} />
         <meshStandardMaterial color="#c8956c" roughness={0.8} />
       </mesh>
-      {/* Water vessel for offering type */}
       {type === "offering" && (
         <mesh position={[0, bodyH + 0.3, 0]}>
           <cylinderGeometry args={[0.06, 0.04, 0.15, 8]} />
@@ -548,29 +506,28 @@ function CrowdPerson({
   );
 }
 
-function Crowd({ config }: { config: TODConfig }) {
+function Crowd({ config, isMobile }: { config: TODConfig; isMobile: boolean }) {
   const SARI_COLORS = [
     "#e74c3c","#8e44ad","#f39c12","#27ae60","#2980b9",
     "#e91e63","#ff5722","#009688","#ff9800","#673ab7",
     "#c0392b","#16a085","#d35400","#7f8c8d","#2c3e50",
   ];
+  const crowdCount = isMobile ? 20 : 40;
 
   const people = useMemo(() => {
     const types: Array<"standing" | "offering" | "praying" | "sitting"> =
       config.crowdActivity === "arghya"
         ? ["offering","offering","praying","standing","offering","praying"]
         : ["standing","praying","sitting","standing","praying"];
-
-    return Array.from({ length: 40 }, (_, i) => ({
+    return Array.from({ length: crowdCount }, () => ({
       x: (Math.random() - 0.5) * 26,
       step: Math.floor(Math.random() * 5),
       color: SARI_COLORS[Math.floor(Math.random() * SARI_COLORS.length)],
       type: types[Math.floor(Math.random() * types.length)],
       phase: Math.random() * Math.PI * 2,
     }));
-  }, [config.crowdActivity]);
+  }, [config.crowdActivity, crowdCount]);
 
-  // Step Y positions
   const stepYs = [-1.24, -1.02, -0.80, -0.58, -0.36];
   const stepZs = [1.5, 3.5, 5.2, 6.8, 8.2];
 
@@ -592,19 +549,24 @@ function Crowd({ config }: { config: TODConfig }) {
 
 // ─── Birds ────────────────────────────────────────────────────────────────────
 
-function Bird({ startX, startY, startZ, speed }: { startX: number; startY: number; startZ: number; speed: number }) {
+function Bird({
+  startX, startY, startZ, speed, prefersReduced,
+}: {
+  startX: number; startY: number; startZ: number; speed: number; prefersReduced: boolean;
+}) {
   const groupRef = useRef<THREE.Group>(null);
   const wingLRef = useRef<THREE.Mesh>(null);
   const wingRRef = useRef<THREE.Mesh>(null);
   const t = useRef(Math.random() * Math.PI * 2);
 
   useFrame((_, delta) => {
+    if (prefersReduced) return;
     t.current += delta;
     if (!groupRef.current) return;
     groupRef.current.position.x += speed * delta * 8;
     groupRef.current.position.y = startY + Math.sin(t.current * 0.8) * 0.3;
-    if (groupRef.current.position.x > 30) groupRef.current.position.x = -30;
-    // Wing flap
+    if (groupRef.current.position.x > 30)  groupRef.current.position.x = -30;
+    if (groupRef.current.position.x < -30) groupRef.current.position.x = 30;
     const flapAngle = Math.sin(t.current * 5) * 0.5;
     if (wingLRef.current) wingLRef.current.rotation.z = flapAngle;
     if (wingRRef.current) wingRRef.current.rotation.z = -flapAngle;
@@ -612,17 +574,14 @@ function Bird({ startX, startY, startZ, speed }: { startX: number; startY: numbe
 
   return (
     <group ref={groupRef} position={[startX, startY, startZ]}>
-      {/* Body */}
       <mesh>
         <sphereGeometry args={[0.08, 6, 6]} />
         <meshStandardMaterial color="#1a1208" />
       </mesh>
-      {/* Left wing */}
       <mesh ref={wingLRef} position={[-0.15, 0, 0]} rotation={[0, 0, 0.3]}>
         <boxGeometry args={[0.3, 0.04, 0.12]} />
         <meshStandardMaterial color="#1a1208" />
       </mesh>
-      {/* Right wing */}
       <mesh ref={wingRRef} position={[0.15, 0, 0]} rotation={[0, 0, -0.3]}>
         <boxGeometry args={[0.3, 0.04, 0.12]} />
         <meshStandardMaterial color="#1a1208" />
@@ -631,38 +590,55 @@ function Bird({ startX, startY, startZ, speed }: { startX: number; startY: numbe
   );
 }
 
-// ─── Twinkling Stars (3D points) ─────────────────────────────────────────────
+function Birds({
+  config, isMobile, prefersReduced,
+}: {
+  config: TODConfig; isMobile: boolean; prefersReduced: boolean;
+}) {
+  const birdCount = isMobile ? Math.ceil(config.birdCount * 0.5) : config.birdCount;
+  const birdData = useMemo(() =>
+    Array.from({ length: birdCount }, () => ({
+      startX: (Math.random() - 0.5) * 50,
+      startY: 4 + Math.random() * 8,
+      startZ: -5 - Math.random() * 10,
+      speed: (0.8 + Math.random() * 1.2) * (Math.random() > 0.5 ? 1 : -1),
+    })),
+  [birdCount]);
+
+  return (
+    <group>
+      {birdData.map((b, i) => (
+        <Bird key={i} {...b} prefersReduced={prefersReduced} />
+      ))}
+    </group>
+  );
+}
+
+// ─── Twinkling Stars ──────────────────────────────────────────────────────────
 
 function TwinklingStars({ config }: { config: TODConfig }) {
-  const show = config.showMoon; // only at night / predawn
+  const show = config.showMoon;
   const count = 300;
 
-  const { positions, phases, speeds } = useMemo(() => {
+  const positions = useMemo(() => {
     const pos = new Float32Array(count * 3);
-    const ph  = new Float32Array(count);
-    const sp  = new Float32Array(count);
     for (let i = 0; i < count; i++) {
-      // Spread stars across upper hemisphere
       const theta = Math.random() * Math.PI * 2;
       const phi   = Math.random() * Math.PI * 0.5;
       const r     = 45 + Math.random() * 5;
       pos[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
       pos[i * 3 + 1] = r * Math.cos(phi) * 0.6 + 5;
       pos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
-      ph[i] = Math.random() * Math.PI * 2;
-      sp[i] = 0.5 + Math.random() * 2.5;
     }
-    return { positions: pos, phases: ph, speeds: sp };
+    return pos;
   }, []);
 
-  const geoRef  = useRef<THREE.BufferGeometry>(null);
-  const matRef  = useRef<THREE.PointsMaterial>(null);
+  const matRef = useRef<THREE.PointsMaterial>(null);
   const t = useRef(0);
 
   useFrame((_, delta) => {
     t.current += delta;
     if (!matRef.current || !show) return;
-    // Pulse overall opacity to simulate collective twinkle
     matRef.current.opacity = 0.6 + Math.sin(t.current * 0.8) * 0.15;
   });
 
@@ -670,7 +646,7 @@ function TwinklingStars({ config }: { config: TODConfig }) {
 
   return (
     <points>
-      <bufferGeometry ref={geoRef}>
+      <bufferGeometry>
         <bufferAttribute attach="attributes-position" args={[positions, 3]} />
       </bufferGeometry>
       <pointsMaterial
@@ -683,27 +659,6 @@ function TwinklingStars({ config }: { config: TODConfig }) {
         depthWrite={false}
       />
     </points>
-  );
-}
-
-// ─── Birds ────────────────────────────────────────────────────────────────────
-
-function Birds({ config }: { config: TODConfig }) {
-  const birdData = useMemo(() =>
-    Array.from({ length: config.birdCount }, () => ({
-      startX: (Math.random() - 0.5) * 50,
-      startY: 4 + Math.random() * 8,
-      startZ: -5 - Math.random() * 10,
-      speed: (0.8 + Math.random() * 1.2) * (Math.random() > 0.5 ? 1 : -1),
-    })),
-  [config.birdCount]);
-
-  return (
-    <group>
-      {birdData.map((b, i) => (
-        <Bird key={i} {...b} />
-      ))}
-    </group>
   );
 }
 
@@ -724,7 +679,6 @@ function LotusFlower({ position }: { position: [number, number, number] }) {
   const petalCount = 8;
   return (
     <group ref={groupRef} position={position}>
-      {/* Petals */}
       {Array.from({ length: petalCount }, (_, i) => {
         const angle = (i / petalCount) * Math.PI * 2;
         return (
@@ -743,12 +697,10 @@ function LotusFlower({ position }: { position: [number, number, number] }) {
           </mesh>
         );
       })}
-      {/* Center */}
       <mesh position={[0, 0.05, 0]}>
         <sphereGeometry args={[0.08, 8, 8]} />
         <meshStandardMaterial color="#ffd700" emissive="#ffaa00" emissiveIntensity={0.5} />
       </mesh>
-      {/* Pad */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]}>
         <circleGeometry args={[0.28, 12]} />
         <meshStandardMaterial color="#2d6a2d" roughness={0.9} />
@@ -757,14 +709,15 @@ function LotusFlower({ position }: { position: [number, number, number] }) {
   );
 }
 
-function Lotuses() {
+function Lotuses({ isMobile }: { isMobile: boolean }) {
+  const lotusCount = isMobile ? 6 : 12;
   const positions = useMemo<[number, number, number][]>(() =>
-    Array.from({ length: 12 }, () => [
+    Array.from({ length: lotusCount }, () => [
       (Math.random() - 0.5) * 22,
       -1.42,
       -2 - Math.random() * 8,
     ]),
-  []);
+  [lotusCount]);
 
   return (
     <group>
@@ -775,42 +728,110 @@ function Lotuses() {
   );
 }
 
-// ─── Scene Environment ────────────────────────────────────────────────────────
+// ─── Scene Ready Signal ───────────────────────────────────────────────────────
 
-function SceneEnvironment({ config, tod }: { config: TODConfig; tod: TOD }) {
-  const { scene } = useThree();
+function SceneReadySignal({ onReady }: { onReady: () => void }) {
+  const called = useRef(false);
+  useFrame(() => {
+    if (!called.current) {
+      called.current = true;
+      onReady();
+    }
+  });
+  return null;
+}
+
+// ─── Inner Scene (inside Canvas) ─────────────────────────────────────────────
+
+interface InnerSceneProps {
+  config: TODConfig;
+  tod: TOD;
+  mouse: React.MutableRefObject<{ x: number; y: number }>;
+  audioBands: React.MutableRefObject<AudioBands>;
+  prefersReduced: boolean;
+  isMobile: boolean;
+  onReady: () => void;
+}
+
+function InnerScene({
+  config, tod, mouse, audioBands, prefersReduced, isMobile, onReady,
+}: InnerSceneProps) {
+  const { gl } = useThree();
 
   useEffect(() => {
-    scene.fog = new THREE.Fog(config.fogColor, config.fogNear, config.fogFar);
-    scene.background = new THREE.Color(config.skyTop);
-  }, [scene, config]);
+    gl.shadowMap.enabled = !isMobile;
+    gl.shadowMap.type = THREE.PCFSoftShadowMap;
+    gl.toneMapping = THREE.ACESFilmicToneMapping;
+    gl.toneMappingExposure = 1.2;
+  }, [gl, isMobile]);
 
   return (
     <>
+      <SceneReadySignal onReady={onReady} />
+      <CameraController mouse={mouse} prefersReduced={prefersReduced} />
+
       <ambientLight color={config.ambientColor} intensity={config.ambientIntensity} />
       <SkyDome config={config} />
       <TwinklingStars config={config} />
       <CelestialBody config={config} tod={tod} />
-      <River config={config} />
+
+      <GhatAtmosphere config={config} prefersReduced={prefersReduced} />
+
+      <GhatWater
+        config={config}
+        audioBands={audioBands}
+        prefersReduced={prefersReduced}
+        isMobile={isMobile}
+      />
+
       <GhatSteps />
       <Temple />
-      {/* Torch pillars on ghat */}
+
       {([-10, -5, 0, 5, 10] as number[]).map((x, i) => (
-        <TorchPillar key={i} position={[x, -0.25, 9.5]} config={config} />
+        <TorchPillar key={i} position={[x, -0.25, 9.5]} config={config} audioBands={audioBands} />
       ))}
-      <FloatingDiyas config={config} />
-      <Crowd config={config} />
-      <Birds config={config} />
-      <Lotuses />
+
+      <FloatingDiyas config={config} audioBands={audioBands} isMobile={isMobile} />
+      <Crowd config={config} isMobile={isMobile} />
+      <Birds config={config} isMobile={isMobile} prefersReduced={prefersReduced} />
+      <Lotuses isMobile={isMobile} />
+
+      <GhatParticles
+        audioBands={audioBands}
+        prefersReduced={prefersReduced}
+        isMobile={isMobile}
+      />
+
+      <GhatBoats />
+
+      {config.showMoon && (
+        <Stars radius={80} depth={50} count={500} factor={4} saturation={0} fade speed={1} />
+      )}
     </>
   );
 }
 
 // ─── Main Export ──────────────────────────────────────────────────────────────
 
-export default function GhatScene() {
-  const tod = getTOD();
+interface GhatSceneProps {
+  audioNode?: AudioNode | null;
+  onReady?: () => void;
+}
+
+export default function GhatScene({ audioNode = null, onReady = () => {} }: GhatSceneProps) {
+  const tod    = useMemo(() => getTOD(), []);
   const config = TOD_CONFIGS[tod];
+
+  const isMobile = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth < 768 || navigator.maxTouchPoints > 0;
+  }, []);
+
+  const prefersReduced = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }, []);
+
   const mouse = useRef({ x: 0.5, y: 0.5 });
 
   useEffect(() => {
@@ -819,7 +840,10 @@ export default function GhatScene() {
     };
     const onTouch = (e: TouchEvent) => {
       if (e.touches[0]) {
-        mouse.current = { x: e.touches[0].clientX / window.innerWidth, y: e.touches[0].clientY / window.innerHeight };
+        mouse.current = {
+          x: e.touches[0].clientX / window.innerWidth,
+          y: e.touches[0].clientY / window.innerHeight,
+        };
       }
     };
     window.addEventListener("mousemove", onMove);
@@ -830,19 +854,28 @@ export default function GhatScene() {
     };
   }, []);
 
+  const audioBands = useAudioReactive(audioNode);
+
   return (
     <div className="w-full h-full" aria-hidden="true">
       <Canvas
         camera={{ position: [0, 2.5, 14], fov: 58, near: 0.1, far: 200 }}
-        shadows
-        gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
+        shadows={!isMobile}
+        gl={{ antialias: !isMobile, alpha: true, powerPreference: "high-performance" }}
         onCreated={({ gl }) => { gl.setClearColor(0x000000, 0); }}
-        dpr={[1, 1.5]}
+        dpr={[1, isMobile ? 1 : 1.5]}
         style={{ width: "100%", height: "100%", background: "transparent" }}
       >
         <Suspense fallback={null}>
-          <CameraController mouse={mouse} />
-          <SceneEnvironment config={config} tod={tod} />
+          <InnerScene
+            config={config}
+            tod={tod}
+            mouse={mouse}
+            audioBands={audioBands}
+            prefersReduced={prefersReduced}
+            isMobile={isMobile}
+            onReady={onReady}
+          />
         </Suspense>
       </Canvas>
     </div>
