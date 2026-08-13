@@ -129,9 +129,9 @@ export default function ChhathFacts() {
           width: "100%",
           padding: "6px 14px 7px",
           display: "flex",
-          alignItems: "center",
+          alignItems: "baseline",
           justifyContent: "center",
-          gap: 8,
+          gap: 5,
           overflow: "hidden",
           textAlign: "center",
           /* No background — fully transparent, just the glowing text */
@@ -139,13 +139,13 @@ export default function ChhathFacts() {
         aria-live="polite"
         aria-label="Chhath Puja fact"
       >
-        {/* Rotating Chhath emoji */}
+        {/* Rotating Chhath emoji — inline with text baseline */}
         <span
           style={{
-            fontSize: "0.85rem",
+            fontSize: "0.82rem",
             flexShrink: 0,
             filter: "drop-shadow(0 0 5px rgba(251,146,60,0.7))",
-            alignSelf: "center",
+            lineHeight: 1.55,
           }}
           aria-hidden="true"
         >
@@ -162,7 +162,6 @@ export default function ChhathFacts() {
             lineHeight: 1.55,
             whiteSpace: "normal",
             wordBreak: "break-word",
-            flex: 1,
           }}
         >
           {displayed}

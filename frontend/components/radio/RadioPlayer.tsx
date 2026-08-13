@@ -17,52 +17,53 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { fetchRadioQueue } from "@/lib/api";
 import { YouTubeIFramePlayerAdapter } from "@/lib/youtube-adapter";
 import { useRadioStore } from "@/lib/radio-store";
+import { useUserStore } from "@/lib/user-store";
 import type { Song } from "@/lib/api";
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
 const IconPrev = () => (
-  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
     <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
   </svg>
 );
 const IconNext = () => (
-  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
     <path d="M6 18l8.5-6L6 6v12zm2-8.14L11.03 12 8 14.14V9.86zM16 6h2v12h-2z" />
   </svg>
 );
 const IconPlay = () => (
-  <svg className="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-6 h-6 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
     <path d="M8 5v14l11-7z" />
   </svg>
 );
 const IconPause = () => (
-  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
     <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
   </svg>
 );
 const IconVolumeMute = () => (
-  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
     <path d="M16.5 12A4.5 4.5 0 0 0 14 7.97v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
   </svg>
 );
 const IconVolumeLow = () => (
-  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
     <path d="M18.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM5 9v6h4l5 5V4L9 9H5z" />
   </svg>
 );
 const IconVolumeHigh = () => (
-  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
     <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
   </svg>
 );
 const IconList = () => (
-  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
     <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z" />
   </svg>
 );
 const IconClose = () => (
-  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
     <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
   </svg>
 );
@@ -215,19 +216,51 @@ function ProgressBar({
 
 function VolumeControl({
   adapterRef,
+  externalMuted,
+  externalVolume,
+  onMuteChange,
+  onVolumeChange,
 }: {
   adapterRef: React.MutableRefObject<YouTubeIFramePlayerAdapter | null>;
+  externalMuted?: boolean;
+  externalVolume?: number;
+  onMuteChange?: (muted: boolean) => void;
+  onVolumeChange?: (v: number) => void;
 }) {
-  const [volume, setVolume] = useState(80);
+  const [volume, setVolume] = useState(externalVolume ?? 80);
   const [isMuted, setIsMuted] = useState(false);
+
+  // Sync with external mute state (e.g. keyboard shortcut M)
+  useEffect(() => {
+    if (externalMuted !== undefined && externalMuted !== isMuted) {
+      setIsMuted(externalMuted);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalMuted]);
+
+  // Sync with external volume (e.g. keyboard ArrowUp/Down)
+  useEffect(() => {
+    if (externalVolume !== undefined && externalVolume !== volume) {
+      setVolume(externalVolume);
+      if (externalVolume > 0 && isMuted) {
+        setIsMuted(false);
+        onMuteChange?.(false);
+      }
+      adapterRef.current?.setVolume(externalVolume);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalVolume]);
 
   const handleVolumeChange = (v: number) => {
     setVolume(v);
+    onVolumeChange?.(v);
     if (v === 0) {
       setIsMuted(true);
+      onMuteChange?.(true);
       adapterRef.current?.mute();
     } else {
       setIsMuted(false);
+      onMuteChange?.(false);
       adapterRef.current?.unMute();
       adapterRef.current?.setVolume(v);
     }
@@ -238,13 +271,16 @@ function VolumeControl({
       adapterRef.current?.unMute();
       adapterRef.current?.setVolume(volume || 80);
       setIsMuted(false);
+      onMuteChange?.(false);
     } else {
       adapterRef.current?.mute();
       setIsMuted(true);
+      onMuteChange?.(true);
     }
   };
 
   const VolumeIcon = isMuted || volume === 0 ? IconVolumeMute : volume < 50 ? IconVolumeLow : IconVolumeHigh;
+  const displayVol = isMuted ? 0 : volume;
 
   return (
     <div className="flex items-center gap-1.5 shrink-0">
@@ -260,7 +296,7 @@ function VolumeControl({
         <div
           className="absolute inset-y-0 left-0 rounded-full"
           style={{
-            width: `${isMuted ? 0 : volume}%`,
+            width: `${displayVol}%`,
             background: "linear-gradient(90deg, #fb923c, #f97316)",
           }}
         />
@@ -268,13 +304,21 @@ function VolumeControl({
           type="range"
           min={0}
           max={100}
-          value={isMuted ? 0 : volume}
+          value={displayVol}
           onChange={(e) => handleVolumeChange(Number(e.target.value))}
           aria-label="Volume"
           className="absolute inset-0 w-full opacity-0 cursor-pointer h-full"
           style={{ accentColor: "#f97316" }}
         />
       </div>
+      {/* Volume % label */}
+      <span
+        className="text-[9px] tabular-nums shrink-0"
+        style={{ color: "rgba(255,255,255,0.3)", minWidth: 22, textAlign: "right" }}
+        aria-hidden="true"
+      >
+        {displayVol}%
+      </span>
     </div>
   );
 }
@@ -290,6 +334,8 @@ function PlaylistDrawer({
 }) {
   const queue = useRadioStore((s) => s.queue);
   const currentIndex = useRadioStore((s) => s.currentIndex);
+  const toggleFavorite = useUserStore((s) => s.toggleFavorite);
+  const favorites = useUserStore((s) => s.favorites);
 
   return (
     <div className="absolute bottom-full left-0 right-0 mb-3">
@@ -312,29 +358,63 @@ function PlaylistDrawer({
           </button>
         </div>
         <div className="max-h-56 overflow-y-auto">
-          {queue.map((song, i) => (
-            <button
-              key={song.id}
-              onClick={() => onPlaySong(i, song)}
-              className={`w-full flex items-center gap-3 px-4 py-2 transition-colors text-left ${
-                i === currentIndex ? "bg-orange-500/10" : "hover:bg-white/4"
-              }`}
-            >
-              <span className={`text-[10px] w-4 text-right shrink-0 ${i === currentIndex ? "text-orange-400" : "text-white/25"}`}>
-                {i === currentIndex ? "▶" : i + 1}
-              </span>
-              <img
-                src={`https://i.ytimg.com/vi/${song.youtube_video_id}/default.jpg`}
-                alt=""
-                className="w-7 h-7 rounded object-cover shrink-0 opacity-70"
-                loading="lazy"
-              />
-              <div className="min-w-0 flex-1">
-                <p className={`text-xs truncate ${i === currentIndex ? "text-orange-400" : "text-white/70"}`}>{song.title}</p>
-                <p className="text-white/30 text-[10px] truncate">{song.artist}</p>
+          {queue.map((song, i) => {
+            const isFav = favorites.includes(song.youtube_video_id);
+            return (
+              <div
+                key={song.id}
+                className={`flex items-center gap-1 transition-colors ${
+                  i === currentIndex ? "bg-orange-500/10" : "hover:bg-white/4"
+                }`}
+              >
+                <button
+                  onClick={() => onPlaySong(i, song)}
+                  className="flex items-center gap-3 px-4 py-2 text-left flex-1 min-w-0"
+                >
+                  <span className={`text-[10px] w-4 text-right shrink-0 ${i === currentIndex ? "text-orange-400" : "text-white/25"}`}>
+                    {i === currentIndex ? "▶" : i + 1}
+                  </span>
+                  <img
+                    src={`https://i.ytimg.com/vi/${song.youtube_video_id}/default.jpg`}
+                    alt=""
+                    className="w-7 h-7 rounded object-cover shrink-0 opacity-70"
+                    loading="lazy"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-xs truncate ${i === currentIndex ? "text-orange-400" : "text-white/70"}`}>{song.title}</p>
+                    <p className="text-white/30 text-[10px] truncate">{song.artist}</p>
+                  </div>
+                </button>
+                {/* ❤️ Favorite toggle */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleFavorite(song.youtube_video_id); }}
+                  aria-label={isFav ? "Remove from favorites" : "Add to favorites"}
+                  title={isFav ? "Remove from favorites" : "Add to favorites"}
+                  className="shrink-0 mr-2 w-7 h-7 flex items-center justify-center rounded-full transition-all"
+                  style={{
+                    color: isFav ? "#f97316" : "rgba(255,255,255,0.25)",
+                    background: isFav ? "rgba(249,115,22,0.12)" : "transparent",
+                    fontSize: 13,
+                    border: isFav ? "1px solid rgba(249,115,22,0.3)" : "1px solid transparent",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isFav) {
+                      e.currentTarget.style.color = "rgba(249,115,22,0.7)";
+                      e.currentTarget.style.background = "rgba(249,115,22,0.08)";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isFav) {
+                      e.currentTarget.style.color = "rgba(255,255,255,0.25)";
+                      e.currentTarget.style.background = "transparent";
+                    }
+                  }}
+                >
+                  {isFav ? "❤️" : "♡"}
+                </button>
               </div>
-            </button>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
@@ -346,10 +426,25 @@ function PlaylistDrawer({
 export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boolean }) {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<YouTubeIFramePlayerAdapter | null>(null);
-  const muteRef = useRef(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [volume, setVolume] = useState(80);
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPlaylist, setShowPlaylist] = useState(false);
+  const showPlaylistRef = useRef(false); // always-current ref for keyboard handler
+  const [playlistFocusIdx, setPlaylistFocusIdx] = useState<number>(-1);
+
+  // Keep ref in sync with state
+  useEffect(() => { showPlaylistRef.current = showPlaylist; }, [showPlaylist]);
+  // keyFlash: briefly highlights a button when triggered by keyboard shortcut
+  const [keyFlash, setKeyFlash] = useState<"prev" | "next" | "seekBack" | "seekFwd" | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerFlash = (btn: typeof keyFlash) => {
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    setKeyFlash(btn);
+    flashTimer.current = setTimeout(() => setKeyFlash(null), 220);
+  };
   const loadQueue = useRadioStore((s) => s.loadQueue);
   const queue = useRadioStore((s) => s.queue);
   const currentIndex = useRadioStore((s) => s.currentIndex);
@@ -373,10 +468,39 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
         e.preventDefault();
         if (state.playState === "PLAYING") state.pausePlayback();
         else state.startPlayback();
+      } else if (e.code === "ArrowUp") {
+        e.preventDefault();
+        if (showPlaylistRef.current) {
+          // Navigate playlist up
+          setPlaylistFocusIdx((prev) => Math.max(0, prev <= 0 ? state.currentIndex - 1 : prev - 1));
+        } else {
+          // Volume up
+          setVolume((prev) => {
+            const next = Math.min(100, prev + 5);
+            state.adapter!.unMute();
+            state.adapter!.setVolume(next);
+            setIsMuted(false);
+            return next;
+          });
+        }
+      } else if (e.code === "ArrowDown") {
+        e.preventDefault();
+        if (showPlaylistRef.current) {
+          // Navigate playlist down
+          setPlaylistFocusIdx((prev) => Math.min(state.queue.length - 1, prev < 0 ? state.currentIndex + 1 : prev + 1));
+        } else {
+          // Volume down
+          setVolume((prev) => {
+            const next = Math.max(0, prev - 5);
+            if (next === 0) { state.adapter!.mute(); setIsMuted(true); }
+            else { state.adapter!.setVolume(next); }
+            return next;
+          });
+        }
       } else if (e.code === "ArrowRight") {
         e.preventDefault();
-        if (e.shiftKey) state.nextSong();
-        else state.adapter.seekTo(state.adapter.getCurrentTime() + 10);
+        if (e.shiftKey) { state.nextSong(); triggerFlash("next"); }
+        else { state.adapter.seekTo(state.adapter.getCurrentTime() + 10); triggerFlash("seekFwd"); }
       } else if (e.code === "ArrowLeft") {
         e.preventDefault();
         if (e.shiftKey) {
@@ -386,16 +510,21 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
             if (prevSong) {
               useRadioStore.setState({ currentIndex: prevIdx, playState: "BUFFERING" });
               await state.adapter.loadVideo(prevSong.youtube_video_id);
+              triggerFlash("prev");
             }
           }
         } else {
           state.adapter.seekTo(Math.max(0, state.adapter.getCurrentTime() - 10));
+          triggerFlash("seekBack");
         }
       } else if (e.code === "KeyM") {
         e.preventDefault();
-        muteRef.current = !muteRef.current;
-        if (muteRef.current) state.adapter.mute();
-        else state.adapter.unMute();
+        setIsMuted((prev) => {
+          const next = !prev;
+          if (next) state.adapter!.mute();
+          else state.adapter!.unMute();
+          return next;
+        });
       } else if (e.code === "KeyP") {
         e.preventDefault();
         setShowPlaylist((v) => !v);
@@ -404,6 +533,22 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
+
+  // Dynamic page title — shows currently playing song in browser tab
+  useEffect(() => {
+    if (!isReady || !currentSong) {
+      document.title = "Chhath Radio — छठ के गीत, बिना रुके";
+      return;
+    }
+    if (isPlaying) {
+      document.title = `🪔 ${currentSong.title} — Chhath Radio`;
+    } else {
+      document.title = `⏸ ${currentSong.title} — Chhath Radio`;
+    }
+    return () => {
+      document.title = "Chhath Radio — छठ के गीत, बिना रुके";
+    };
+  }, [currentSong, isPlaying, isReady]);
 
   const handlePrev = useCallback(async () => {
     const state = useRadioStore.getState();
@@ -476,7 +621,7 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
         }
       `}</style>
 
-      <div className="relative w-full max-w-md" role="region" aria-label="Radio player">
+      <div className="relative w-full max-w-2xl" role="region" aria-label="Radio player">
         {/* Hidden YouTube iframe */}
         <div
           ref={playerContainerRef}
@@ -517,8 +662,8 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
                 <p className="text-orange-400/40 text-xs animate-pulse">Tuning in…</p>
               ) : currentSong ? (
                 <>
-                  <p className="text-white/90 text-sm font-semibold truncate leading-tight tracking-tight">{currentSong.title}</p>
-                  <p className="text-orange-400/50 text-[11px] truncate mt-0.5">{currentSong.artist}</p>
+                  <p className="text-white/95 text-base font-semibold truncate leading-tight tracking-tight">{currentSong.title}</p>
+                  <p className="text-orange-400/65 text-xs truncate mt-0.5">{currentSong.artist}</p>
                 </>
               ) : (
                 <p className="text-white/30 text-xs">No songs loaded</p>
@@ -526,13 +671,20 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
             </div>
 
             {/* Controls */}
-            <div className="flex items-center gap-0.5 shrink-0">
+            <div className="flex items-center gap-1 shrink-0">
               {/* Prev */}
               <button
                 onClick={handlePrev}
                 disabled={!isReady || currentIndex <= 0}
                 aria-label="Previous song"
-                className="w-8 h-8 flex items-center justify-center rounded-full text-white/40 hover:text-white/80 hover:bg-white/8 transition-all disabled:opacity-20 disabled:cursor-not-allowed"
+                className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:cursor-not-allowed"
+                style={{
+                  color: keyFlash === "prev" || keyFlash === "seekBack" ? "#fb923c" : "rgba(255,255,255,0.5)",
+                  background: keyFlash === "prev" || keyFlash === "seekBack" ? "rgba(249,115,22,0.22)" : "transparent",
+                  boxShadow: keyFlash === "prev" || keyFlash === "seekBack" ? "0 0 14px rgba(249,115,22,0.35)" : "none",
+                  // Dim when disabled but still allow flash to show through
+                  opacity: (!isReady || currentIndex <= 0) && !keyFlash ? 0.2 : 1,
+                }}
               >
                 <IconPrev />
               </button>
@@ -542,18 +694,18 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
                 onClick={isPlaying ? pausePlayback : startPlayback}
                 disabled={!isReady || isBuffering}
                 aria-label={isPlaying ? "Pause" : "Play"}
-                className="w-9 h-9 flex items-center justify-center rounded-full transition-all disabled:opacity-30 disabled:cursor-not-allowed mx-0.5"
+                className="w-11 h-11 flex items-center justify-center rounded-full transition-all disabled:opacity-30 disabled:cursor-not-allowed mx-0.5"
                 style={{
                   background: isReady && !isBuffering
                     ? "linear-gradient(135deg, #fb923c, #ea580c)"
                     : "rgba(255,255,255,0.08)",
                   boxShadow: isReady && !isBuffering
-                    ? "0 0 18px rgba(249,115,22,0.40), 0 2px 8px rgba(0,0,0,0.3)"
+                    ? "0 0 22px rgba(249,115,22,0.45), 0 2px 8px rgba(0,0,0,0.3)"
                     : "none",
                 }}
               >
                 {isBuffering ? (
-                  <svg className="w-4 h-4 animate-spin text-white/60" fill="none" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5 animate-spin text-white/60" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
@@ -569,16 +721,29 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
                 onClick={nextSong}
                 disabled={!isReady}
                 aria-label="Next song"
-                className="w-8 h-8 flex items-center justify-center rounded-full text-white/40 hover:text-white/80 hover:bg-white/8 transition-all disabled:opacity-20 disabled:cursor-not-allowed"
+                className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed"
+                style={{
+                  color: keyFlash === "next" || keyFlash === "seekFwd" ? "#fb923c" : "rgba(255,255,255,0.5)",
+                  background: keyFlash === "next" || keyFlash === "seekFwd" ? "rgba(249,115,22,0.22)" : "transparent",
+                  boxShadow: keyFlash === "next" || keyFlash === "seekFwd" ? "0 0 14px rgba(249,115,22,0.35)" : "none",
+                }}
               >
                 <IconNext />
               </button>
 
               {/* Divider */}
-              <div className="w-px h-4 bg-white/8 mx-1" />
+              <div className="w-px h-5 bg-white/8 mx-1.5" />
 
-              {/* Volume — always visible inline */}
-              {isReady && <VolumeControl adapterRef={adapterRef} />}
+              {/* Volume — always visible inline, synced with keyboard M shortcut */}
+              {isReady && (
+                <VolumeControl
+                  adapterRef={adapterRef}
+                  externalMuted={isMuted}
+                  externalVolume={volume}
+                  onMuteChange={setIsMuted}
+                  onVolumeChange={setVolume}
+                />
+              )}
 
               {/* Playlist toggle */}
               <button
@@ -586,7 +751,7 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
                 disabled={!isReady}
                 aria-label="Toggle playlist"
                 aria-expanded={showPlaylist}
-                className={`w-7 h-7 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed ml-1 ${
+                className={`w-9 h-9 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed ml-0.5 ${
                   showPlaylist
                     ? "text-orange-400 bg-orange-500/15"
                     : "text-white/35 hover:text-white/70 hover:bg-white/8"
@@ -594,6 +759,7 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
               >
                 <IconList />
               </button>
+
             </div>
           </div>
 

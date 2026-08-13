@@ -14,7 +14,7 @@
  *   z-100: TuneInSplash (until user clicks)
  */
 
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import RadioPlayer from "@/components/radio/RadioPlayer";
 import TuneInSplash from "@/components/radio/TuneInSplash";
 import ListenerCount from "@/components/radio/ListenerCount";
@@ -23,6 +23,12 @@ import ChhathCountdown from "@/components/radio/ChhathCountdown";
 import ChhathFacts from "@/components/radio/ChhathFacts";
 import ShareFloatingButton from "@/components/radio/ShareFloatingButton";
 import GhatSceneLoader from "@/components/ghat/GhatSceneLoader";
+import ReactionBar from "@/components/radio/ReactionBar";
+import ReactionSplash from "@/components/radio/ReactionSplash";
+import KeyboardHelpButton from "@/components/radio/KeyboardHelpButton";
+import PwaInstallBanner from "@/components/radio/PwaInstallBanner";
+import MilestoneCelebration from "@/components/radio/MilestoneCelebration";
+import LiveChatDrawer from "@/components/radio/LiveChatDrawer";
 
 import { UpiDonateModal } from "@/components/radio/Footer";
 
@@ -33,12 +39,12 @@ const INSTAGRAM_URL = "https://instagram.com/peivee";
 const C = {
   accent:       "#f97316",                    // orange-500
   accentBright: "#fb923c",                    // orange-400
-  accentMuted:  "rgba(249,115,22,0.75)",
-  accentFaint:  "rgba(249,115,22,0.45)",
-  accentBorder: "rgba(249,115,22,0.25)",
-  accentBorderHover: "rgba(249,115,22,0.5)",
-  footerBg:     "rgba(8,2,2,0.90)",
-  footerBorder: "rgba(249,115,22,0.12)",
+  accentMuted:  "rgba(249,115,22,0.90)",
+  accentFaint:  "rgba(249,115,22,0.70)",
+  accentBorder: "rgba(249,115,22,0.30)",
+  accentBorderHover: "rgba(249,115,22,0.6)",
+  footerBg:     "rgba(8,2,2,0.92)",
+  footerBorder: "rgba(249,115,22,0.18)",
 };
 
 // ─── Social Icons ─────────────────────────────────────────────────────────────
@@ -72,7 +78,23 @@ function IconHeart() {
 export default function PageClient() {
   const [showDonate, setShowDonate] = useState(false);
   const [hasTunedIn, setHasTunedIn] = useState(false);
+  const [listenerCount, setListenerCount] = useState(0);
+  const [splashEmoji, setSplashEmoji] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState("");
   const audioNodeRef = useRef<AudioNode | null>(null);
+
+  // Generate a stable session ID on mount (used for SSE + chat)
+  useEffect(() => {
+    const stored = sessionStorage.getItem("chhath_session_id");
+    if (stored) { setSessionId(stored); return; }
+    const id = crypto.randomUUID();
+    sessionStorage.setItem("chhath_session_id", id);
+    setSessionId(id);
+  }, []);
+
+  const handleCountChange = useCallback((c: number) => setListenerCount(c), []);
+  const handleReact = useCallback((emoji: string) => setSplashEmoji(emoji), []);
+  const handleSplashDone = useCallback(() => setSplashEmoji(null), []);
 
   return (
     <main className="fixed inset-0 overflow-hidden bg-[#0d0505]">
@@ -100,7 +122,7 @@ export default function PageClient() {
 
       {/* Layer 20: Top-left — listener count */}
       <div className="absolute top-4 left-4 z-20">
-        <ListenerCount />
+        <ListenerCount onCountChange={handleCountChange} />
       </div>
 
       {/* Layer 20: Top-center — Chhath countdown */}
@@ -113,9 +135,19 @@ export default function PageClient() {
         <LiveClock />
       </div>
 
-      {/* Layer 20: Center-bottom — Chhath facts ticker (above player) */}
+      {/* Layer 20: Center-bottom — Chhath facts ticker (always shown) */}
       <div className="absolute bottom-[210px] left-0 right-0 z-20 flex justify-center px-4 pointer-events-none">
         <ChhathFacts />
+      </div>
+
+      {/* Layer 20: Left-center — Reaction FAB (vertically centered) */}
+      <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
+        <ReactionBar onReact={handleReact} />
+      </div>
+
+      {/* Layer 25: Bottom-right — Keyboard shortcut help button */}
+      <div className="absolute bottom-[80px] right-4 z-[25]">
+        <KeyboardHelpButton />
       </div>
 
       {/* Layer 20: Bottom — pill music player (raised above footer) */}
@@ -127,6 +159,15 @@ export default function PageClient() {
       {!hasTunedIn && (
         <TuneInSplash onTuneIn={() => setHasTunedIn(true)} />
       )}
+
+      {/* Milestone celebration overlay */}
+      <MilestoneCelebration count={listenerCount} />
+
+      {/* Full-screen reaction splash — rendered at root so position:fixed works */}
+      <ReactionSplash emoji={splashEmoji} onDone={handleSplashDone} />
+
+      {/* PWA install banner — shown after 30s on eligible devices */}
+      <PwaInstallBanner />
 
       {/* Layer 20: Footer bar */}
       <div
@@ -143,10 +184,11 @@ export default function PageClient() {
           <span
             className="text-xs shrink-0 hidden sm:block"
             style={{
-              color: C.accentFaint,
+              color: "#fb923c",
               fontFamily: "'Noto Sans Devanagari', 'Mangal', sans-serif",
-              fontWeight: 600,
+              fontWeight: 700,
               letterSpacing: "0.02em",
+              textShadow: "0 0 12px rgba(249,115,22,0.4)",
             }}
           >
             छठ के गीत, बिना रुके
@@ -237,6 +279,9 @@ export default function PageClient() {
 
       {/* UPI Donate Modal */}
       {showDonate && <UpiDonateModal onClose={() => setShowDonate(false)} />}
+
+      {/* Live Chat Drawer */}
+      {sessionId && <LiveChatDrawer sessionId={sessionId} />}
     </main>
   );
 }

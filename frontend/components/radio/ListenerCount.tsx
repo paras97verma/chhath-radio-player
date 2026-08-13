@@ -115,9 +115,18 @@ function OnlineDot({ muted = false }: { muted?: boolean }) {
   );
 }
 
-export default function ListenerCount() {
+interface ListenerCountProps {
+  onCountChange?: (count: number) => void;
+}
+
+export default function ListenerCount({ onCountChange }: ListenerCountProps = {}) {
   const [count, setCount] = useState<number | null>(null);
   const sessionId = useRef<string>("");
+
+  const updateCount = (c: number) => {
+    setCount(c);
+    onCountChange?.(c);
+  };
 
   useEffect(() => {
     sessionId.current = getOrCreateSessionId();
@@ -125,8 +134,8 @@ export default function ListenerCount() {
     // Initial heartbeat + count fetch
     sendHeartbeat(sessionId.current).catch(() => {});
     fetchListenerCount()
-      .then((c) => setCount(c))
-      .catch(() => setCount(1));
+      .then((c) => updateCount(c))
+      .catch(() => updateCount(1));
 
     // Heartbeat timer — keeps the Redis session alive
     const heartbeatTimer = setInterval(() => {
@@ -151,7 +160,7 @@ export default function ListenerCount() {
           try {
             const data = JSON.parse(e.data);
             const c = typeof data.count === "number" ? data.count : data;
-            setCount(c);
+            updateCount(c);
           } catch { /* ignore parse errors */ }
         });
 
@@ -178,7 +187,7 @@ export default function ListenerCount() {
     const pollTimer = setInterval(() => {
       if (sseConnected.current) return; // SSE is live — discard poll result
       fetchListenerCount()
-        .then((c) => setCount(c))
+        .then((c) => updateCount(c))
         .catch(() => {});
     }, POLL_INTERVAL_MS);
 
