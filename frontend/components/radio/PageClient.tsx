@@ -150,25 +150,28 @@ export default function PageClient() {
         <ChhathFacts />
       </div>
 
-      {/* Player row — help button | player pill | reaction FAB — all in one flex row */}
+      {/* Player row — player pill (centered) | reaction FAB (adjacent right) */}
       <div
-        className="fixed left-0 right-0 z-20 flex items-center justify-center gap-2 px-3 sm:px-4"
+        className="fixed left-0 right-0 z-20 flex items-center justify-center gap-3 px-3 sm:px-4"
         style={{ bottom: "var(--player-bottom)" }}
       >
-        {/* Keyboard help "?" — left of player */}
-        <div className="shrink-0 self-center">
-          <KeyboardHelpButton />
-        </div>
-
-        {/* Radio player pill — center */}
-        <div className="flex-1 min-w-0 max-w-4xl">
+        {/* Radio player pill — center, constrained width */}
+        <div className="min-w-0 max-w-lg w-full">
           <RadioPlayer hasTunedIn={hasTunedIn} />
         </div>
 
-        {/* Reaction FAB — right of player */}
+        {/* Reaction FAB — adjacent right of player */}
         <div className="shrink-0 self-center">
           <ReactionBar onReact={handleReact} />
         </div>
+      </div>
+
+      {/* Keyboard help "?" — fixed bottom-left, above footer */}
+      <div
+        className="fixed z-30"
+        style={{ bottom: "var(--player-bottom)", left: "var(--hud-inset)" }}
+      >
+        <KeyboardHelpButton />
       </div>
 
       {/* Footer bar — neumorphic, full-width */}

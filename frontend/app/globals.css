@@ -13,21 +13,23 @@
 
   /* ── Layout grid — all positions relative to these tokens ── */
   /* Footer height */
-  --footer-h: 3.5rem;           /* more breathing room from bottom */
+  --footer-h: 3.5rem;           /* breathing room from bottom */
   /* Player height (pill + progress bar) */
-  --player-h: 5.5rem;           /* slightly taller player */
+  --player-h: 5rem;             /* compact pill height */
+  /* Gap between player and footer */
+  --player-footer-gap: 1.25rem; /* visible gap between footer and player */
   /* Gap between stacked elements */
-  --stack-gap: 1rem;            /* more gap between stacked elements */
+  --stack-gap: 1.5rem;          /* generous gap between stacked elements */
   /* HUD edge inset */
   --hud-inset: 0.75rem;         /* 12px */
 
   /* Derived positions (bottom of viewport) */
-  /* Player sits directly on footer */
-  --player-bottom: var(--footer-h);
+  /* Player sits above footer with a visible gap */
+  --player-bottom: calc(var(--footer-h) + var(--player-footer-gap));
   /* FABs (reaction, help) sit at vertical center of player */
-  --fab-bottom: calc(var(--footer-h) + var(--player-h) / 2 - 1.5rem);
-  /* Facts sit above player with gap */
-  --facts-bottom: calc(var(--footer-h) + var(--player-h) + var(--stack-gap));
+  --fab-bottom: calc(var(--player-bottom) + var(--player-h) / 2 - 1.5rem);
+  /* Facts sit above player with generous gap */
+  --facts-bottom: calc(var(--player-bottom) + var(--player-h) + var(--stack-gap));
   /* Chat FAB sits above facts */
   --chat-fab-bottom: calc(var(--facts-bottom) + 2rem + var(--stack-gap));
 }
@@ -36,6 +38,8 @@
 @media (min-width: 640px) {
   :root {
     --footer-h: 4rem;            /* more breathing room from bottom at sm+ */
+    --player-footer-gap: 1.5rem; /* slightly more gap at sm+ */
+    --stack-gap: 2rem;           /* more generous gap at sm+ */
     --hud-inset: 1rem;           /* 16px */
   }
 }

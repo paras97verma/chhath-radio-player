@@ -1,16 +1,19 @@
 "use client";
 
 /**
- * RadioPlayer — Compact glassmorphic music player pill.
+ * RadioPlayer — Modern glassmorphic music player pill.
  *
- * Design: Modern, round, elegant glassmorphism with always-visible volume slider.
+ * Design: Framer-inspired modern player with dominant album art, spectrogram,
+ * integrated ReactionBar, and strong visual hierarchy.
  * Features:
- * - Rotating vinyl record album art
- * - Song title + artist (truncated)
- * - Prev / Play-Pause / Next controls
+ * - Large rotating vinyl record album art (w-16 h-16) with glow ring
+ * - Animated spectrogram bars (5 bars, only when playing)
+ * - Song title + artist with live indicator dot
+ * - Prev / Play-Pause / Next controls (hero play button)
  * - Always-visible inline volume slider
- * - Progress bar with seek
+ * - Progress bar with seek (taller, always-visible thumb)
  * - Playlist drawer with clickable songs
+ * - Integrated ReactionBar 🪔 on the right end
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -33,32 +36,32 @@ const IconNext = () => (
   </svg>
 );
 const IconPlay = () => (
-  <svg className="w-6 h-6 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-7 h-7 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
     <path d="M8 5v14l11-7z" />
   </svg>
 );
 const IconPause = () => (
-  <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
     <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
   </svg>
 );
 const IconVolumeMute = () => (
-  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
     <path d="M16.5 12A4.5 4.5 0 0 0 14 7.97v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
   </svg>
 );
 const IconVolumeLow = () => (
-  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
     <path d="M18.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM5 9v6h4l5 5V4L9 9H5z" />
   </svg>
 );
 const IconVolumeHigh = () => (
-  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
     <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
   </svg>
 );
 const IconList = () => (
-  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
     <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z" />
   </svg>
 );
@@ -68,11 +71,49 @@ const IconClose = () => (
   </svg>
 );
 
+// ─── Spectrogram Bars ─────────────────────────────────────────────────────────
+
+const SPEC_BARS = [
+  { dur: "0.7s", delay: "0s",    h: 14 },
+  { dur: "0.9s", delay: "0.15s", h: 20 },
+  { dur: "0.6s", delay: "0.3s",  h: 16 },
+  { dur: "1.1s", delay: "0.1s",  h: 22 },
+  { dur: "0.8s", delay: "0.25s", h: 12 },
+];
+
+function Spectrogram({ isPlaying }: { isPlaying: boolean }) {
+  if (!isPlaying) return null;
+  return (
+    <div className="flex items-end gap-[3px] h-6 shrink-0 self-center">
+      {SPEC_BARS.map((b, i) => (
+        <div
+          key={i}
+          className="spec-bar spec-bar-animated rounded-sm"
+          style={{
+            height: b.h,
+            "--dur": b.dur,
+            "--delay": b.delay,
+            background: "linear-gradient(to top, #f97316, #fb923c88)",
+          } as React.CSSProperties}
+        />
+      ))}
+    </div>
+  );
+}
+
 // ─── Vinyl Album Art ──────────────────────────────────────────────────────────
 
 function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }) {
   return (
-    <div className="relative w-11 h-11 shrink-0">
+    <div
+      className="relative w-12 h-12 shrink-0 rounded-full"
+      style={{
+        boxShadow: isPlaying
+          ? "0 0 22px rgba(249,115,22,0.55), 0 0 8px rgba(249,115,22,0.3)"
+          : "0 2px 10px rgba(0,0,0,0.5)",
+        transition: "box-shadow 0.6s ease",
+      }}
+    >
       {/* Outer vinyl ring */}
       <div
         className="absolute inset-0 rounded-full"
@@ -82,7 +123,7 @@ function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }
         }}
       />
       {/* Grooves */}
-      {[0.82, 0.68, 0.54].map((r, i) => (
+      {[0.85, 0.70, 0.55].map((r, i) => (
         <div
           key={i}
           className="absolute rounded-full border border-white/5"
@@ -96,21 +137,21 @@ function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }
       <div
         className="absolute rounded-full overflow-hidden"
         style={{
-          inset: "22%",
+          inset: "18%",
           animation: isPlaying ? "vinylSpin 4s linear infinite" : "none",
         }}
       >
         {src ? (
           <img src={src} alt="" className="w-full h-full object-cover" />
         ) : (
-          <div className="w-full h-full bg-[#2a1005] flex items-center justify-center text-orange-400/60 text-[8px]">
+          <div className="w-full h-full bg-[#2a1005] flex items-center justify-center text-orange-400/60 text-[10px]">
             🪔
           </div>
         )}
       </div>
       {/* Center spindle */}
       <div
-        className="absolute w-1.5 h-1.5 rounded-full bg-orange-500/80 shadow"
+        className="absolute w-2 h-2 rounded-full bg-orange-500/90 shadow"
         style={{ top: "50%", left: "50%", transform: "translate(-50%,-50%)" }}
       />
     </div>
@@ -177,22 +218,28 @@ function ProgressBar({
   };
 
   return (
-    <div className="flex items-center gap-2 w-full px-4 pb-2.5">
-      <span className="text-white/25 text-[9px] w-6 text-right shrink-0 tabular-nums">{fmt(currentTime)}</span>
-      <div className="relative flex-1 h-1 group cursor-pointer rounded-full"
-           style={{ boxShadow: "inset 2px 2px 5px rgba(0,0,0,0.55), inset -1px -1px 3px rgba(60,30,10,0.18)" }}>
-        <div className="absolute inset-0 rounded-full" style={{ background: "rgba(255,255,255,0.04)" }} />
+    <div className="flex items-center gap-2 w-full px-5 pb-2">
+      <span className="text-white/50 text-[9px] w-6 text-right shrink-0 tabular-nums">{fmt(currentTime)}</span>
+      <div
+        className="relative flex-1 h-1.5 group cursor-pointer rounded-full"
+        style={{ boxShadow: "inset 2px 2px 5px rgba(0,0,0,0.55), inset -1px -1px 3px rgba(60,30,10,0.18)" }}
+      >
+        <div className="absolute inset-0 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }} />
         <div
           className="absolute inset-y-0 left-0 rounded-full transition-all"
           style={{
             width: `${progress * 100}%`,
             background: "linear-gradient(90deg, #fb923c, #f97316)",
+            filter: "drop-shadow(0 0 4px rgba(249,115,22,0.6))",
           }}
         />
-        {/* Thumb dot */}
+        {/* Thumb dot — always visible */}
         <div
-          className="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-orange-400 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
-          style={{ left: `calc(${progress * 100}% - 4px)` }}
+          className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-orange-400 shadow-sm"
+          style={{
+            left: `calc(${progress * 100}% - 6px)`,
+            boxShadow: "0 0 6px rgba(249,115,22,0.7)",
+          }}
         />
         <input
           type="range"
@@ -208,7 +255,7 @@ function ProgressBar({
           aria-label="Seek"
         />
       </div>
-      <span className="text-white/25 text-[9px] w-6 shrink-0 tabular-nums">{fmt(duration)}</span>
+      <span className="text-white/50 text-[9px] w-6 shrink-0 tabular-nums">{fmt(duration)}</span>
     </div>
   );
 }
@@ -231,7 +278,6 @@ function VolumeControl({
   const [volume, setVolume] = useState(externalVolume ?? 80);
   const [isMuted, setIsMuted] = useState(false);
 
-  // Sync with external mute state (e.g. keyboard shortcut M)
   useEffect(() => {
     if (externalMuted !== undefined && externalMuted !== isMuted) {
       setIsMuted(externalMuted);
@@ -239,7 +285,6 @@ function VolumeControl({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalMuted]);
 
-  // Sync with external volume (e.g. keyboard ArrowUp/Down)
   useEffect(() => {
     if (externalVolume !== undefined && externalVolume !== volume) {
       setVolume(externalVolume);
@@ -284,7 +329,7 @@ function VolumeControl({
   const displayVol = isMuted ? 0 : volume;
 
   return (
-    <div className="flex items-center gap-1.5 shrink-0">
+    <div className="flex items-center gap-1 shrink-0">
       <button
         onClick={handleMuteToggle}
         aria-label={isMuted ? "Unmute" : `Volume ${volume}%`}
@@ -292,7 +337,7 @@ function VolumeControl({
       >
         <VolumeIcon />
       </button>
-      <div className="relative w-14 h-1 group">
+      <div className="relative w-12 h-1.5 group">
         <div className="absolute inset-0 rounded-full bg-white/10" />
         <div
           className="absolute inset-y-0 left-0 rounded-full"
@@ -312,14 +357,6 @@ function VolumeControl({
           style={{ accentColor: "#f97316" }}
         />
       </div>
-      {/* Volume % label */}
-      <span
-        className="text-[9px] tabular-nums shrink-0"
-        style={{ color: "rgba(255,255,255,0.3)", minWidth: 22, textAlign: "right" }}
-        aria-hidden="true"
-      >
-        {displayVol}%
-      </span>
     </div>
   );
 }
@@ -429,12 +466,11 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPlaylist, setShowPlaylist] = useState(false);
-  const showPlaylistRef = useRef(false); // always-current ref for keyboard handler
+  const showPlaylistRef = useRef(false);
   const [playlistFocusIdx, setPlaylistFocusIdx] = useState<number>(-1);
 
-  // Keep ref in sync with state
   useEffect(() => { showPlaylistRef.current = showPlaylist; }, [showPlaylist]);
-  // keyFlash: briefly highlights a button when triggered by keyboard shortcut
+
   const [keyFlash, setKeyFlash] = useState<"prev" | "next" | "seekBack" | "seekFwd" | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -443,6 +479,7 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
     setKeyFlash(btn);
     flashTimer.current = setTimeout(() => setKeyFlash(null), 220);
   };
+
   const loadQueue = useRadioStore((s) => s.loadQueue);
   const queue = useRadioStore((s) => s.queue);
   const currentIndex = useRadioStore((s) => s.currentIndex);
@@ -469,10 +506,8 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
       } else if (e.code === "ArrowUp") {
         e.preventDefault();
         if (showPlaylistRef.current) {
-          // Navigate playlist up
           setPlaylistFocusIdx((prev) => Math.max(0, prev <= 0 ? state.currentIndex - 1 : prev - 1));
         } else {
-          // Volume up
           setVolume((prev) => {
             const next = Math.min(100, prev + 5);
             state.adapter!.unMute();
@@ -484,10 +519,8 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
       } else if (e.code === "ArrowDown") {
         e.preventDefault();
         if (showPlaylistRef.current) {
-          // Navigate playlist down
           setPlaylistFocusIdx((prev) => Math.min(state.queue.length - 1, prev < 0 ? state.currentIndex + 1 : prev + 1));
         } else {
-          // Volume down
           setVolume((prev) => {
             const next = Math.max(0, prev - 5);
             if (next === 0) { state.adapter!.mute(); setIsMuted(true); }
@@ -532,7 +565,7 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
-  // Dynamic page title — shows currently playing song in browser tab
+  // Dynamic page title
   useEffect(() => {
     if (!isReady || !currentSong) {
       document.title = "Chhath Radio — छठ के गीत, बिना रुके";
@@ -619,7 +652,7 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
         }
       `}</style>
 
-      <div className="relative w-full max-w-2xl" role="region" aria-label="Radio player">
+      <div className="relative w-full" role="region" aria-label="Radio player">
         {/* Hidden YouTube iframe */}
         <div
           ref={playerContainerRef}
@@ -632,22 +665,28 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
           <PlaylistDrawer onClose={() => setShowPlaylist(false)} onPlaySong={handlePlaySong} />
         )}
 
-        {/* ── Neumorphic pill ── */}
+        {/* ── Modern glassmorphic pill ── */}
         <div
-          className="flex flex-col rounded-[28px] overflow-hidden"
+          className="flex flex-col rounded-[9999px]"
           style={{
-            background: "rgba(12, 5, 2, 0.94)",
+            background: "rgba(10, 4, 2, 0.92)",
+            backdropFilter: "blur(20px)",
+            WebkitBackdropFilter: "blur(20px)",
+            border: "1px solid rgba(255,255,255,0.06)",
             boxShadow: [
-              "8px 8px 24px rgba(0,0,0,0.75)",
-              "-4px -4px 14px rgba(60,30,10,0.28)",
-              "inset 0 1px 0 rgba(255,255,255,0.04)",
+              "8px 8px 28px rgba(0,0,0,0.80)",
+              "-4px -4px 16px rgba(60,30,10,0.28)",
+              "inset 0 1px 0 rgba(255,255,255,0.05)",
             ].join(", "),
           }}
         >
           {/* Main row */}
-          <div className="flex items-center gap-3 px-3.5 pt-3 pb-2.5">
+          <div className="flex items-center gap-3 px-5 pt-2.5 pb-1.5">
             {/* Vinyl art */}
             <VinylArt src={albumArt} isPlaying={isPlaying} />
+
+            {/* Spectrogram — only when playing */}
+            <Spectrogram isPlaying={isPlaying} />
 
             {/* Song info */}
             <div className="flex-1 min-w-0">
@@ -657,8 +696,17 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
                 <p className="text-orange-400/40 text-xs animate-pulse">Tuning in…</p>
               ) : currentSong ? (
                 <>
-                  <p className="text-white/95 text-base font-semibold truncate leading-tight tracking-tight">{currentSong.title}</p>
-                  <p className="text-orange-400/65 text-xs truncate mt-0.5">{currentSong.artist}</p>
+                  <p className="text-white text-sm font-bold truncate leading-tight tracking-tight">{currentSong.title}</p>
+                  <p className="text-orange-400/80 text-[11px] truncate mt-0.5 flex items-center gap-1.5">
+                    {isPlaying && (
+                      <span
+                        className="inline-block w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0"
+                        style={{ animation: "nmFabPulse 1.5s ease-in-out infinite" }}
+                        aria-hidden="true"
+                      />
+                    )}
+                    {currentSong.artist}
+                  </p>
                 </>
               ) : (
                 <p className="text-white/30 text-xs">No songs loaded</p>
@@ -672,30 +720,29 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
                 onClick={handlePrev}
                 disabled={!isReady || currentIndex <= 0}
                 aria-label="Previous song"
-                className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:cursor-not-allowed"
+                className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:cursor-not-allowed hover:scale-110"
                 style={{
                   color: keyFlash === "prev" || keyFlash === "seekBack" ? "#fb923c" : "rgba(255,255,255,0.5)",
                   background: keyFlash === "prev" || keyFlash === "seekBack" ? "rgba(249,115,22,0.22)" : "transparent",
                   boxShadow: keyFlash === "prev" || keyFlash === "seekBack" ? "0 0 14px rgba(249,115,22,0.35)" : "none",
-                  // Dim when disabled but still allow flash to show through
                   opacity: (!isReady || currentIndex <= 0) && !keyFlash ? 0.2 : 1,
                 }}
               >
                 <IconPrev />
               </button>
 
-              {/* Play / Pause — primary action */}
+              {/* Play / Pause — hero button */}
               <button
                 onClick={isPlaying ? pausePlayback : startPlayback}
                 disabled={!isReady || isBuffering}
                 aria-label={isPlaying ? "Pause" : "Play"}
-                className="w-11 h-11 flex items-center justify-center rounded-full transition-all disabled:opacity-30 disabled:cursor-not-allowed mx-0.5"
+                className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:opacity-30 disabled:cursor-not-allowed mx-0.5"
                 style={{
                   background: isReady && !isBuffering
                     ? "linear-gradient(135deg, #fb923c, #ea580c)"
                     : "rgba(255,255,255,0.08)",
                   boxShadow: isReady && !isBuffering
-                    ? "0 0 22px rgba(249,115,22,0.45), 0 2px 8px rgba(0,0,0,0.3)"
+                    ? "0 0 32px rgba(249,115,22,0.65), 0 4px 12px rgba(0,0,0,0.4)"
                     : "none",
                 }}
               >
@@ -716,7 +763,7 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
                 onClick={nextSong}
                 disabled={!isReady}
                 aria-label="Next song"
-                className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed"
+                className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed hover:scale-110"
                 style={{
                   color: keyFlash === "next" || keyFlash === "seekFwd" ? "#fb923c" : "rgba(255,255,255,0.5)",
                   background: keyFlash === "next" || keyFlash === "seekFwd" ? "rgba(249,115,22,0.22)" : "transparent",
@@ -727,9 +774,9 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
               </button>
 
               {/* Divider */}
-              <div className="w-px h-5 bg-white/8 mx-1.5" />
+              <div className="w-px h-5 bg-white/8 mx-1" />
 
-              {/* Volume — always visible inline, synced with keyboard M shortcut */}
+              {/* Volume — always visible inline */}
               {isReady && (
                 <VolumeControl
                   adapterRef={adapterRef}
@@ -746,7 +793,7 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
                 disabled={!isReady}
                 aria-label="Toggle playlist"
                 aria-expanded={showPlaylist}
-                className={`w-9 h-9 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed ml-0.5 ${
+                className={`w-8 h-8 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed ml-0.5 ${
                   showPlaylist
                     ? "text-orange-400 bg-orange-500/15"
                     : "text-white/35 hover:text-white/70 hover:bg-white/8"
