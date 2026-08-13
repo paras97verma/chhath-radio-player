@@ -67,7 +67,7 @@ export default function ChhathCountdown() {
 
   // Fetch dates from backend API only — no local fallback.
   useEffect(() => {
-    const CACHE_KEY = "chhath_dates_cache_v3";
+    const CACHE_KEY = "chhath_dates_cache_v4";
 
     function applyData(json: ChhathDatesResponse) {
       const now = new Date();
