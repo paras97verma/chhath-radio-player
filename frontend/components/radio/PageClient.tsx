@@ -24,8 +24,8 @@ import ShareFloatingButton from "@/components/radio/ShareFloatingButton";
 
 import { UpiDonateModal } from "@/components/radio/Footer";
 
-const LINKEDIN_URL = "https://linkedin.com/in/parasverma";
-const INSTAGRAM_URL = "https://instagram.com/parasverma";
+const LINKEDIN_URL = "https://linkedin.com/in/paras0397";
+const INSTAGRAM_URL = "https://instagram.com/peivee";
 
 // ─── Saffron/orange palette — no yellow tint ─────────────────────────────────
 const C = {

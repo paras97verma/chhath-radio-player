@@ -133,7 +133,7 @@ export default function ListenerCount() {
 
     function connectSSE() {
       try {
-        sse = new EventSource("/api/events");
+        sse = new EventSource(`/api/events?session_id=${sessionId.current}`);
         sse.addEventListener("listener_count", (e: MessageEvent) => {
           try {
             const data = JSON.parse(e.data);

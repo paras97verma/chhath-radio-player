@@ -372,7 +372,6 @@ export default function RadioPlayer() {
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPlaylist, setShowPlaylist] = useState(false);
-
   const loadQueue = useRadioStore((s) => s.loadQueue);
   const queue = useRadioStore((s) => s.queue);
   const currentIndex = useRadioStore((s) => s.currentIndex);
@@ -485,14 +484,13 @@ export default function RadioPlayer() {
 
         await loadQueue(songs, adapter);
         setIsReady(true);
-        // autoplay: 1 in playerVars handles auto-play.
-        // The onStateChange → PLAYING event will update playState.
-        // Nudge play() after a short delay in case autoplay was blocked.
-        setTimeout(async () => {
-          if (!cancelled && useRadioStore.getState().playState !== "PLAYING") {
-            try { await adapter.play(); } catch { /* autoplay blocked — user must click */ }
-          }
-        }, 2000);
+
+        // Attempt play immediately — muted autoplay is allowed by all browsers.
+        try {
+          await adapter.play();
+        } catch {
+          // If even muted autoplay fails (very rare), user can click play manually.
+        }
       } catch (err) {
         if (!cancelled) {
           setError("Could not load radio. Please refresh.");
@@ -527,6 +525,7 @@ export default function RadioPlayer() {
           aria-hidden="true"
         />
 
+        {/* Tap-to-unmute overlay — shown when muted autoplay is active */}
         {/* Playlist drawer */}
         {showPlaylist && isReady && (
           <PlaylistDrawer onClose={() => setShowPlaylist(false)} onPlaySong={handlePlaySong} />
