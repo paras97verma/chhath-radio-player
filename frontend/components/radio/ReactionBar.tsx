@@ -1,13 +1,12 @@
 "use client";
 
 /**
- * ReactionBar — Left-center FAB with radial "pistol barrel" emoji picker.
+ * ReactionBar — Neumorphic FAB with radial emoji picker.
  *
- * UX:
- * - Single 🪔 FAB, fixed left-center
- * - On hover: 5 emoji buttons arc out in a semicircle to the RIGHT (pistol barrel)
- * - On click: calls onReact(emoji) so parent can render full-screen splash
- * - Reaction counts stored in localStorage per day
+ * - Single 🪔 FAB (neumorphic raised)
+ * - On hover: 5 emoji buttons arc out upward (JS trig — inline styles required)
+ * - On click: calls onReact(emoji) → parent renders full-screen splash
+ * - Reaction counts stored in sessionStorage (resets on tab/browser close)
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
@@ -20,36 +19,27 @@ const REACTIONS = [
   { emoji: "☀️", label: "Surya" },
 ];
 
-const STORAGE_KEY = "chhath_reactions_v2";
+const STORAGE_KEY = "chhath_reactions_session_v1";
 const THROTTLE_MS = 800;
 
-interface DayReactions {
-  date: string;
-  counts: Record<string, number>;
-}
+const NM_FAB = "5px 5px 14px rgba(0,0,0,0.70), -3px -3px 8px rgba(60,30,10,0.28)";
+const NM_FAB_ACTIVE = "inset 3px 3px 8px rgba(0,0,0,0.60), inset -1px -1px 4px rgba(60,30,10,0.20)";
+const NM_ARC_BTN = "4px 4px 10px rgba(0,0,0,0.65), -2px -2px 6px rgba(60,30,10,0.25)";
+const NM_ARC_HOVER = "5px 5px 14px rgba(0,0,0,0.70), -3px -3px 8px rgba(60,30,10,0.28), 0 0 12px rgba(249,115,22,0.35)";
 
-function getTodayKey(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function loadTodayReactions(): Record<string, number> {
+function loadSessionReactions(): Record<string, number> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return {};
-    const data: DayReactions = JSON.parse(raw);
-    if (data.date !== getTodayKey()) return {};
-    return data.counts;
+    return JSON.parse(raw) as Record<string, number>;
   } catch { return {}; }
 }
 
-function saveTodayReactions(counts: Record<string, number>) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ date: getTodayKey(), counts }));
-  } catch { /* ignore */ }
+function saveSessionReactions(counts: Record<string, number>) {
+  try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(counts)); } catch { /* ignore */ }
 }
 
 interface Props {
-  /** Called when user taps an emoji — parent renders the full-screen splash */
   onReact?: (emoji: string) => void;
 }
 
@@ -59,9 +49,7 @@ export default function ReactionBar({ onReact }: Props) {
   const lastTap = useRef<Record<string, number>>({});
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    setCounts(loadTodayReactions());
-  }, []);
+  useEffect(() => { setCounts(loadSessionReactions()); }, []);
 
   const handleMouseEnter = () => {
     if (leaveTimer.current) clearTimeout(leaveTimer.current);
@@ -76,65 +64,46 @@ export default function ReactionBar({ onReact }: Props) {
     const now = Date.now();
     if (now - (lastTap.current[emoji] ?? 0) < THROTTLE_MS) return;
     lastTap.current[emoji] = now;
-
     setCounts((prev) => {
       const next = { ...prev, [emoji]: (prev[emoji] ?? 0) + 1 };
-      saveTodayReactions(next);
+      saveSessionReactions(next);
       return next;
     });
-
     setExpanded(false);
     onReact?.(emoji);
   }, [onReact]);
 
   const totalReactions = Object.values(counts).reduce((a, b) => a + b, 0);
 
-  // Radial arc: 5 emojis spread from -80° to +80° (right-facing semicircle)
-  // 0° = right (horizontal), negative = up, positive = down
-  // Equal angular spacing of 40° ensures equidistant arc chord lengths
-  const arcAngles = [-80, -40, 0, 40, 80]; // degrees from horizontal right
-  const arcRadius = 82; // px from FAB center to emoji center
+  // Arc: 5 emojis fan UP and to the RIGHT (away from player pill on the left)
+  // Standard math: 270°=up, 360°=right. Range 250°–350° fans upper-right.
+  const arcAngles = [250, 275, 300, 325, 350];
+  const arcRadius = 110;
 
   return (
     <>
       <style>{`
-        @keyframes reactionFabPulse {
-          0%, 100% { box-shadow: 0 0 0 0 rgba(249,115,22,0.5), 0 4px 20px rgba(0,0,0,0.5); }
-          50%       { box-shadow: 0 0 0 10px rgba(249,115,22,0), 0 4px 20px rgba(0,0,0,0.5); }
-        }
-        @keyframes reactionArcIn {
-          0%   { transform: translate(var(--tx0), var(--ty0)) scale(0.3); opacity: 0; }
-          65%  { transform: translate(var(--tx), var(--ty)) scale(1.15); opacity: 1; }
-          100% { transform: translate(var(--tx), var(--ty)) scale(1); opacity: 1; }
-        }
-        @keyframes reactionArcOut {
-          0%   { transform: translate(var(--tx), var(--ty)) scale(1); opacity: 1; }
-          100% { transform: translate(var(--tx0), var(--ty0)) scale(0.3); opacity: 0; }
+        @keyframes nmFabPulse {
+          0%, 100% { box-shadow: ${NM_FAB}, 0 0 0 0 rgba(249,115,22,0.5); }
+          50%       { box-shadow: ${NM_FAB}, 0 0 0 10px rgba(249,115,22,0); }
         }
       `}</style>
 
-      {/* Hover zone — FAB + invisible arc area */}
       <div
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        style={{
-          position: "relative",
-          width: 48,
-          height: 48,
-          // Extend hover area to cover the arc radius
-          padding: 0,
-        }}
+        className="relative w-12 h-12"
       >
-        {/* Invisible hover extension to the right */}
+        {/* Invisible hover extension upward (covers arc area) */}
         {expanded && (
           <div
             style={{
               position: "absolute",
-              top: "50%",
+              bottom: "50%",
               left: "50%",
-              width: arcRadius + 48,
-              height: arcRadius * 2 + 48,
-              transform: "translate(-24px, -50%)",
+              width: arcRadius * 2 + 48,
+              height: arcRadius + 48,
+              transform: "translate(-50%, 24px)",
               pointerEvents: "auto",
               zIndex: 0,
             }}
@@ -146,31 +115,17 @@ export default function ReactionBar({ onReact }: Props) {
           onClick={() => setExpanded((v) => !v)}
           aria-label={expanded ? "Close reactions" : "Send a reaction"}
           aria-expanded={expanded}
-          title={totalReactions > 0
-            ? `${totalReactions.toLocaleString()} reactions today`
-            : "Send a reaction 🪔"}
+          title={totalReactions > 0 ? `${totalReactions.toLocaleString()} reactions today` : "Send a reaction 🪔"}
+          className="relative z-[2] w-12 h-12 rounded-full flex items-center justify-center
+                     text-[22px] cursor-pointer border-none transition-all duration-200"
           style={{
-            position: "relative",
-            zIndex: 2,
-            width: 48,
-            height: 48,
-            borderRadius: "50%",
             background: expanded
               ? "linear-gradient(135deg, #fb923c, #ea580c)"
-              : "rgba(10,4,2,0.88)",
-            border: `1.5px solid ${expanded ? "rgba(249,115,22,0.7)" : "rgba(249,115,22,0.4)"}`,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 22,
-            backdropFilter: "blur(16px)",
-            WebkitBackdropFilter: "blur(16px)",
+              : "rgba(15,8,4,0.92)",
             boxShadow: expanded
-              ? "0 0 24px rgba(249,115,22,0.45), 0 4px 20px rgba(0,0,0,0.5)"
-              : "0 4px 20px rgba(0,0,0,0.5)",
-            animation: !expanded ? "reactionFabPulse 3s ease-in-out infinite" : "none",
-            transition: "background 0.2s, border-color 0.2s, box-shadow 0.2s",
+              ? `${NM_FAB_ACTIVE}, 0 0 20px rgba(249,115,22,0.5)`
+              : NM_FAB,
+            animation: !expanded ? "nmFabPulse 3s ease-in-out infinite" : "none",
           }}
         >
           🪔
@@ -178,31 +133,17 @@ export default function ReactionBar({ onReact }: Props) {
           {totalReactions > 0 && !expanded && (
             <span
               aria-hidden="true"
-              style={{
-                position: "absolute",
-                top: -4,
-                right: -4,
-                minWidth: 18,
-                height: 18,
-                borderRadius: 9,
-                background: "#f97316",
-                color: "#fff",
-                fontSize: 9,
-                fontWeight: 700,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: "0 4px",
-                lineHeight: 1,
-                border: "1.5px solid rgba(10,4,2,0.9)",
-              }}
+              className="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full
+                         bg-orange-500 text-white text-[9px] font-bold
+                         flex items-center justify-center px-1 leading-none"
+              style={{ boxShadow: "2px 2px 6px rgba(0,0,0,0.6)" }}
             >
               {totalReactions > 99 ? "99+" : totalReactions}
             </span>
           )}
         </button>
 
-        {/* Radial arc emoji buttons */}
+        {/* Radial arc emoji buttons — JS trig positions (inline styles required) */}
         {REACTIONS.map(({ emoji, label }, i) => {
           const angleDeg = arcAngles[i];
           const angleRad = (angleDeg * Math.PI) / 180;
@@ -216,69 +157,36 @@ export default function ReactionBar({ onReact }: Props) {
               onClick={() => handleReaction(emoji)}
               aria-label={`React with ${label}`}
               title={`${label}${counts[emoji] ? ` · ${counts[emoji]}` : ""}`}
+              className="absolute top-1/2 left-1/2 w-10 h-10 rounded-full
+                         flex items-center justify-center text-[18px]
+                         cursor-pointer border-none z-[3]"
               style={{
-                position: "absolute",
-                top: "50%",
-                left: "50%",
-                width: 40,
-                height: 40,
-                borderRadius: "50%",
-                background: "rgba(10,4,2,0.92)",
-                border: "1.5px solid rgba(249,115,22,0.35)",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 18,
-                backdropFilter: "blur(16px)",
-                WebkitBackdropFilter: "blur(16px)",
-                boxShadow: "0 4px 16px rgba(0,0,0,0.55)",
-                zIndex: 3,
-                // CSS custom properties for animation
-                "--tx": `calc(-50% + ${tx}px)`,
-                "--ty": `calc(-50% + ${ty}px)`,
-                "--tx0": "-50%",
-                "--ty0": "-50%",
+                background: "rgba(15,8,4,0.92)",
+                boxShadow: NM_ARC_BTN,
                 transform: expanded
                   ? `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px)) scale(1)`
                   : "translate(-50%, -50%) scale(0.3)",
                 opacity: expanded ? 1 : 0,
                 pointerEvents: expanded ? "auto" : "none",
                 transition: `transform 0.28s cubic-bezier(0.34,1.56,0.64,1) ${delay}ms, opacity 0.2s ease ${delay}ms`,
-              } as React.CSSProperties}
+              }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.transform = `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px)) scale(1.25)`;
-                e.currentTarget.style.background = "rgba(249,115,22,0.22)";
-                e.currentTarget.style.borderColor = "rgba(249,115,22,0.65)";
+                e.currentTarget.style.boxShadow = NM_ARC_HOVER;
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.transform = `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px)) scale(1)`;
-                e.currentTarget.style.background = "rgba(10,4,2,0.92)";
-                e.currentTarget.style.borderColor = "rgba(249,115,22,0.35)";
+                e.currentTarget.style.boxShadow = NM_ARC_BTN;
               }}
             >
               {emoji}
-              {/* Per-emoji count */}
+              {/* Per-emoji count badge */}
               {(counts[emoji] ?? 0) > 0 && (
                 <span
                   aria-hidden="true"
-                  style={{
-                    position: "absolute",
-                    top: -3,
-                    right: -3,
-                    minWidth: 14,
-                    height: 14,
-                    borderRadius: 7,
-                    background: "rgba(249,115,22,0.9)",
-                    color: "#fff",
-                    fontSize: 8,
-                    fontWeight: 700,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: "0 3px",
-                    lineHeight: 1,
-                  }}
+                  className="absolute -top-0.5 -right-0.5 min-w-[14px] h-3.5 rounded-full
+                             bg-orange-500/90 text-white text-[8px] font-bold
+                             flex items-center justify-center px-0.5 leading-none"
                 >
                   {counts[emoji] > 99 ? "99+" : counts[emoji]}
                 </span>

@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * ChhathCountdown — Fetches Chhath Puja dates exclusively from the backend API.
- * No local fallback calculation. Shows a loading state until the API responds.
+ * ChhathCountdown — Fetches Chhath Puja dates from the backend API.
+ * Neumorphic card design. No local fallback — shows loading until API responds.
  *
  * API: GET /api/chhath-dates  →  { year, days: [...] }
  */
@@ -16,7 +16,7 @@ interface ChhathDay {
   name: string;
   name_hindi: string;
   emoji: string;
-  date_ist: string;   // ISO-8601 with IST offset, e.g. "2026-10-28T17:45:00+05:30"
+  date_ist: string;
   time_label: string;
   is_past: boolean;
 }
@@ -42,20 +42,11 @@ function computeCountdown(dateIso: string) {
   };
 }
 
-// ─── Color palette (saffron/orange — no yellow tint) ─────────────────────────
+// ─── Neumorphic shadow constant ───────────────────────────────────────────────
 
-const C = {
-  accent:       "#f97316",               // orange-500
-  accentBright: "#fb923c",               // orange-400
-  accentMuted:  "rgba(249,115,22,0.85)",
-  accentFaint:  "rgba(249,115,22,0.55)",
-  accentGhost:  "rgba(249,115,22,0.25)",
-  accentBorder: "rgba(249,115,22,0.35)",
-  white:        "#ffffff",
-  white85:      "rgba(255,255,255,0.9)",
-  white35:      "rgba(255,255,255,0.55)",
-  completed:    "#ea580c",               // orange-600
-};
+const NM_CARD = "6px 6px 16px rgba(0,0,0,0.72), -3px -3px 10px rgba(60,30,10,0.32), inset 0 1px 0 rgba(255,255,255,0.04)";
+const NM_BTN  = "4px 4px 10px rgba(0,0,0,0.65), -2px -2px 6px rgba(60,30,10,0.28)";
+const NM_BTN_PRESSED = "inset 3px 3px 8px rgba(0,0,0,0.60), inset -1px -1px 4px rgba(60,30,10,0.20)";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -65,7 +56,6 @@ export default function ChhathCountdown() {
   const [activeDayIndex, setActiveDayIndex] = useState(0);
   const [tick, setTick] = useState(0);
 
-  // Fetch dates from backend API only — no local fallback.
   useEffect(() => {
     const CACHE_KEY = "chhath_dates_cache_v4";
 
@@ -84,65 +74,47 @@ export default function ChhathCountdown() {
       return json.days.some((d) => new Date(d.date_ist) > new Date());
     }
 
-    // Check localStorage cache first (only use API-sourced cache)
     try {
       const raw = localStorage.getItem(CACHE_KEY);
       if (raw) {
         const cached: ChhathDatesResponse = JSON.parse(raw);
-        if (cacheValid(cached)) {
-          applyData(cached);
-          // Still re-fetch in background to keep fresh
-        } else {
-          localStorage.removeItem(CACHE_KEY);
-        }
+        if (cacheValid(cached)) applyData(cached);
+        else localStorage.removeItem(CACHE_KEY);
       }
     } catch { /* localStorage unavailable */ }
 
-    // Always fetch from backend
     const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     fetch(`${API_BASE}/api/chhath-dates`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`API ${r.status}`);
-        return r.json() as Promise<ChhathDatesResponse>;
-      })
+      .then((r) => { if (!r.ok) throw new Error(`API ${r.status}`); return r.json() as Promise<ChhathDatesResponse>; })
       .then((json) => {
         try { localStorage.setItem(CACHE_KEY, JSON.stringify(json)); } catch { /* ignore */ }
         applyData(json);
         setError(false);
       })
-      .catch(() => {
-        // Only show error if we have no cached data at all
-        setData((prev) => {
-          if (!prev) setError(true);
-          return prev;
-        });
-      });
+      .catch(() => { setData((prev) => { if (!prev) setError(true); return prev; }); });
   }, []);
 
-  // Tick every second for countdown
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Loading state
+  // Loading
   if (!data && !error) {
     return (
-      <div style={{ minWidth: 140, textAlign: "center" }}>
-        <p style={{ color: C.accentFaint, fontSize: "11px", letterSpacing: "0.1em" }}>
-          Loading…
-        </p>
+      <div className="min-w-[140px] text-center rounded-2xl px-3 py-2"
+           style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_CARD }}>
+        <p className="text-[11px] tracking-[0.1em] text-orange-500/55">Loading…</p>
       </div>
     );
   }
 
-  // Error state (API unreachable, no cache)
+  // Error
   if (error || !data) {
     return (
-      <div style={{ minWidth: 140, textAlign: "center" }}>
-        <p style={{ color: C.accentFaint, fontSize: "11px" }}>
-          🪔 Chhath dates unavailable
-        </p>
+      <div className="min-w-[140px] text-center rounded-2xl px-3 py-2"
+           style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_CARD }}>
+        <p className="text-[11px] text-orange-500/55">🪔 Unavailable</p>
       </div>
     );
   }
@@ -158,81 +130,46 @@ export default function ChhathCountdown() {
 
   return (
     <div
-      className="flex flex-col items-center gap-2 text-center select-none"
-      style={{
-        minWidth: 160,
-        background: "rgba(0,0,0,0.50)",
-        backdropFilter: "blur(10px)",
-        WebkitBackdropFilter: "blur(10px)",
-        border: "1px solid rgba(249,115,22,0.22)",
-        borderRadius: "16px",
-        padding: "10px 16px",
-      }}
+      className="flex flex-col items-center gap-2 text-center select-none min-w-[160px] rounded-2xl px-4 py-2.5"
+      style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_CARD }}
     >
       {/* Header */}
-      <p
-        className="text-xs font-bold tracking-widest uppercase"
-        style={{ color: C.accentMuted, letterSpacing: "0.15em" }}
-      >
+      <p className="text-xs font-bold tracking-[0.15em] uppercase text-orange-500/85">
         Chhath {data.year}
       </p>
 
-      {/* Day name pill — click to cycle */}
+      {/* Day pill — click to cycle */}
       <button
         onClick={() => setActiveDayIndex((activeDayIndex + 1) % days.length)}
         title={`Click to see next day — ${days[(activeDayIndex + 1) % days.length]?.name}`}
-        style={{
-          background: C.accentGhost,
-          border: `1px solid ${C.accentBorder}`,
-          borderRadius: "18px",
-          padding: "6px 14px",
-          cursor: "pointer",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: "3px",
-          transition: "all 0.2s ease",
-        }}
+        className="flex flex-col items-center gap-0.5 rounded-[18px] px-3.5 py-1.5 cursor-pointer
+                   transition-all duration-200"
+        style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_BTN }}
+        onMouseDown={(e) => { e.currentTarget.style.boxShadow = NM_BTN_PRESSED; }}
+        onMouseUp={(e) => { e.currentTarget.style.boxShadow = NM_BTN; }}
+        onMouseLeave={(e) => { e.currentTarget.style.boxShadow = NM_BTN; }}
         aria-label={`${selectedDay.name} — click to switch day`}
       >
         <div className="flex items-center gap-2">
-          <span style={{ fontSize: "20px", lineHeight: 1 }}>{selectedDay.emoji}</span>
-          <span
-            className="font-semibold text-sm"
-            style={{ color: C.white }}
-          >
-            {selectedDay.name}
-          </span>
+          <span className="text-xl leading-none">{selectedDay.emoji}</span>
+          <span className="font-semibold text-sm text-white">{selectedDay.name}</span>
         </div>
         <span
-          className="text-xs"
-          style={{
-            color: C.accentBright,
-            fontWeight: 700,
-            fontFamily: "'Noto Sans Devanagari', 'Mangal', sans-serif",
-          }}
+          className="text-xs font-bold text-orange-400"
+          style={{ fontFamily: "'Noto Sans Devanagari', 'Mangal', sans-serif" }}
         >
           {selectedDay.name_hindi}
         </span>
-        <span
-          className="text-[11px]"
-          style={{ color: C.white35 }}
-        >
-          {selectedDay.time_label}
-        </span>
+        <span className="text-[11px] text-white/55">{selectedDay.time_label}</span>
+
         {/* Day indicator dots */}
         <div className="flex gap-1 mt-1">
           {days.map((_, i) => (
             <span
               key={i}
-              style={{
-                width: "5px",
-                height: "5px",
-                borderRadius: "50%",
-                background: i === activeDayIndex ? C.accent : "rgba(255,255,255,0.25)",
-                display: "inline-block",
-                transition: "background 0.2s",
-              }}
+              className={`w-1.5 h-1.5 rounded-full inline-block transition-colors duration-200 ${
+                i === activeDayIndex ? "bg-orange-500" : "bg-white/20"
+              }`}
             />
           ))}
         </div>
@@ -240,84 +177,45 @@ export default function ChhathCountdown() {
 
       {/* Countdown or Completed */}
       {isPast ? (
-        <p className="text-xs font-semibold" style={{ color: C.completed }}>
-          ✓ Completed
-        </p>
+        <p className="text-xs font-semibold text-orange-600">✓ Completed</p>
       ) : (
         <div
-          className="flex items-center gap-1 font-mono"
-          style={{ color: isImminent ? C.accentBright : C.white85 }}
+          className={`flex items-center gap-1 font-mono ${isImminent ? "text-orange-400" : "text-white/90"}`}
           aria-live="off"
         >
           {countdown.days > 0 && (
             <>
               <div className="flex flex-col items-center">
-                <span className="text-xl font-bold tabular-nums leading-none">
-                  {countdown.days}
-                </span>
-                <span
-                  className="text-[9px] uppercase tracking-wider mt-0.5"
-                  style={{ color: C.accentFaint }}
-                >
-                  din
-                </span>
+                <span className="text-xl font-bold tabular-nums leading-none">{countdown.days}</span>
+                <span className="text-[9px] uppercase tracking-wider mt-0.5 text-orange-500/55">din</span>
               </div>
-              <span className="text-lg mb-3" style={{ color: C.accentGhost }}>:</span>
+              <span className="text-lg mb-3 text-orange-500/25">:</span>
             </>
           )}
           <div className="flex flex-col items-center">
-            <span className="text-xl font-bold tabular-nums leading-none">
-              {pad(countdown.hours)}
-            </span>
-            <span
-              className="text-[9px] uppercase tracking-wider mt-0.5"
-              style={{ color: C.accentFaint }}
-            >
-              hr
-            </span>
+            <span className="text-xl font-bold tabular-nums leading-none">{pad(countdown.hours)}</span>
+            <span className="text-[9px] uppercase tracking-wider mt-0.5 text-orange-500/55">hr</span>
           </div>
-          <span className="text-lg mb-3" style={{ color: C.accentGhost }}>:</span>
+          <span className="text-lg mb-3 text-orange-500/25">:</span>
           <div className="flex flex-col items-center">
-            <span className="text-xl font-bold tabular-nums leading-none">
-              {pad(countdown.minutes)}
-            </span>
-            <span
-              className="text-[9px] uppercase tracking-wider mt-0.5"
-              style={{ color: C.accentFaint }}
-            >
-              min
-            </span>
+            <span className="text-xl font-bold tabular-nums leading-none">{pad(countdown.minutes)}</span>
+            <span className="text-[9px] uppercase tracking-wider mt-0.5 text-orange-500/55">min</span>
           </div>
-          <span className="text-lg mb-3" style={{ color: C.accentGhost }}>:</span>
+          <span className="text-lg mb-3 text-orange-500/25">:</span>
           <div className="flex flex-col items-center">
-            <span
-              className={`text-xl font-bold tabular-nums leading-none${
-                isImminent ? " animate-pulse" : ""
-              }`}
-            >
+            <span className={`text-xl font-bold tabular-nums leading-none${isImminent ? " animate-pulse" : ""}`}>
               {pad(countdown.seconds)}
             </span>
-            <span
-              className="text-[9px] uppercase tracking-wider mt-0.5"
-              style={{ color: C.accentFaint }}
-            >
-              sec
-            </span>
+            <span className="text-[9px] uppercase tracking-wider mt-0.5 text-orange-500/55">sec</span>
           </div>
         </div>
       )}
 
       {isToday && (
-        <p
-          className="text-xs font-semibold animate-pulse"
-          style={{ color: C.accentBright }}
-        >
-          🪔 Aaj hai!
-        </p>
+        <p className="text-xs font-semibold animate-pulse text-orange-400">🪔 Aaj hai!</p>
       )}
 
-      {/* suppress unused tick warning */}
-      <span style={{ display: "none" }}>{tick}</span>
+      <span className="hidden">{tick}</span>
     </div>
   );
 }

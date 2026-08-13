@@ -1,8 +1,43 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0a0402;
+  --foreground: #f5e6d3;
+
+  /* ── Neumorphic dark warm palette ── */
+  --nm-bg: rgba(15, 8, 4, 0.92);
+  --nm-shadow-dark: rgba(0, 0, 0, 0.72);
+  --nm-shadow-light: rgba(60, 30, 10, 0.32);
+  --nm-accent: #f97316;
+  --nm-accent-glow: rgba(249, 115, 22, 0.45);
+
+  /* ── Layout grid — all positions relative to these tokens ── */
+  /* Footer height */
+  --footer-h: 3.5rem;           /* more breathing room from bottom */
+  /* Player height (pill + progress bar) */
+  --player-h: 5.5rem;           /* slightly taller player */
+  /* Gap between stacked elements */
+  --stack-gap: 1rem;            /* more gap between stacked elements */
+  /* HUD edge inset */
+  --hud-inset: 0.75rem;         /* 12px */
+
+  /* Derived positions (bottom of viewport) */
+  /* Player sits directly on footer */
+  --player-bottom: var(--footer-h);
+  /* FABs (reaction, help) sit at vertical center of player */
+  --fab-bottom: calc(var(--footer-h) + var(--player-h) / 2 - 1.5rem);
+  /* Facts sit above player with gap */
+  --facts-bottom: calc(var(--footer-h) + var(--player-h) + var(--stack-gap));
+  /* Chat FAB sits above facts */
+  --chat-fab-bottom: calc(var(--facts-bottom) + 2rem + var(--stack-gap));
+}
+
+/* Responsive overrides at sm (640px+) */
+@media (min-width: 640px) {
+  :root {
+    --footer-h: 4rem;            /* more breathing room from bottom at sm+ */
+    --hud-inset: 1rem;           /* 16px */
+  }
 }
 
 @theme inline {
@@ -12,17 +47,88 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* ── Neumorphic shadow utilities ───────────────────────────────────────────── */
+
+/* Raised card / pill — extruded from surface */
+.nm-raised {
+  box-shadow:
+    6px 6px 16px rgba(0, 0, 0, 0.72),
+    -3px -3px 10px rgba(60, 30, 10, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* Larger raised card */
+.nm-card {
+  box-shadow:
+    8px 8px 22px rgba(0, 0, 0, 0.75),
+    -4px -4px 14px rgba(60, 30, 10, 0.30),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Pressed / inset element */
+.nm-pressed {
+  box-shadow:
+    inset 4px 4px 10px rgba(0, 0, 0, 0.65),
+    inset -2px -2px 6px rgba(60, 30, 10, 0.25);
+}
+
+/* Button — raised with hover/active states */
+.nm-btn {
+  box-shadow:
+    4px 4px 10px rgba(0, 0, 0, 0.65),
+    -2px -2px 6px rgba(60, 30, 10, 0.28);
+  transition: box-shadow 0.15s ease, transform 0.1s ease;
+}
+.nm-btn:hover {
+  box-shadow:
+    5px 5px 14px rgba(0, 0, 0, 0.70),
+    -3px -3px 8px rgba(60, 30, 10, 0.30);
+}
+.nm-btn:active {
+  box-shadow:
+    inset 3px 3px 8px rgba(0, 0, 0, 0.60),
+    inset -1px -1px 4px rgba(60, 30, 10, 0.20);
+  transform: scale(0.97);
+}
+
+/* Pill (player, listener count) */
+.nm-pill {
+  box-shadow:
+    8px 8px 24px rgba(0, 0, 0, 0.72),
+    -4px -4px 14px rgba(60, 30, 10, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* FAB button */
+.nm-fab {
+  box-shadow:
+    5px 5px 14px rgba(0, 0, 0, 0.70),
+    -3px -3px 8px rgba(60, 30, 10, 0.28);
+  transition: box-shadow 0.2s ease, transform 0.15s ease;
+}
+.nm-fab:hover {
+  box-shadow:
+    6px 6px 18px rgba(0, 0, 0, 0.75),
+    -3px -3px 10px rgba(60, 30, 10, 0.30);
+}
+.nm-fab:active {
+  box-shadow:
+    inset 3px 3px 8px rgba(0, 0, 0, 0.60),
+    inset -1px -1px 4px rgba(60, 30, 10, 0.20);
+  transform: scale(0.95);
+}
+
+/* Inset track (progress bar, input) */
+.nm-inset {
+  box-shadow:
+    inset 3px 3px 8px rgba(0, 0, 0, 0.60),
+    inset -1px -1px 4px rgba(60, 30, 10, 0.22);
 }
 
 /* ── Custom animations ─────────────────────────────────────────────────────── */
@@ -34,4 +140,121 @@ body {
   42%  { transform: scale(1.04); box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.3); }
   70%  { transform: scale(1);    box-shadow: 0 0 0 0   rgba(239, 68, 68, 0);   }
   100% { transform: scale(1);    box-shadow: 0 0 0 0   rgba(239, 68, 68, 0);   }
+}
+
+@keyframes diyaPulse {
+  0%, 100% { transform: scale(1);    filter: drop-shadow(0 0 24px rgba(249,115,22,0.6)); }
+  50%       { transform: scale(1.08); filter: drop-shadow(0 0 48px rgba(249,115,22,0.9)); }
+}
+
+@keyframes nmFabPulse {
+  0%, 100% {
+    box-shadow: 5px 5px 14px rgba(0,0,0,0.70), -3px -3px 8px rgba(60,30,10,0.28),
+                0 0 0 0 rgba(249,115,22,0.5);
+  }
+  50% {
+    box-shadow: 5px 5px 14px rgba(0,0,0,0.70), -3px -3px 8px rgba(60,30,10,0.28),
+                0 0 0 10px rgba(249,115,22,0);
+  }
+}
+
+@keyframes factCursorBlink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+@keyframes factGlow {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(251,146,60,0.45)); }
+  50%       { filter: drop-shadow(0 0 10px rgba(251,146,60,0.75)); }
+}
+
+@keyframes chatMsgIn {
+  0%   { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes chatDrawerIn {
+  0%   { opacity: 0; transform: translateX(20px) scale(0.97); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes reactionArcIn {
+  0%   { transform: translate(var(--tx0), var(--ty0)) scale(0.3); opacity: 0; }
+  65%  { transform: translate(var(--tx), var(--ty)) scale(1.15); opacity: 1; }
+  100% { transform: translate(var(--tx), var(--ty)) scale(1); opacity: 1; }
+}
+
+/* ── Gradient text utilities ───────────────────────────────────────────────── */
+
+.fact-gradient-text {
+  background: linear-gradient(
+    90deg,
+    #fff7ed 0%,
+    #fdba74 25%,
+    #fb923c 55%,
+    #fde68a 85%,
+    #fff7ed 100%
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: factGlow 3s ease-in-out infinite;
+}
+
+.fact-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 0.85em;
+  background: rgba(251, 146, 60, 0.9);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: factCursorBlink 0.6s step-end infinite;
+}
+
+.clock-time-3d {
+  background: linear-gradient(180deg, #fb923c 0%, #f97316 45%, #ea580c 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 1px 0 rgba(120, 40, 0, 0.6)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4));
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+.clock-time-3d:hover {
+  filter: drop-shadow(0 1px 0 rgba(120, 40, 0, 0.6)) drop-shadow(0 3px 8px rgba(249, 115, 22, 0.35));
+}
+
+.clock-date-3d {
+  background: linear-gradient(180deg, #fb923c 0%, #f97316 55%, #ea580c 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 1px 0 rgba(120, 40, 0, 0.45));
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+
+.chat-scrollbar::-webkit-scrollbar { width: 4px; }
+.chat-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.chat-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(249, 115, 22, 0.3);
+  border-radius: 2px;
+}
+
+/* ── Spectrogram animation ─────────────────────────────────────────────────── */
+
+@keyframes spec-bar {
+  0%   { transform: scaleY(0.2); }
+  50%  { transform: scaleY(1);   }
+  100% { transform: scaleY(0.2); }
+}
+.spec-bar {
+  transform-origin: bottom;
+  border-radius: 1.5px;
+  width: 3px;
+}
+.spec-bar-animated {
+  animation: spec-bar var(--dur) ease-in-out var(--delay) infinite;
 }

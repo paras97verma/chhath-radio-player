@@ -3,11 +3,11 @@
 /**
  * TuneInSplash — Full-screen branded splash shown on first page load.
  *
- * The user must click "Tune In" to start the radio. This click registers
- * as a browser user gesture, which lifts autoplay restrictions so the
- * YouTube player can start with full unmuted audio immediately.
+ * Covers the entire canvas with a near-opaque dark overlay.
+ * Neumorphic card in the center with diya animation + Tune In button.
  *
- * On click: fades out (300ms CSS transition) → calls onTuneIn() → unmounts.
+ * On click: fades out (300ms) → calls onTuneIn() → unmounts.
+ * The click registers as a browser user gesture, lifting autoplay restrictions.
  */
 
 import { useState } from "react";
@@ -22,13 +22,10 @@ export default function TuneInSplash({ onTuneIn }: TuneInSplashProps) {
   const handleClick = () => {
     if (fading) return;
     setFading(true);
-    // onTuneIn is called after the fade-out transition completes
   };
 
   const handleTransitionEnd = () => {
-    if (fading) {
-      onTuneIn();
-    }
+    if (fading) onTuneIn();
   };
 
   return (
@@ -38,123 +35,81 @@ export default function TuneInSplash({ onTuneIn }: TuneInSplashProps) {
       aria-modal="true"
       onClick={handleClick}
       onTransitionEnd={handleTransitionEnd}
+      className="fixed inset-0 z-[9999] flex items-center justify-center
+                 cursor-pointer select-none transition-opacity duration-300"
       style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 100,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "2rem",
-        background: "rgba(8, 2, 2, 0.92)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
+        background: "#050201",
         opacity: fading ? 0 : 1,
-        transition: "opacity 300ms ease-out",
-        cursor: "pointer",
-        userSelect: "none",
       }}
     >
-      {/* Diya icon */}
+      {/* Neumorphic center card */}
       <div
+        className="flex flex-col items-center gap-6 sm:gap-8 px-8 sm:px-12 py-10 sm:py-12
+                   rounded-3xl mx-4"
         style={{
-          fontSize: "5rem",
-          lineHeight: 1,
-          filter: "drop-shadow(0 0 32px rgba(249,115,22,0.7))",
-          animation: "diyaPulse 2.5s ease-in-out infinite",
+          background: "rgba(15, 8, 4, 0.95)",
+          boxShadow:
+            "12px 12px 32px rgba(0,0,0,0.85), -6px -6px 20px rgba(60,30,10,0.30), inset 0 1px 0 rgba(255,255,255,0.05)",
         }}
-        aria-hidden="true"
+        onClick={(e) => e.stopPropagation()}
       >
-        🪔
-      </div>
+        {/* Diya icon — pulsing */}
+        <div
+          className="text-7xl sm:text-8xl leading-none"
+          style={{ animation: "diyaPulse 2.5s ease-in-out infinite" }}
+          aria-hidden="true"
+        >
+          🪔
+        </div>
 
-      {/* Title */}
-      <div style={{ textAlign: "center" }}>
-        <h1
+        {/* Title */}
+        <div className="text-center">
+          <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-wide"
+              style={{ textShadow: "0 2px 16px rgba(249,115,22,0.35)" }}>
+            Chhath Radio
+          </h1>
+          <p
+            className="text-base sm:text-lg text-orange-500/80 mt-2 font-semibold tracking-wide"
+            style={{ fontFamily: "'Noto Sans Devanagari', 'Mangal', sans-serif" }}
+          >
+            छठ के गीत, बिना रुके
+          </p>
+        </div>
+
+        {/* Tune In button — neumorphic raised */}
+        <button
+          autoFocus
+          onClick={(e) => {
+            e.stopPropagation();
+            handleClick();
+          }}
+          aria-label="Start Chhath Radio"
+          className="flex items-center gap-2.5 px-8 sm:px-10 py-3 sm:py-3.5 rounded-full
+                     text-white text-lg sm:text-xl font-bold tracking-wide
+                     active:scale-95 transition-all duration-150 border-none cursor-pointer"
           style={{
-            fontSize: "2rem",
-            fontWeight: 800,
-            color: "#ffffff",
-            letterSpacing: "0.04em",
-            margin: 0,
-            textShadow: "0 2px 16px rgba(249,115,22,0.4)",
+            background: "linear-gradient(135deg, #fb923c, #ea580c)",
+            boxShadow:
+              "5px 5px 16px rgba(0,0,0,0.65), -3px -3px 10px rgba(60,30,10,0.28), 0 0 24px rgba(249,115,22,0.35), inset 0 1px 0 rgba(255,255,255,0.15)",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.boxShadow =
+              "6px 6px 20px rgba(0,0,0,0.70), -3px -3px 12px rgba(60,30,10,0.30), 0 0 36px rgba(249,115,22,0.50), inset 0 1px 0 rgba(255,255,255,0.15)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.boxShadow =
+              "5px 5px 16px rgba(0,0,0,0.65), -3px -3px 10px rgba(60,30,10,0.28), 0 0 24px rgba(249,115,22,0.35), inset 0 1px 0 rgba(255,255,255,0.15)";
           }}
         >
-          Chhath Radio
-        </h1>
-        <p
-          style={{
-            fontSize: "1rem",
-            color: "rgba(249,115,22,0.75)",
-            margin: "0.4rem 0 0",
-            fontFamily: "'Noto Sans Devanagari', 'Mangal', sans-serif",
-            fontWeight: 600,
-            letterSpacing: "0.03em",
-          }}
-        >
-          छठ के गीत, बिना रुके
+          <span aria-hidden="true">🎵</span>
+          Tune In
+        </button>
+
+        {/* Hint */}
+        <p className="text-xs text-white/25 tracking-widest">
+          Click anywhere to start
         </p>
       </div>
-
-      {/* Tune In button */}
-      <button
-        autoFocus
-        onClick={(e) => {
-          e.stopPropagation();
-          handleClick();
-        }}
-        aria-label="Start Chhath Radio"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.6rem",
-          padding: "0.85rem 2.4rem",
-          borderRadius: "100px",
-          border: "none",
-          background: "linear-gradient(135deg, #fb923c, #ea580c)",
-          color: "#fff",
-          fontSize: "1.1rem",
-          fontWeight: 700,
-          letterSpacing: "0.04em",
-          cursor: "pointer",
-          boxShadow: "0 0 32px rgba(249,115,22,0.5), 0 4px 16px rgba(0,0,0,0.4)",
-          transition: "transform 120ms ease, box-shadow 120ms ease",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.transform = "scale(1.05)";
-          e.currentTarget.style.boxShadow =
-            "0 0 48px rgba(249,115,22,0.7), 0 6px 20px rgba(0,0,0,0.5)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = "scale(1)";
-          e.currentTarget.style.boxShadow =
-            "0 0 32px rgba(249,115,22,0.5), 0 4px 16px rgba(0,0,0,0.4)";
-        }}
-      >
-        <span aria-hidden="true">🎵</span>
-        Tune In
-      </button>
-
-      {/* Subtle hint */}
-      <p
-        style={{
-          fontSize: "0.75rem",
-          color: "rgba(255,255,255,0.25)",
-          margin: 0,
-          letterSpacing: "0.05em",
-        }}
-      >
-        Click anywhere to start
-      </p>
-
-      {/* Keyframe for diya pulse */}
-      <style>{`
-        @keyframes diyaPulse {
-          0%, 100% { transform: scale(1);    filter: drop-shadow(0 0 24px rgba(249,115,22,0.6)); }
-          50%       { transform: scale(1.08); filter: drop-shadow(0 0 48px rgba(249,115,22,0.9)); }
-        }
-      `}</style>
     </div>
   );
 }

@@ -3,15 +3,26 @@
 /**
  * PageClient — Client Component containing all interactive UI for the main page.
  *
- * Layers (back → front):
- *   z-0  : GhatSceneLoader (Three.js canvas — immersive 3D Chhath Puja ghat)
- *   z-1  : Dark gradient overlay
- *   z-10 : Bottom gradient for player readability
- *   z-20 : HUD elements (listener count top-left, countdown top-center, clock top-right)
- *   z-20 : Bottom pill music player
- *   z-20 : Footer bar
- *   z-30 : ShareFloatingButton
- *   z-100: TuneInSplash (until user clicks)
+ * Layout (fixed positions, Tailwind-only, no hardcoded px):
+ *
+ *   TOP ROW:
+ *     ListenerCount   → fixed top-3 left-3
+ *     ChhathCountdown → fixed top-3 left-1/2 -translate-x-1/2
+ *     LiveClock       → fixed top-3 right-3
+ *
+ *   SIDES:
+ *     ShareFloatingButton → fixed left-0 top-1/2 -translate-y-1/2  (z-30)
+ *     LiveChatDrawer FAB  → fixed right-3 bottom-24               (z-45)
+ *
+ *   BOTTOM STACK (from bottom up):
+ *     Footer          → fixed bottom-0   h-11 sm:h-12
+ *     RadioPlayer     → fixed bottom-12  (above footer)
+ *     ChhathFacts     → fixed bottom-28  (above player)
+ *     HelpButton "?"  → fixed bottom-14 left-3   (player-left)
+ *     ReactionFAB     → fixed bottom-14 right-3  (player-right)
+ *
+ *   OVERLAY:
+ *     TuneInSplash    → fixed inset-0 z-[100]  (until user clicks)
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -29,23 +40,10 @@ import KeyboardHelpButton from "@/components/radio/KeyboardHelpButton";
 import PwaInstallBanner from "@/components/radio/PwaInstallBanner";
 import MilestoneCelebration from "@/components/radio/MilestoneCelebration";
 import LiveChatDrawer from "@/components/radio/LiveChatDrawer";
-
 import { UpiDonateModal } from "@/components/radio/Footer";
 
 const LINKEDIN_URL = "https://linkedin.com/in/paras0397";
 const INSTAGRAM_URL = "https://instagram.com/peivee";
-
-// ─── Saffron/orange palette — no yellow tint ─────────────────────────────────
-const C = {
-  accent:       "#f97316",                    // orange-500
-  accentBright: "#fb923c",                    // orange-400
-  accentMuted:  "rgba(249,115,22,0.90)",
-  accentFaint:  "rgba(249,115,22,0.70)",
-  accentBorder: "rgba(249,115,22,0.30)",
-  accentBorderHover: "rgba(249,115,22,0.6)",
-  footerBg:     "rgba(8,2,2,0.92)",
-  footerBorder: "rgba(249,115,22,0.18)",
-};
 
 // ─── Social Icons ─────────────────────────────────────────────────────────────
 
@@ -97,174 +95,141 @@ export default function PageClient() {
   const handleSplashDone = useCallback(() => setSplashEmoji(null), []);
 
   return (
-    <main className="fixed inset-0 overflow-hidden bg-[#0d0505]">
-      {/* Layer 0: Immersive 3D Chhath Puja Ghat (Three.js / React Three Fiber) */}
+    <>
+    <main className="fixed inset-0 overflow-hidden bg-[#0a0402]">
+
+      {/* ── Layer 0: 3D Chhath Ghat scene ── */}
       <GhatSceneLoader audioNode={audioNodeRef.current} />
 
-      {/* Layer 1: Dark gradient overlay for readability */}
+      {/* ── Layer 1: Top vignette for HUD readability ── */}
       <div
-        className="absolute inset-0 z-[1]"
+        className="absolute inset-0 z-[1] pointer-events-none"
         style={{
-          background: "linear-gradient(to bottom, rgba(8,2,2,0.45) 0%, rgba(8,2,2,0.15) 40%, rgba(8,2,2,0.55) 100%)",
+          background: "linear-gradient(to bottom, rgba(5,2,1,0.55) 0%, rgba(5,2,1,0.10) 30%, transparent 55%, rgba(5,2,1,0.65) 100%)",
         }}
         aria-hidden="true"
       />
 
-      {/* Layer 10: Bottom gradient for player readability */}
+      {/* ── Layer 10: Bottom gradient for player readability ── */}
       <div
         className="absolute inset-0 z-10 pointer-events-none"
         style={{
-          background:
-            "linear-gradient(to top, rgba(8,2,2,0.85) 0%, rgba(8,2,2,0.3) 35%, transparent 65%)",
+          background: "linear-gradient(to top, rgba(5,2,1,0.90) 0%, rgba(5,2,1,0.40) 30%, transparent 55%)",
         }}
         aria-hidden="true"
       />
 
-      {/* Layer 20: Top-left — listener count */}
-      <div className="absolute top-4 left-4 z-20">
+      {/* ══════════════════════════════════════════════════════════
+          TOP ROW HUD
+      ══════════════════════════════════════════════════════════ */}
+
+      {/* Top-left: Listener count */}
+      <div className="fixed z-20" style={{ top: "var(--hud-inset)", left: "var(--hud-inset)" }}>
         <ListenerCount onCountChange={handleCountChange} />
       </div>
 
-      {/* Layer 20: Top-center — Chhath countdown */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
+      {/* Top-center: Chhath countdown */}
+      <div className="fixed z-20" style={{ top: "var(--hud-inset)", left: "50%", transform: "translateX(-50%)" }}>
         <ChhathCountdown />
       </div>
 
-      {/* Layer 20: Top-right — live clock */}
-      <div className="absolute top-4 right-4 z-20">
+      {/* Top-right: Live clock */}
+      <div className="fixed z-20" style={{ top: "var(--hud-inset)", right: "var(--hud-inset)" }}>
         <LiveClock />
       </div>
 
-      {/* Layer 20: Center-bottom — Chhath facts ticker (always shown) */}
-      <div className="absolute bottom-[210px] left-0 right-0 z-20 flex justify-center px-4 pointer-events-none">
+      {/* ══════════════════════════════════════════════════════════
+          BOTTOM STACK (footer → player → facts)
+      ══════════════════════════════════════════════════════════ */}
+
+      {/* Facts ticker — above player, derived from CSS layout tokens */}
+      <div
+        className="fixed left-0 right-0 z-20 flex justify-center px-4 pointer-events-none"
+        style={{ bottom: "var(--facts-bottom)" }}
+      >
         <ChhathFacts />
       </div>
 
-      {/* Layer 20: Left-center — Reaction FAB (vertically centered) */}
-      <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
-        <ReactionBar onReact={handleReact} />
-      </div>
-
-      {/* Layer 25: Bottom-right — Keyboard shortcut help button */}
-      <div className="absolute bottom-[80px] right-4 z-[25]">
-        <KeyboardHelpButton />
-      </div>
-
-      {/* Layer 20: Bottom — pill music player (raised above footer) */}
-      <div className="absolute bottom-[72px] left-0 right-0 z-20 flex justify-center px-4">
-        <RadioPlayer hasTunedIn={hasTunedIn} />
-      </div>
-
-      {/* Layer 100: Tune In splash — shown until user clicks to start */}
-      {!hasTunedIn && (
-        <TuneInSplash onTuneIn={() => setHasTunedIn(true)} />
-      )}
-
-      {/* Milestone celebration overlay */}
-      <MilestoneCelebration count={listenerCount} />
-
-      {/* Full-screen reaction splash — rendered at root so position:fixed works */}
-      <ReactionSplash emoji={splashEmoji} onDone={handleSplashDone} />
-
-      {/* PWA install banner — shown after 30s on eligible devices */}
-      <PwaInstallBanner />
-
-      {/* Layer 20: Footer bar */}
+      {/* Player row — help button | player pill | reaction FAB — all in one flex row */}
       <div
-        className="absolute bottom-0 left-0 right-0 z-20"
+        className="fixed left-0 right-0 z-20 flex items-center justify-center gap-2 px-3 sm:px-4"
+        style={{ bottom: "var(--player-bottom)" }}
+      >
+        {/* Keyboard help "?" — left of player */}
+        <div className="shrink-0 self-center">
+          <KeyboardHelpButton />
+        </div>
+
+        {/* Radio player pill — center */}
+        <div className="flex-1 min-w-0 max-w-4xl">
+          <RadioPlayer hasTunedIn={hasTunedIn} />
+        </div>
+
+        {/* Reaction FAB — right of player */}
+        <div className="shrink-0 self-center">
+          <ReactionBar onReact={handleReact} />
+        </div>
+      </div>
+
+      {/* Footer bar — neumorphic, full-width */}
+      <div
+        className="fixed bottom-0 left-0 right-0 z-20 h-11 sm:h-12"
         style={{
-          background: C.footerBg,
-          borderTop: `1px solid ${C.footerBorder}`,
-          backdropFilter: "blur(16px)",
+          background: "rgba(8, 3, 1, 0.97)",
+          boxShadow: "0 -4px 16px rgba(0,0,0,0.65), 0 -1px 0 rgba(249,115,22,0.18)",
         }}
       >
-        <div className="flex items-center justify-between px-5 py-3 gap-3">
-
-          {/* Left: छठ के गीत, बिना रुके */}
+        <div className="flex items-center justify-between h-full px-4 sm:px-5 gap-3">
+          {/* Left: Hindi tagline */}
           <span
-            className="text-xs shrink-0 hidden sm:block"
-            style={{
-              color: "#fb923c",
-              fontFamily: "'Noto Sans Devanagari', 'Mangal', sans-serif",
-              fontWeight: 700,
-              letterSpacing: "0.02em",
-              textShadow: "0 0 12px rgba(249,115,22,0.4)",
-            }}
+            className="text-xs shrink-0 hidden sm:block text-orange-400 font-bold tracking-wide"
+            style={{ fontFamily: "'Noto Sans Devanagari', 'Mangal', sans-serif" }}
           >
             छठ के गीत, बिना रुके
           </span>
 
-          {/* Center: Made with 🪔 for Chhathi Maiya — by peivee */}
-          <span
-            className="text-xs text-center flex-1"
-            style={{ color: C.accentFaint }}
-          >
+          {/* Center: attribution */}
+          <span className="text-xs text-center flex-1 text-orange-500/70">
             Made with 🪔 for Chhathi Maiya — by{" "}
             <a
               href={LINKEDIN_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="font-semibold transition-colors"
-              style={{ color: C.accentMuted }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = C.accentBright)}
-              onMouseLeave={(e) => (e.currentTarget.style.color = C.accentMuted)}
+              className="font-semibold text-orange-500/90 hover:text-orange-400 transition-colors"
             >
               peivee
             </a>
           </span>
 
-          {/* Right: Social icons + Donate */}
+          {/* Right: social + donate */}
           <div className="flex items-center gap-2 shrink-0">
-            {/* Instagram */}
             <a
               href={INSTAGRAM_URL}
               target="_blank"
               rel="noopener noreferrer"
               aria-label="Instagram"
-              className="w-7 h-7 flex items-center justify-center rounded-full transition-all"
-              style={{ color: C.accentFaint }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = C.accent)}
-              onMouseLeave={(e) => (e.currentTarget.style.color = C.accentFaint)}
+              className="w-7 h-7 flex items-center justify-center rounded-full text-orange-500/70 hover:text-orange-500 transition-colors"
             >
               <IconInstagram />
             </a>
-
-            {/* LinkedIn */}
             <a
               href={LINKEDIN_URL}
               target="_blank"
               rel="noopener noreferrer"
               aria-label="LinkedIn"
-              className="w-7 h-7 flex items-center justify-center rounded-full transition-all"
-              style={{ color: C.accentFaint }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = C.accent)}
-              onMouseLeave={(e) => (e.currentTarget.style.color = C.accentFaint)}
+              className="w-7 h-7 flex items-center justify-center rounded-full text-orange-500/70 hover:text-orange-500 transition-colors"
             >
               <IconLinkedIn />
             </a>
-
-            {/* Divider */}
-            <span style={{ color: C.accentBorder }}>·</span>
-
-            {/* Donate button */}
+            <span className="text-orange-500/30">·</span>
             <button
               onClick={() => setShowDonate(true)}
               aria-label="Donate"
-              className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all"
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold
+                         text-orange-500/90 hover:text-orange-400 transition-all duration-150"
               style={{
-                background: "rgba(249,115,22,0.1)",
-                border: `1px solid ${C.accentBorder}`,
-                color: C.accentMuted,
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "rgba(249,115,22,0.2)";
-                e.currentTarget.style.color = C.accent;
-                e.currentTarget.style.borderColor = C.accentBorderHover;
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "rgba(249,115,22,0.1)";
-                e.currentTarget.style.color = C.accentMuted;
-                e.currentTarget.style.borderColor = C.accentBorder;
+                background: "rgba(15, 8, 4, 0.88)",
+                boxShadow: "3px 3px 8px rgba(0,0,0,0.6), -1px -1px 4px rgba(60,30,10,0.25), inset 0 1px 0 rgba(255,255,255,0.03)",
               }}
             >
               <IconHeart />
@@ -274,14 +239,33 @@ export default function PageClient() {
         </div>
       </div>
 
-      {/* Layer 30: Fixed 3D share button — right-center edge, independent of radio player */}
+      {/* ══════════════════════════════════════════════════════════
+          SIDE ELEMENTS
+      ══════════════════════════════════════════════════════════ */}
+
+      {/* Left-center: 3D share tab */}
       <ShareFloatingButton />
+
+      {/* Right: Live chat drawer + FAB */}
+      {sessionId && <LiveChatDrawer sessionId={sessionId} />}
+
+      {/* Milestone celebration */}
+      <MilestoneCelebration count={listenerCount} />
+
+      {/* Full-screen reaction splash */}
+      <ReactionSplash emoji={splashEmoji} onDone={handleSplashDone} />
+
+      {/* PWA install banner */}
+      <PwaInstallBanner />
 
       {/* UPI Donate Modal */}
       {showDonate && <UpiDonateModal onClose={() => setShowDonate(false)} />}
-
-      {/* Live Chat Drawer */}
-      {sessionId && <LiveChatDrawer sessionId={sessionId} />}
     </main>
+
+    {/* ── TuneInSplash rendered OUTSIDE <main> to avoid overflow-hidden clipping ── */}
+    {!hasTunedIn && (
+      <TuneInSplash onTuneIn={() => setHasTunedIn(true)} />
+    )}
+    </>
   );
 }

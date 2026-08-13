@@ -179,8 +179,9 @@ function ProgressBar({
   return (
     <div className="flex items-center gap-2 w-full px-4 pb-2.5">
       <span className="text-white/25 text-[9px] w-6 text-right shrink-0 tabular-nums">{fmt(currentTime)}</span>
-      <div className="relative flex-1 h-0.5 group cursor-pointer">
-        <div className="absolute inset-0 rounded-full bg-white/10" />
+      <div className="relative flex-1 h-1 group cursor-pointer rounded-full"
+           style={{ boxShadow: "inset 2px 2px 5px rgba(0,0,0,0.55), inset -1px -1px 3px rgba(60,30,10,0.18)" }}>
+        <div className="absolute inset-0 rounded-full" style={{ background: "rgba(255,255,255,0.04)" }} />
         <div
           className="absolute inset-y-0 left-0 rounded-full transition-all"
           style={{
@@ -340,13 +341,10 @@ function PlaylistDrawer({
   return (
     <div className="absolute bottom-full left-0 right-0 mb-3">
       <div
-        className="rounded-2xl overflow-hidden shadow-2xl"
+        className="rounded-2xl overflow-hidden"
         style={{
-          background: "rgba(10, 4, 2, 0.95)",
-          border: "1px solid rgba(255, 255, 255, 0.08)",
-          backdropFilter: "blur(32px) saturate(180%)",
-          WebkitBackdropFilter: "blur(32px) saturate(180%)",
-          boxShadow: "0 24px 64px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06)",
+          background: "rgba(10, 4, 2, 0.97)",
+          boxShadow: "10px 10px 28px rgba(0,0,0,0.80), -5px -5px 16px rgba(60,30,10,0.28), inset 0 1px 0 rgba(255,255,255,0.04)",
         }}
       >
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/5">
@@ -634,18 +632,15 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
           <PlaylistDrawer onClose={() => setShowPlaylist(false)} onPlaySong={handlePlaySong} />
         )}
 
-        {/* ── Glassmorphic pill ── */}
+        {/* ── Neumorphic pill ── */}
         <div
           className="flex flex-col rounded-[28px] overflow-hidden"
           style={{
-            background: "rgba(12, 5, 2, 0.78)",
-            backdropFilter: "blur(32px) saturate(180%)",
-            WebkitBackdropFilter: "blur(32px) saturate(180%)",
-            border: "1px solid rgba(255, 255, 255, 0.10)",
+            background: "rgba(12, 5, 2, 0.94)",
             boxShadow: [
-              "0 24px 64px rgba(0, 0, 0, 0.55)",
-              "inset 0 1px 0 rgba(255, 255, 255, 0.08)",
-              "0 0 0 1px rgba(249, 115, 22, 0.06)",
+              "8px 8px 24px rgba(0,0,0,0.75)",
+              "-4px -4px 14px rgba(60,30,10,0.28)",
+              "inset 0 1px 0 rgba(255,255,255,0.04)",
             ].join(", "),
           }}
         >

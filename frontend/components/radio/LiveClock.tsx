@@ -1,19 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
 /**
- * LiveClock
- *
- * Displays the current local time and date synced to the user's device timezone.
- * - Time format toggles between 24-hour and 12-hour (AM/PM) on click.
- * - Updates every second via requestAnimationFrame for accuracy.
- * - Renders nothing on the server to avoid SSR hydration mismatch.
+ * LiveClock — Displays current local time and date.
+ * - Toggles 12h/24h on click
+ * - Updates every second via requestAnimationFrame
+ * - Neumorphic card design
+ * - Renders nothing on server (avoids SSR hydration mismatch)
  */
 
-const DATE_LOCALE = "en-IN"; // BCP-47 tag; change if needed
+import { useEffect, useState } from "react";
 
-// ─── Exported helpers (also used in tests) ───────────────────────────────────
+const DATE_LOCALE = "en-IN";
+
+// ─── Exported helpers (used in tests) ────────────────────────────────────────
 
 export function formatTime(d: Date, hour12: boolean): string {
   const raw = d.toLocaleTimeString(DATE_LOCALE, {
@@ -22,7 +21,6 @@ export function formatTime(d: Date, hour12: boolean): string {
     second: "2-digit",
     hour12,
   });
-  // Normalise AM/PM to uppercase (some locales render "am"/"pm" in lowercase)
   return hour12 ? raw.replace(/\b(am|pm)\b/i, (m) => m.toUpperCase()) : raw;
 }
 
@@ -36,23 +34,21 @@ export function formatDate(d: Date): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+const NM_CARD = "6px 6px 16px rgba(0,0,0,0.72), -3px -3px 10px rgba(60,30,10,0.32), inset 0 1px 0 rgba(255,255,255,0.04)";
+
 export default function LiveClock() {
   const [now, setNow] = useState<Date | null>(null);
-  const [hour12, setHour12] = useState(false); // default: 24-hour
+  const [hour12, setHour12] = useState(false);
 
   useEffect(() => {
     setNow(new Date());
-
     let rafId: number;
     let lastSec = -1;
 
     function tick() {
       const d = new Date();
       const sec = d.getSeconds();
-      if (sec !== lastSec) {
-        lastSec = sec;
-        setNow(new Date(d));
-      }
+      if (sec !== lastSec) { lastSec = sec; setNow(new Date(d)); }
       rafId = requestAnimationFrame(tick);
     }
 
@@ -60,7 +56,6 @@ export default function LiveClock() {
     return () => cancelAnimationFrame(rafId);
   }, []);
 
-  // Render nothing on the server / before hydration
   if (!now) return null;
 
   const timeStr = formatTime(now, hour12);
@@ -69,74 +64,37 @@ export default function LiveClock() {
   const nextModeLabel = hour12 ? "24h" : "12h";
 
   return (
-    <>
-      <style>{`
-        .clock-time-3d {
-          background: linear-gradient(180deg, #fb923c 0%, #f97316 45%, #ea580c 100%);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          background-clip: text;
-          filter: drop-shadow(0 1px 0 rgba(120,40,0,0.6)) drop-shadow(0 2px 6px rgba(0,0,0,0.4));
-          font-weight: 700;
-          letter-spacing: 0.12em;
-        }
-        .clock-time-3d:hover {
-          filter: drop-shadow(0 1px 0 rgba(120,40,0,0.6)) drop-shadow(0 3px 8px rgba(249,115,22,0.35));
-        }
-        .clock-date-3d {
-          background: linear-gradient(180deg, #fb923c 0%, #f97316 55%, #ea580c 100%);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          background-clip: text;
-          filter: drop-shadow(0 1px 0 rgba(120,40,0,0.45));
-          opacity: 1;
-          font-weight: 600;
-          letter-spacing: 0.06em;
-        }
-      `}</style>
-      <div
-        data-testid="live-clock"
-        style={{
-          background: "rgba(0,0,0,0.50)",
-          backdropFilter: "blur(10px)",
-          WebkitBackdropFilter: "blur(10px)",
-          border: "1px solid rgba(249,115,22,0.22)",
-          borderRadius: "16px",
-          padding: "8px 14px",
-        }}
-        className="text-center tabular-nums select-none"
-        aria-live="off"
-        aria-label={`Current time: ${timeStr}, date: ${dateStr}`}
+    <div
+      data-testid="live-clock"
+      className="text-center tabular-nums select-none rounded-2xl px-3.5 py-2 sm:px-4 sm:py-2.5"
+      style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_CARD }}
+      aria-live="off"
+      aria-label={`Current time: ${timeStr}, date: ${dateStr}`}
+    >
+      {/* Time — click to toggle 12/24h */}
+      <button
+        data-testid="clock-time"
+        onClick={() => setHour12((v) => !v)}
+        title={`Switch to ${nextModeLabel} format`}
+        aria-label={`Time: ${timeStr}. Click to switch to ${nextModeLabel} format`}
+        className="clock-time-3d text-xl sm:text-2xl font-mono cursor-pointer bg-transparent border-none p-0 transition-[filter]"
       >
-        {/* Time — click to toggle 12/24h */}
-        <button
-          data-testid="clock-time"
-          onClick={() => setHour12((v) => !v)}
-          title={`Switch to ${nextModeLabel} format`}
-          aria-label={`Time: ${timeStr}. Click to switch to ${nextModeLabel} format`}
-          className="clock-time-3d text-2xl font-mono cursor-pointer bg-transparent border-none p-0 transition-[filter]"
-        >
-          {timeStr}
-        </button>
+        {timeStr}
+      </button>
 
-        {/* Format badge */}
-        <span
-          data-testid="clock-format-badge"
-          className="ml-2 text-xs font-mono align-middle"
-          style={{ color: "rgba(255,255,255,0.5)" }}
-          aria-hidden="true"
-        >
-          {modeLabel}
-        </span>
+      {/* Format badge */}
+      <span
+        data-testid="clock-format-badge"
+        className="ml-2 text-xs font-mono align-middle text-white/45"
+        aria-hidden="true"
+      >
+        {modeLabel}
+      </span>
 
-        {/* Date */}
-        <p
-          data-testid="clock-date"
-          className="clock-date-3d text-xs font-mono mt-0.5"
-        >
-          {dateStr}
-        </p>
-      </div>
-    </>
+      {/* Date */}
+      <p data-testid="clock-date" className="clock-date-3d text-xs font-mono mt-0.5">
+        {dateStr}
+      </p>
+    </div>
   );
 }
