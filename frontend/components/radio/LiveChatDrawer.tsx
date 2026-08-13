@@ -148,41 +148,87 @@ export default function LiveChatDrawer({ sessionId }: Props) {
 
   return (
     <>
-      {/* ── FAB — fixed bottom-right, above footer ── */}
+      {/* ── FAB — pill-shaped, fixed bottom-right, above footer ── */}
       <button
         onClick={() => setIsOpen((v) => !v)}
         aria-label={isOpen ? "Close live chat" : "Open live chat"}
         title={isOpen ? "Close chat" : "Live Chat"}
-        className="fixed z-[45] w-12 h-12 rounded-full flex items-center justify-center
-                   text-xl cursor-pointer transition-all duration-200"
+        className="fixed z-[45] flex items-center cursor-pointer select-none"
         style={{
           bottom: "var(--chat-fab-bottom)",
           right: "var(--hud-inset)",
-          border: isOpen ? "none" : "1.5px solid rgba(249,115,22,0.55)",
-          background: isOpen ? "linear-gradient(135deg, #fb923c, #ea580c)" : "rgba(20,10,4,0.94)",
+          transform: "translateY(50%)",
+          gap: isOpen ? 0 : "0.45rem",
+          padding: isOpen ? "0.55rem" : "0.45rem 0.9rem 0.45rem 0.7rem",
+          borderRadius: "9999px",
+          border: isOpen ? "none" : "1.5px solid rgba(249,115,22,0.50)",
+          background: isOpen
+            ? "linear-gradient(135deg, #fb923c, #ea580c)"
+            : "rgba(14,7,2,0.95)",
           boxShadow: isOpen
-            ? "inset 3px 3px 8px rgba(0,0,0,0.55), 0 0 20px rgba(249,115,22,0.45)"
-            : `${NM_FAB}, 0 0 14px rgba(249,115,22,0.30)`,
+            ? "inset 3px 3px 8px rgba(0,0,0,0.55), 0 0 22px rgba(249,115,22,0.50)"
+            : `${NM_FAB}, 0 0 16px rgba(249,115,22,0.28)`,
+          transition: "all 0.25s cubic-bezier(0.34,1.4,0.64,1)",
+          backdropFilter: "blur(8px)",
+          WebkitBackdropFilter: "blur(8px)",
+          minWidth: isOpen ? "2.5rem" : undefined,
+          minHeight: "2.5rem",
+          justifyContent: "center",
         }}
       >
         {isOpen ? (
-          <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white">
+          /* Close state — just an X icon, pill collapses to circle */
+          <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white shrink-0">
             <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
           </svg>
         ) : (
-          <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-orange-400">
-            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
-          </svg>
-        )}
-        {!isOpen && unreadCount > 0 && (
-          <span
-            className="absolute -top-1 -right-1 w-[18px] h-[18px] rounded-full
-                       bg-red-500 text-white text-[10px] font-bold
-                       flex items-center justify-center"
-            style={{ boxShadow: "2px 2px 6px rgba(0,0,0,0.6)" }}
-          >
-            {unreadCount > 9 ? "9+" : unreadCount}
-          </span>
+          /* Open state — waveform icon + label + live dot */
+          <>
+            {/* Waveform / chat icon */}
+            <span className="relative shrink-0 flex items-center justify-center w-[22px] h-[22px]">
+              <svg viewBox="0 0 24 24" fill="none" className="w-[22px] h-[22px]">
+                {/* Chat bubble with waveform bars inside */}
+                <path
+                  d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+                  fill="rgba(249,115,22,0.18)"
+                  stroke="rgba(249,115,22,0.85)"
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                />
+                {/* Waveform bars */}
+                <rect x="7"  y="10" width="1.5" height="4" rx="0.75" fill="#fb923c"/>
+                <rect x="10" y="8"  width="1.5" height="6" rx="0.75" fill="#fb923c"/>
+                <rect x="13" y="9"  width="1.5" height="5" rx="0.75" fill="#fb923c"/>
+                <rect x="16" y="11" width="1.5" height="3" rx="0.75" fill="#fb923c"/>
+              </svg>
+            </span>
+
+            {/* Label */}
+            <span
+              className="text-[12px] font-semibold tracking-wide whitespace-nowrap"
+              style={{ color: "rgba(249,115,22,0.95)" }}
+            >
+              Live Chat
+            </span>
+
+            {/* Live pulse dot */}
+            <span className="relative flex shrink-0 w-2 h-2 ml-0.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-60" />
+              <span className="relative inline-flex rounded-full w-2 h-2 bg-orange-400" />
+            </span>
+
+            {/* Unread badge */}
+            {unreadCount > 0 && (
+              <span
+                className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full
+                           bg-red-500 text-white text-[10px] font-bold
+                           flex items-center justify-center"
+                style={{ boxShadow: "2px 2px 6px rgba(0,0,0,0.6)" }}
+              >
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
+          </>
         )}
       </button>
 
@@ -285,7 +331,11 @@ export default function LiveChatDrawer({ sessionId }: Props) {
                   fontSize: cooldown > 0 ? 11 : 16,
                 }}
               >
-                {cooldown > 0 ? cooldown : "🪔"}
+                {cooldown > 0 ? cooldown : (
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                    <path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/>
+                  </svg>
+                )}
               </button>
             </div>
             <p className="text-white/15 text-[10px] mt-1.5 text-center">

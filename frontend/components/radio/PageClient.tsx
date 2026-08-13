@@ -101,9 +101,18 @@ export default function PageClient() {
       {/* ── Layer 0: 3D Chhath Ghat scene ── */}
       <GhatSceneLoader audioNode={audioNodeRef.current} />
 
-      {/* ── Layer 1: Top vignette for HUD readability ── */}
+      {/* ── Layer 1: Full-canvas dark overlay for wallpaper depth ── */}
       <div
         className="absolute inset-0 z-[1] pointer-events-none"
+        style={{
+          background: "rgba(5,2,1,0.38)",
+        }}
+        aria-hidden="true"
+      />
+
+      {/* ── Layer 2: Top + bottom vignette for HUD readability ── */}
+      <div
+        className="absolute inset-0 z-[2] pointer-events-none"
         style={{
           background: "linear-gradient(to bottom, rgba(5,2,1,0.55) 0%, rgba(5,2,1,0.10) 30%, transparent 55%, rgba(5,2,1,0.65) 100%)",
         }}
