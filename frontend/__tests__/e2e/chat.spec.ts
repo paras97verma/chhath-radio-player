@@ -1,5 +1,5 @@
 /**
- * E2E tests for the Live Chat drawer.
+ * E2E tests for the Community Chat drawer.
  *
  * Runs against the live Next.js dev server (http://localhost:3000).
  * Verifies the chat FAB, drawer open/close, message sending, and rate limiting.
@@ -44,7 +44,7 @@ test.describe("Live Chat Drawer", () => {
     const fab = page.getByRole("button", { name: /open live chat/i });
     await fab.click();
 
-    const drawer = page.getByRole("dialog", { name: "Live Chat" });
+    const drawer = page.getByRole("dialog", { name: "Community Chat" });
     await expect(drawer).toBeVisible({ timeout: 5_000 });
   });
 
@@ -52,7 +52,7 @@ test.describe("Live Chat Drawer", () => {
     const fab = page.getByRole("button", { name: /open live chat/i });
     await fab.click();
 
-    await expect(page.getByRole("dialog", { name: "Live Chat" })).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole("dialog", { name: "Community Chat" })).toBeVisible({ timeout: 5_000 });
 
     // Message input
     const messageInput = page.getByPlaceholder(/Jai Chhathi Maiya/i);
@@ -66,7 +66,7 @@ test.describe("Live Chat Drawer", () => {
   test("typing a message and clicking send shows the message in the chat list", async ({ page }) => {
     const fab = page.getByRole("button", { name: /open live chat/i });
     await fab.click();
-    await expect(page.getByRole("dialog", { name: "Live Chat" })).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole("dialog", { name: "Community Chat" })).toBeVisible({ timeout: 5_000 });
 
     const messageInput = page.getByPlaceholder(/Jai Chhathi Maiya/i);
     await messageInput.fill("Test message from E2E");
@@ -83,7 +83,7 @@ test.describe("Live Chat Drawer", () => {
   test("sending a second message within 3 seconds shows rate limit feedback", async ({ page }) => {
     const fab = page.getByRole("button", { name: /open live chat/i });
     await fab.click();
-    await expect(page.getByRole("dialog", { name: "Live Chat" })).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole("dialog", { name: "Community Chat" })).toBeVisible({ timeout: 5_000 });
 
     const messageInput = page.getByPlaceholder(/Jai Chhathi Maiya/i);
     const sendButton = page.getByRole("button", { name: "Send message", exact: true });
@@ -114,10 +114,10 @@ test.describe("Live Chat Drawer", () => {
     const fab = page.getByRole("button", { name: /open live chat/i });
     await fab.click();
 
-    const drawer = page.getByRole("dialog", { name: "Live Chat" });
+    const drawer = page.getByRole("dialog", { name: "Community Chat" });
     await expect(drawer).toBeVisible({ timeout: 5_000 });
 
-    // Click the close button (FAB toggles the drawer)
+    // Click the close button in the drawer header
     const closeButton = page.getByRole("button", { name: /close live chat/i });
     await closeButton.click();
 
