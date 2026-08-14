@@ -37,7 +37,7 @@ on:
         default: 'Manual deploy'
 
 env:
-  NODE_VERSION: '26'
+  NODE_VERSION: '24'
 
 jobs:
   # ── Job 1: Run unit tests ─────────────────────────────────────────────────
