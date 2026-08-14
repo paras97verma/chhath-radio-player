@@ -639,4 +639,76 @@ trigger_deploy() {
 
   while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
     ATTEMPT=$((ATTEMPT + 1))
-    printf "\r  ${CYAN}›${NC
+    SPIN_CHAR="${SPINNER[$((ATTEMPT % 10))]}"
+    printf "\r  ${CYAN}›${NC} %s Attempt %d/%d — waiting 15s..." "$SPIN_CHAR" "$ATTEMPT" "$MAX_ATTEMPTS"
+
+    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$HEALTH_URL" 2>/dev/null || echo "000")
+    if [ "$HTTP_STATUS" = "200" ]; then
+      echo ""
+      success "Backend is healthy! ($HEALTH_URL)"
+      return
+    fi
+
+    sleep 15
+  done
+
+  echo ""
+  warn "Backend did not become healthy within $((MAX_ATTEMPTS * 15))s."
+  warn "Check your Render dashboard for build logs."
+  link "https://dashboard.render.com"
+}
+
+# =============================================================================
+# SECTION 12: Print summary
+# =============================================================================
+print_summary() {
+  step "SECTION 12: Deployment Summary"
+
+  echo ""
+  echo -e "${BOLD}${GREEN}  🎉 Chhath Radio deployment setup complete!${NC}"
+  echo ""
+  divider
+  echo ""
+  echo -e "  ${BOLD}URLs${NC}"
+  echo -e "  Frontend : ${CYAN}$NEXT_PUBLIC_SITE_URL${NC}"
+  echo -e "  Backend  : ${CYAN}$NEXT_PUBLIC_API_URL${NC}"
+  echo -e "  Health   : ${CYAN}$NEXT_PUBLIC_API_URL/api/health${NC}"
+  echo -e "  Admin    : ${CYAN}$NEXT_PUBLIC_SITE_URL/admin${NC}"
+  echo ""
+  divider
+  echo ""
+  echo -e "  ${BOLD}Next steps${NC}"
+  echo -e "  1. Push to ${BOLD}main${NC} branch to trigger automatic deploys via GitHub Actions"
+  echo -e "  2. Log in to the admin panel and add songs to the queue"
+  echo -e "  3. Share ${CYAN}$NEXT_PUBLIC_SITE_URL${NC} with your listeners"
+  echo ""
+  echo -e "  ${DIM}Local .env files written:${NC}"
+  echo -e "  ${DIM}  backend/.env${NC}"
+  echo -e "  ${DIM}  frontend/.env.local${NC}"
+  echo ""
+  divider
+  echo ""
+  echo -e "  ${DIM}छठ मइया की जय! 🪔${NC}"
+  echo ""
+}
+
+# =============================================================================
+# MAIN
+# =============================================================================
+main() {
+  print_banner
+  check_prerequisites
+  collect_supabase
+  collect_upstash
+  collect_secrets
+  collect_render
+  collect_vercel
+  write_env_files
+  set_github_secrets
+  set_render_env_vars
+  set_vercel_env_vars
+  trigger_deploy
+  print_summary
+}
+
+main "$@"
