@@ -32,6 +32,12 @@ on:
     paths:
       - 'backend/**'
       - '.github/workflows/backend.yml'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual trigger'
+        required: false
+        default: 'Manual deploy'
 
 env:
   PYTHON_VERSION: '3.12'
@@ -121,7 +127,8 @@ jobs:
               {"key":"ALGORITHM","value":"HS256"},
               {"key":"ACCESS_TOKEN_EXPIRE_MINUTES","value":"1440"},
               {"key":"WEB_CONCURRENCY","value":"1"},
-              {"key":"LOG_LEVEL","value":"info"}
+              {"key":"LOG_LEVEL","value":"info"},
+              {"key":"CALENDARIFIC_API_KEY","value":"${{ secrets.CALENDARIFIC_API_KEY }}"}
             ]')
           echo "Render env-vars update: HTTP $HTTP_CODE"
           if [ "$HTTP_CODE" != "200" ]; then
