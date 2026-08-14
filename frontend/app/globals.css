@@ -191,6 +191,11 @@ body {
   100% { opacity: 1; transform: translateX(0) scale(1); }
 }
 
+@keyframes chatDrawerUpIn {
+  0%   { opacity: 0; transform: translateY(100%); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
 @keyframes reactionArcIn {
   0%   { transform: translate(var(--tx0), var(--ty0)) scale(0.3); opacity: 0; }
   65%  { transform: translate(var(--tx), var(--ty)) scale(1.15); opacity: 1; }

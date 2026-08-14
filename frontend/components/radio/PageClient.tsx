@@ -93,6 +93,8 @@ export default function PageClient() {
   const [isMobile, setIsMobile] = useState(false);
   const [showPlaylist, setShowPlaylist] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const [mobileChatUnread, setMobileChatUnread] = useState(0);
   const audioNodeRef = useRef<AudioNode | null>(null);
 
   useEffect(() => {
@@ -226,6 +228,62 @@ export default function PageClient() {
         )}
       </div>
 
+      {/* ══════════════════════════════════════════════════════════
+          MOBILE CHAT FAB — fixed bottom-right, above footer
+          Hidden when any other modal is open
+      ══════════════════════════════════════════════════════════ */}
+      {/* Mobile chat FAB — top-left, below the listener count pill, clear of all other elements */}
+      {isMobile && sessionId && !(showPlaylist || showShare || showDonate || showChat) && (
+        <div
+          className="fixed z-30 sm:hidden"
+          style={{ top: "calc(var(--hud-inset) + 2.6rem)", left: "var(--hud-inset)" }}
+        >
+          <button
+            onClick={() => setShowChat((v) => !v)}
+            aria-label="Open live chat"
+            className="relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-full cursor-pointer select-none"
+            style={{
+              background: "rgba(14,7,2,0.92)",
+              border: "1px solid rgba(249,115,22,0.40)",
+              boxShadow: "4px 4px 10px rgba(0,0,0,0.65), -2px -2px 6px rgba(60,30,10,0.22), 0 0 10px rgba(249,115,22,0.18)",
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
+            }}
+          >
+            {/* Chat icon */}
+            <svg viewBox="0 0 24 24" fill="none" className="w-4 h-4 shrink-0">
+              <path
+                d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+                fill="rgba(249,115,22,0.18)"
+                stroke="rgba(249,115,22,0.80)"
+                strokeWidth="1.5"
+                strokeLinejoin="round"
+              />
+              <rect x="7"  y="10" width="1.5" height="4" rx="0.75" fill="#fb923c"/>
+              <rect x="10" y="8"  width="1.5" height="6" rx="0.75" fill="#fb923c"/>
+              <rect x="13" y="9"  width="1.5" height="5" rx="0.75" fill="#fb923c"/>
+              <rect x="16" y="11" width="1.5" height="3" rx="0.75" fill="#fb923c"/>
+            </svg>
+            {/* Live pulse dot */}
+            <span className="relative flex shrink-0 w-1.5 h-1.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60" />
+              <span className="relative inline-flex rounded-full w-1.5 h-1.5 bg-green-400" />
+            </span>
+            {/* Unread badge */}
+            {mobileChatUnread > 0 && (
+              <span
+                className="absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] px-0.5 rounded-full
+                           bg-red-500 text-white text-[9px] font-bold
+                           flex items-center justify-center"
+                style={{ boxShadow: "2px 2px 5px rgba(0,0,0,0.6)" }}
+              >
+                {mobileChatUnread > 9 ? "9+" : mobileChatUnread}
+              </span>
+            )}
+          </button>
+        </div>
+      )}
+
       {/* Keyboard help "?" — desktop only */}
       <div
         className="fixed z-30 hidden sm:block"
@@ -330,8 +388,8 @@ export default function PageClient() {
     )}
 
     {/* Mobile only: ReactionBar — OUTSIDE <main> to avoid overflow-hidden clipping.
-        Hidden when playlist, share modal, or donate modal is open. right:8px so FAB is fully visible. */}
-    {!(isMobile && (showPlaylist || showShare || showDonate)) && (
+        Hidden when playlist, share modal, donate modal, or chat is open. right:8px so FAB is fully visible. */}
+    {!(isMobile && (showPlaylist || showShare || showDonate || showChat)) && (
       <div
         className="sm:hidden"
         style={{
@@ -344,6 +402,17 @@ export default function PageClient() {
       >
         <ReactionBar onReact={handleReact} arcDirection="left" />
       </div>
+    )}
+
+    {/* Mobile only: LiveChatDrawer bottom-sheet — OUTSIDE <main> to avoid overflow-hidden clipping */}
+    {isMobile && sessionId && (
+      <LiveChatDrawer
+        sessionId={sessionId}
+        listenerCount={listenerCount}
+        mobileOpen={showChat}
+        onMobileClose={() => setShowChat(false)}
+        onUnreadChange={(n) => setMobileChatUnread(n)}
+      />
     )}
     </>
   );

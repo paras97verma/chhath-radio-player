@@ -91,10 +91,30 @@ function MessageBubble({ msg, isOwn }: { msg: ChatMessage; isOwn: boolean }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-interface Props { sessionId: string; listenerCount?: number | null; }
+interface Props {
+  sessionId: string;
+  listenerCount?: number | null;
+  /** When provided, the component renders in mobile bottom-sheet mode:
+   *  - No internal FAB (open/close is controlled externally)
+   *  - Drawer fills the screen from bottom up
+   *  - onMobileClose is called when the user taps the close button or backdrop */
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+  /** Called whenever the unread count changes — lets the parent show a badge on the FAB */
+  onUnreadChange?: (count: number) => void;
+}
 
-export default function LiveChatDrawer({ sessionId, listenerCount: listenerCountProp = null }: Props) {
+export default function LiveChatDrawer({
+  sessionId,
+  listenerCount: listenerCountProp = null,
+  mobileOpen,
+  onMobileClose,
+  onUnreadChange,
+}: Props) {
+  const isMobileControlled = mobileOpen !== undefined;
   const [isOpen, setIsOpen] = useState(false);
+  // In mobile-controlled mode the effective open state comes from the parent
+  const effectiveOpen = isMobileControlled ? (mobileOpen ?? false) : isOpen;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState("");
   const [myName, setMyName] = useState("");          // committed name (saved)
@@ -112,7 +132,7 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
   const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isOpenRef = useRef(false);
 
-  useEffect(() => { isOpenRef.current = isOpen; }, [isOpen]);
+  useEffect(() => { isOpenRef.current = effectiveOpen; }, [effectiveOpen]);
 
   // Load name from sessionStorage on mount
   useEffect(() => {
@@ -157,12 +177,12 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
 
   // Auto-scroll when messages change (only if drawer is open)
   useEffect(() => {
-    if (isOpen) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isOpen]);
+    if (effectiveOpen) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, effectiveOpen]);
 
   // On open: clear unread, focus appropriate input, scroll to bottom
   useEffect(() => {
-    if (isOpen) {
+    if (effectiveOpen) {
       setUnreadCount(0);
       setTimeout(() => {
         // If no name set yet, focus the name input first so user can set it
@@ -174,7 +194,7 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
       }, 150);
       messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
     }
-  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [effectiveOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Focus name input when entering edit mode
   useEffect(() => {
@@ -182,6 +202,11 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
       setTimeout(() => nameInputRef.current?.focus(), 50);
     }
   }, [isEditingName]);
+
+  // Notify parent of unread count changes (for mobile FAB badge)
+  useEffect(() => {
+    onUnreadChange?.(unreadCount);
+  }, [unreadCount, onUnreadChange]);
 
   const startCooldown = useCallback(() => {
     setCooldown(3);
@@ -258,116 +283,147 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
     ? new Intl.NumberFormat("en-IN").format(listenerCountProp)
     : null;
 
+  // Shared close handler — works for both desktop (internal) and mobile (external)
+  const handleClose = () => {
+    if (isMobileControlled) {
+      onMobileClose?.();
+    } else {
+      setIsOpen(false);
+    }
+  };
+
   return (
     <>
-      {/* ── FAB — pill-shaped, absolute within the player-row wrapper ── */}
-      <button
-        onClick={() => setIsOpen((v) => !v)}
-        aria-label={isOpen ? "Close live chat" : "Open live chat"}
-        title={isOpen ? "Close chat" : "Live Chat"}
-        className="absolute top-1/2 -translate-y-1/2 z-[45] flex items-center cursor-pointer select-none pointer-events-auto"
-        style={{
-          right: "var(--hud-inset)",
-          gap: isOpen ? 0 : "0.45rem",
-          padding: isOpen ? "0.55rem" : "0.45rem 0.9rem 0.45rem 0.7rem",
-          borderRadius: "9999px",
-          border: isOpen ? "none" : "1.5px solid rgba(249,115,22,0.50)",
-          background: isOpen
-            ? "linear-gradient(135deg, #fb923c, #ea580c)"
-            : "rgba(14,7,2,0.95)",
-          boxShadow: isOpen
-            ? "inset 3px 3px 8px rgba(0,0,0,0.55), 0 0 22px rgba(249,115,22,0.50)"
-            : `${NM_FAB}, 0 0 16px rgba(249,115,22,0.28)`,
-          transition: "all 0.25s cubic-bezier(0.34,1.4,0.64,1)",
-          backdropFilter: "blur(8px)",
-          WebkitBackdropFilter: "blur(8px)",
-          minWidth: isOpen ? "2.5rem" : undefined,
-          minHeight: "2.5rem",
-          justifyContent: "center",
-        }}
-      >
-        {isOpen ? (
-          /* Close state — just an X icon, pill collapses to circle */
-          <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white shrink-0">
-            <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-          </svg>
-        ) : (
-          /* Open state — waveform icon + label + listener count + live dot */
-          <>
-            {/* Waveform / chat icon */}
-            <span className="relative shrink-0 flex items-center justify-center w-[22px] h-[22px]">
-              <svg viewBox="0 0 24 24" fill="none" className="w-[22px] h-[22px]">
-                {/* Chat bubble with waveform bars inside */}
-                <path
-                  d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
-                  fill="rgba(249,115,22,0.18)"
-                  stroke="rgba(249,115,22,0.85)"
-                  strokeWidth="1.5"
-                  strokeLinejoin="round"
-                />
-                {/* Waveform bars */}
-                <rect x="7"  y="10" width="1.5" height="4" rx="0.75" fill="#fb923c"/>
-                <rect x="10" y="8"  width="1.5" height="6" rx="0.75" fill="#fb923c"/>
-                <rect x="13" y="9"  width="1.5" height="5" rx="0.75" fill="#fb923c"/>
-                <rect x="16" y="11" width="1.5" height="3" rx="0.75" fill="#fb923c"/>
-              </svg>
-            </span>
-
-            {/* Label */}
-            <span
-              className="text-[12px] font-semibold tracking-wide whitespace-nowrap"
-              style={{ color: "rgba(249,115,22,0.95)" }}
-            >
-              Live Chat
-            </span>
-
-            {/* Fix 1: Listener count — shown left of the green dot */}
-            {formattedListenerCount !== null && (
-              <span
-                className="text-[11px] font-bold tabular-nums whitespace-nowrap"
-                style={{ color: "rgba(74,222,128,0.90)" }}
-              >
-                {formattedListenerCount}
+      {/* ── FAB — pill-shaped, absolute within the player-row wrapper (desktop only) ── */}
+      {!isMobileControlled && (
+        <button
+          onClick={() => setIsOpen((v) => !v)}
+          aria-label={effectiveOpen ? "Close live chat" : "Open live chat"}
+          title={effectiveOpen ? "Close chat" : "Live Chat"}
+          className="absolute top-1/2 -translate-y-1/2 z-[45] flex items-center cursor-pointer select-none pointer-events-auto"
+          style={{
+            right: "var(--hud-inset)",
+            gap: effectiveOpen ? 0 : "0.45rem",
+            padding: effectiveOpen ? "0.55rem" : "0.45rem 0.9rem 0.45rem 0.7rem",
+            borderRadius: "9999px",
+            border: effectiveOpen ? "none" : "1.5px solid rgba(249,115,22,0.50)",
+            background: effectiveOpen
+              ? "linear-gradient(135deg, #fb923c, #ea580c)"
+              : "rgba(14,7,2,0.95)",
+            boxShadow: effectiveOpen
+              ? "inset 3px 3px 8px rgba(0,0,0,0.55), 0 0 22px rgba(249,115,22,0.50)"
+              : `${NM_FAB}, 0 0 16px rgba(249,115,22,0.28)`,
+            transition: "all 0.25s cubic-bezier(0.34,1.4,0.64,1)",
+            backdropFilter: "blur(8px)",
+            WebkitBackdropFilter: "blur(8px)",
+            minWidth: effectiveOpen ? "2.5rem" : undefined,
+            minHeight: "2.5rem",
+            justifyContent: "center",
+          }}
+        >
+          {effectiveOpen ? (
+            /* Close state — just an X icon, pill collapses to circle */
+            <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white shrink-0">
+              <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+            </svg>
+          ) : (
+            /* Open state — waveform icon + label + listener count + live dot */
+            <>
+              {/* Waveform / chat icon */}
+              <span className="relative shrink-0 flex items-center justify-center w-[22px] h-[22px]">
+                <svg viewBox="0 0 24 24" fill="none" className="w-[22px] h-[22px]">
+                  {/* Chat bubble with waveform bars inside */}
+                  <path
+                    d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+                    fill="rgba(249,115,22,0.18)"
+                    stroke="rgba(249,115,22,0.85)"
+                    strokeWidth="1.5"
+                    strokeLinejoin="round"
+                  />
+                  {/* Waveform bars */}
+                  <rect x="7"  y="10" width="1.5" height="4" rx="0.75" fill="#fb923c"/>
+                  <rect x="10" y="8"  width="1.5" height="6" rx="0.75" fill="#fb923c"/>
+                  <rect x="13" y="9"  width="1.5" height="5" rx="0.75" fill="#fb923c"/>
+                  <rect x="16" y="11" width="1.5" height="3" rx="0.75" fill="#fb923c"/>
+                </svg>
               </span>
-            )}
 
-            {/* Live pulse dot */}
-            <span className="relative flex shrink-0 w-2 h-2 ml-0.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60" />
-              <span className="relative inline-flex rounded-full w-2 h-2 bg-green-400" />
-            </span>
-
-            {/* Unread badge */}
-            {unreadCount > 0 && (
+              {/* Label */}
               <span
-                className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full
-                           bg-red-500 text-white text-[10px] font-bold
-                           flex items-center justify-center"
-                style={{ boxShadow: "2px 2px 6px rgba(0,0,0,0.6)" }}
+                className="text-[12px] font-semibold tracking-wide whitespace-nowrap"
+                style={{ color: "rgba(249,115,22,0.95)" }}
               >
-                {unreadCount > 9 ? "9+" : unreadCount}
+                Chat
               </span>
-            )}
-          </>
-        )}
-      </button>
+
+              {/* Live pulse dot */}
+              <span className="relative flex shrink-0 w-2 h-2 ml-0.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60" />
+                <span className="relative inline-flex rounded-full w-2 h-2 bg-green-400" />
+              </span>
+
+              {/* Unread badge */}
+              {unreadCount > 0 && (
+                <span
+                  className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full
+                             bg-red-500 text-white text-[10px] font-bold
+                             flex items-center justify-center"
+                  style={{ boxShadow: "2px 2px 6px rgba(0,0,0,0.6)" }}
+                >
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </>
+          )}
+        </button>
+      )}
+
+      {/* ── Mobile backdrop — tap to close ── */}
+      {isMobileControlled && effectiveOpen && (
+        <div
+          className="fixed inset-0 z-[48] bg-black/60"
+          style={{ backdropFilter: "blur(2px)", WebkitBackdropFilter: "blur(2px)" }}
+          onClick={handleClose}
+          aria-hidden="true"
+        />
+      )}
 
       {/* ── Chat drawer ── */}
-      {isOpen && (
+      {effectiveOpen && (
         <div
           role="dialog"
           aria-label="Live Chat"
-          className="fixed z-[44] flex flex-col rounded-[20px] overflow-hidden pointer-events-auto"
-          style={{
-            bottom: "calc(var(--player-bottom) + var(--player-h) + var(--stack-gap))",
-            right: "var(--hud-inset)",
-            width: "min(92vw, 340px)",
-            height: "min(70vh, 520px)",
-            background: "rgba(10,4,2,0.97)",
-            boxShadow: NM_DRAWER,
-            animation: "chatDrawerIn 0.25s cubic-bezier(0.34,1.56,0.64,1) forwards",
-          }}
+          className={`fixed z-[49] flex flex-col overflow-hidden pointer-events-auto ${
+            isMobileControlled
+              ? "left-0 right-0 bottom-0 rounded-t-[24px]"
+              : "rounded-[20px]"
+          }`}
+          style={
+            isMobileControlled
+              ? {
+                  height: "85dvh",
+                  background: "rgba(10,4,2,0.99)",
+                  boxShadow: NM_DRAWER,
+                  animation: "chatDrawerUpIn 0.30s cubic-bezier(0.34,1.2,0.64,1) forwards",
+                }
+              : {
+                  bottom: "calc(var(--player-bottom) + var(--player-h) + var(--stack-gap))",
+                  right: "var(--hud-inset)",
+                  width: "min(92vw, 340px)",
+                  height: "min(70vh, 520px)",
+                  background: "rgba(10,4,2,0.97)",
+                  boxShadow: NM_DRAWER,
+                  animation: "chatDrawerIn 0.25s cubic-bezier(0.34,1.56,0.64,1) forwards",
+                }
+          }
         >
+          {/* Mobile drag handle */}
+          {isMobileControlled && (
+            <div className="flex justify-center pt-2.5 pb-1 shrink-0">
+              <div className="w-10 h-1 rounded-full bg-white/20" />
+            </div>
+          )}
+
           {/* Header */}
           <div
             className="flex items-center justify-between px-4 py-3 shrink-0"
@@ -382,7 +438,7 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               {listenerCountProp !== null && listenerCountProp !== undefined && (
                 <span
                   className="text-[11px] font-semibold tabular-nums"
@@ -393,6 +449,17 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
               )}
               <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"
                    style={{ boxShadow: "0 0 6px #4ade80" }} />
+              {/* Close button — always shown, especially important on mobile */}
+              <button
+                onClick={handleClose}
+                aria-label="Close chat"
+                className="w-7 h-7 flex items-center justify-center rounded-full text-white/40
+                           hover:text-white/80 hover:bg-white/10 transition-colors ml-1"
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                  <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                </svg>
+              </button>
             </div>
           </div>
 
@@ -491,9 +558,6 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
                 )}
               </button>
             </div>
-            <p className="text-white/15 text-[10px] mt-1.5 text-center">
-              Anonymous · No account needed · Press Enter to send
-            </p>
           </div>
         </div>
       )}

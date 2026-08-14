@@ -14,8 +14,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 const REACTIONS = [
   { emoji: "🪔", label: "Diya" },
   { emoji: "🙏", label: "Pranam" },
-  { emoji: "🌸", label: "Pushp" },
-  { emoji: "🍃", label: "Arghya" },
+  { emoji: "🌸🌿", label: "Pushp" },
   { emoji: "☀️", label: "Surya" },
 ];
 
@@ -78,11 +77,14 @@ export default function ReactionBar({ onReact, arcDirection = "right" }: Props) 
 
   const totalReactions = Object.values(counts).reduce((a, b) => a + b, 0);
 
-  // Arc angles: "right" fans up-right (desktop, right of pill); "left" fans left (mobile, right edge)
+  // Arc angles for 4 buttons, 90° spread, evenly spaced at 30° intervals.
+  // "left":  centered on 180° (pure left)  → 150°, 170°, 190°, 210°
+  // "right": centered on   0° (pure right) → -45°, -15°,  15°,  45°
+  // r=110px: FAB half (24) + gap (26) + button half (20) = 70px clear of FAB edge.
   const arcAngles = arcDirection === "left"
-    ? [135, 157, 180, 203, 225]   // left arc: 90° spread centered on pure-left (180°), radius 105px keeps buttons non-overlapping
-    : [280, 300, 320, 340, 360];  // right arc: up-right quarter-circle
-  const arcRadius = arcDirection === "left" ? 105 : 130;
+    ? [150, 170, 190, 210]   // left arc:  60° spread, centered on pure-left  (180°)
+    : [-45, -15,  15,  45];  // right arc: 90° spread, centered on pure-right (0°)
+  const arcRadius = 130;
 
   return (
     <>
@@ -103,13 +105,13 @@ export default function ReactionBar({ onReact, arcDirection = "right" }: Props) 
           <div
             style={{
               position: "absolute",
+              // Center the extension on the FAB, extending in the arc direction
               top: "50%",
-              ...(arcDirection === "left"
-                ? { right: "50%", left: "auto" }
-                : { left: "50%", right: "auto" }),
-              width: arcRadius + 60,
-              height: arcRadius * 2 + 48,
-              transform: "translateY(-50%)",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              // Must cover the full arc bounding box: radius + button half-size + badge overflow
+              width: (arcRadius + 54) * 2,
+              height: (arcRadius + 54) * 2,
               pointerEvents: "auto",
               zIndex: 0,
             }}
@@ -157,8 +159,8 @@ export default function ReactionBar({ onReact, arcDirection = "right" }: Props) 
           const ty = Math.sin(angleRad) * arcRadius;
           // Expand: stagger outward (first button first)
           // Collapse: reverse stagger (last button first) for a smooth retract
-          const expandDelay = i * 35;
-          const collapseDelay = (REACTIONS.length - 1 - i) * 25;
+          const expandDelay = i * 40;
+          const collapseDelay = (REACTIONS.length - 1 - i) * 30;
           const delay = expanded ? expandDelay : collapseDelay;
 
           return (
