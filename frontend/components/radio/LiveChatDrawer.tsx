@@ -506,14 +506,16 @@ export default function LiveChatDrawer({
               <input
                 ref={nameInputRef}
                 type="text"
+                inputMode="text"
+                enterKeyHint="done"
                 placeholder="Your name (optional) — Enter to save, Esc to cancel"
                 maxLength={40}
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
                 onKeyDown={handleNameKeyDown}
                 onBlur={commitName}
-                className="w-full rounded-lg px-2.5 py-1.5 text-white/70 text-[11px] outline-none border-none"
-                style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_INPUT }}
+                className="w-full rounded-lg px-2.5 py-1.5 text-white/70 outline-none border-none"
+                style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_INPUT, fontSize: "16px" }}
               />
             )}
           </div>
@@ -526,14 +528,17 @@ export default function LiveChatDrawer({
               <input
                 ref={inputRef}
                 type="text"
+                inputMode="text"
+                enterKeyHint="send"
                 placeholder="Jai Chhathi Maiya! 🪔"
                 maxLength={200}
                 value={inputText}
                 onChange={(e) => { setInputText(e.target.value); setSendError(null); }}
                 onKeyDown={handleKeyDown}
-                className="flex-1 rounded-xl px-3 py-2 text-white text-[13px] outline-none border-none
+                onKeyUp={(e) => { if (e.key === "Enter") handleSend(); }}
+                className="flex-1 rounded-xl px-3 py-2 text-white outline-none border-none
                            transition-all"
-                style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_INPUT }}
+                style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_INPUT, fontSize: "16px" }}
               />
               <button
                 onClick={handleSend}
