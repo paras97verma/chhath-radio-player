@@ -14,12 +14,11 @@
 #   docker build \
 #     --build-arg NEXT_PUBLIC_API_URL=https://chhath-api.onrender.com \
 #     --build-arg NEXT_PUBLIC_SITE_URL=https://chhathradio.vercel.app \
-#     --build-arg NEXT_PUBLIC_VAPID_PUBLIC_KEY=your-key \
 #     -t chhath-frontend ./frontend
 # =============================================================================
 
 # ── Stage 1: Install dependencies ────────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 
 WORKDIR /app
 
@@ -27,7 +26,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --frozen-lockfile
 
 # ── Stage 2: Build ────────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -39,11 +38,9 @@ COPY . .
 # These are injected by GitHub Actions secrets — never hardcoded here.
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_SITE_URL
-ARG NEXT_PUBLIC_VAPID_PUBLIC_KEY
 
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
-ENV NEXT_PUBLIC_VAPID_PUBLIC_KEY=$NEXT_PUBLIC_VAPID_PUBLIC_KEY
 
 # Disable Next.js telemetry in CI/production builds
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -51,7 +48,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 # ── Stage 3: Production runner ────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 
 WORKDIR /app
 
