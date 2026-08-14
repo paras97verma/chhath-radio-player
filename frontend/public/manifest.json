@@ -3,6 +3,7 @@
   "short_name": "Chhath Radio",
   "description": "Listen to Chhath Puja geet live, 24/7. Dedicated to Chhathi Maiya. 🪔",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#0d0505",
   "theme_color": "#f97316",
@@ -14,18 +15,31 @@
       "src": "/icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "/icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "/icons/apple-touch-icon.png",
       "sizes": "180x180",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     }
   ],
   "screenshots": [
@@ -33,7 +47,8 @@
       "src": "/og-image.png",
       "sizes": "1200x630",
       "type": "image/png",
-      "label": "Chhath Radio — Live Ghat Scene"
+      "label": "Chhath Radio — Live Ghat Scene",
+      "form_factor": "wide"
     }
   ],
   "shortcuts": [
@@ -42,7 +57,7 @@
       "short_name": "Listen",
       "description": "Start listening to Chhath Radio",
       "url": "/",
-      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ]
 }

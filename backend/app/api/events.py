@@ -37,7 +37,6 @@ from fastapi.responses import StreamingResponse
 from app.services.presence_service import (
     record_heartbeat,
     get_listener_count,
-    remove_session,
 )
 
 _UUID_RE = re.compile(
@@ -48,8 +47,9 @@ _UUID_RE = re.compile(
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["events"])
 
-# How often to push a listener count update (seconds) — near-realtime
-PUSH_INTERVAL = 2
+# How often to push a listener count update (seconds) — near-realtime.
+# Lower = faster drop detection when a listener leaves.
+PUSH_INTERVAL = 1
 
 # How often to send a keepalive heartbeat even if count hasn't changed (seconds)
 HEARTBEAT_INTERVAL = 15
@@ -127,8 +127,9 @@ async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, 
     except Exception as exc:
         logger.error("SSE stream error for session=%s: %s", session_id, exc)
     finally:
-        # Clean up: decrement listener count + unregister chat queue
-        remove_session(session_id)
+        # Do NOT call remove_session here — the same session_id may be open in
+        # another tab. Let the TTL (SESSION_TTL_SECONDS) handle natural expiry.
+        # The session will expire within SESSION_TTL_SECONDS of the last heartbeat.
         unregister_chat_queue(chat_q)
         logger.info("SSE disconnect: session=%s", session_id)
 

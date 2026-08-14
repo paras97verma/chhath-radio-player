@@ -25,6 +25,19 @@ alembic upgrade head
 echo "  ✓ Migrations complete."
 echo ""
 
+# ── Seed admin user (idempotent — skips if already exists) ───────────────────
+# ADMIN_EMAIL and ADMIN_PASSWORD must be set as environment variables.
+# seed_admin.py is safe to run on every startup — it checks for existing admin.
+if [ -n "${ADMIN_EMAIL:-}" ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
+  echo "  Seeding admin user..."
+  python seed_admin.py && echo "  ✓ Admin seed complete." || echo "  ⚠ Admin seed failed (non-fatal)."
+  echo ""
+else
+  echo "  ⚠ ADMIN_EMAIL or ADMIN_PASSWORD not set — skipping admin seed."
+  echo "    Set these env vars and redeploy, or run: python seed_admin.py manually."
+  echo ""
+fi
+
 # ── Start Gunicorn + Uvicorn workers ─────────────────────────────────────────
 # Same command in local and production — no surprises.
 echo "  Starting Gunicorn (Uvicorn workers)..."

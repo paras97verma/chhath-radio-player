@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import ServiceWorkerRegistrar from "@/components/radio/ServiceWorkerRegistrar";
+import PWAInstallPrompt from "@/components/radio/PWAInstallPrompt";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,6 +15,15 @@ const geistMono = Geist_Mono({
 });
 
 const SITE_URL = "https://chhathradio.com";
+
+// themeColor must be in viewport export (not metadata) in Next.js App Router
+export const viewport: Viewport = {
+  themeColor: "#f97316",
+  width: "device-width",
+  initialScale: 1,
+  minimumScale: 1,
+  viewportFit: "cover",
+};
 
 export const metadata: Metadata = {
   title: "Chhath Radio — छठ के गीत, बिना रुके",
@@ -51,7 +61,6 @@ export const metadata: Metadata = {
     images: ["/og-image.png"],
   },
   manifest: "/manifest.json",
-  themeColor: "#f97316",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -82,6 +91,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ServiceWorkerRegistrar />
+        <PWAInstallPrompt />
         {children}
       </body>
     </html>

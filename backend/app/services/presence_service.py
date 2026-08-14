@@ -30,7 +30,11 @@ logger = logging.getLogger(__name__)
 
 COUNTER_KEY = "chhath:listeners:count"
 SESSIONS_KEY = "chhath:listeners:sessions"
-SESSION_TTL_SECONDS = 20  # session expires if no heartbeat for 20 s
+# Session TTL: how long after the last heartbeat before a session is considered gone.
+# The SSE loop refreshes every PUSH_INTERVAL (2s), so 6s gives 3 missed heartbeats
+# before expiry. This means listener count drops within ~6s of a tab closing,
+# while still tolerating brief network hiccups.
+SESSION_TTL_SECONDS = 6
 
 # ─── Connection pool (one per process, shared across requests) ────────────────
 
@@ -111,10 +115,9 @@ def record_heartbeat(session_id: str) -> None:
             client.zadd(SESSIONS_KEY, {session_id: expiry})
 
         # Prune expired sessions (those with score < now) — O(log N + M)
-        # Run probabilistically to avoid doing it on every heartbeat
-        import random
-        if random.random() < 0.05:  # ~5% of heartbeats trigger cleanup
-            _prune_expired(client)
+        # Run on every heartbeat since PUSH_INTERVAL=1s and TTL=6s means
+        # sessions expire quickly and need frequent cleanup for accurate counts.
+        _prune_expired(client)
 
     except RedisError as exc:
         logger.error("Redis heartbeat error: %s", exc)

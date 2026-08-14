@@ -11,6 +11,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { fetchListenerCount, sendHeartbeat } from "@/lib/api";
+import { getOrCreateSessionId } from "@/lib/session";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const POLL_INTERVAL_MS = 5_000;
@@ -19,13 +20,6 @@ const HOT_THRESHOLD = 50;
 
 const NM_PILL = "4px 4px 12px rgba(0,0,0,0.65), -2px -2px 8px rgba(60,30,10,0.28), inset 0 1px 0 rgba(255,255,255,0.03)";
 const NM_HOT  = "4px 4px 12px rgba(0,0,0,0.65), -2px -2px 8px rgba(120,20,20,0.25), inset 0 1px 0 rgba(255,255,255,0.03)";
-
-function getOrCreateSessionId(): string {
-  const key = "chhath_radio_session_id";
-  let id = localStorage.getItem(key);
-  if (!id) { id = crypto.randomUUID(); localStorage.setItem(key, id); }
-  return id;
-}
 
 function formatCount(n: number): string {
   return new Intl.NumberFormat("en-IN").format(n);

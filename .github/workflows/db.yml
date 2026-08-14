@@ -1,0 +1,182 @@
+# =============================================================================
+# Chhath Radio — Database Operations Pipeline
+#
+# On-demand workflow for database management tasks.
+# Triggered manually from GitHub Actions → Run workflow.
+#
+# Operations:
+#   migrate      — Run Alembic migrations (alembic upgrade head)
+#   seed-admin   — Create/update the admin user (idempotent)
+#   seed-songs   — Seed songs from backend/data/songs.txt (if it exists)
+#   rollback     — Roll back the last Alembic migration (alembic downgrade -1)
+#   status       — Show current migration status (alembic current)
+#
+# Required GitHub Secrets:
+#   DATABASE_URL   — Supabase PostgreSQL connection string
+#   REDIS_URL      — Upstash Redis URL (needed for app imports)
+#   SECRET_KEY     — JWT signing secret
+#   ADMIN_EMAIL    — Admin account email (for seed-admin)
+#   ADMIN_PASSWORD — Admin account password (for seed-admin)
+#
+# Usage:
+#   GitHub → Actions → Database Operations → Run workflow → select operation
+# =============================================================================
+
+name: Database Operations
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Database operation to run'
+        required: true
+        type: choice
+        options:
+          - migrate
+          - seed-admin
+          - seed-songs
+          - rollback
+          - status
+      confirm:
+        description: 'Type "yes" to confirm destructive operations (rollback)'
+        required: false
+        default: 'no'
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  db-operation:
+    name: ${{ github.event.inputs.operation }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      # ── migrate ─────────────────────────────────────────────────────────────
+      - name: Run Alembic migrations
+        if: github.event.inputs.operation == 'migrate'
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: |
+          echo "Running: alembic upgrade head"
+          alembic upgrade head
+          echo ""
+          echo "Current migration state:"
+          alembic current
+          echo "✓ Migrations complete"
+
+      # ── seed-admin ──────────────────────────────────────────────────────────
+      - name: Seed admin user
+        if: github.event.inputs.operation == 'seed-admin'
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        run: |
+          echo "Running: alembic upgrade head (ensure schema is current)"
+          alembic upgrade head
+          echo ""
+          echo "Seeding admin user: ${{ secrets.ADMIN_EMAIL }}"
+          python seed_admin.py
+          echo "✓ Admin seed complete"
+
+      # ── seed-songs ──────────────────────────────────────────────────────────
+      - name: Seed songs
+        if: github.event.inputs.operation == 'seed-songs'
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: |
+          echo "Running: alembic upgrade head (ensure schema is current)"
+          alembic upgrade head
+          echo ""
+          if [ -f "data/songs.txt" ]; then
+            echo "Seeding songs from data/songs.txt..."
+            python seed_songs.py 2>/dev/null || python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from app.db.database import SessionLocal
+          from app.models.song import Song
+          from sqlalchemy import select
+          import uuid
+
+          db = SessionLocal()
+          try:
+              with open('data/songs.txt') as f:
+                  lines = [l.strip() for l in f if l.strip() and not l.startswith('#')]
+              count = 0
+              for i, line in enumerate(lines):
+                  parts = line.split('|')
+                  if len(parts) < 3:
+                      continue
+                  title, artist, yt_id = parts[0].strip(), parts[1].strip(), parts[2].strip()
+                  existing = db.scalar(select(Song).where(Song.youtube_video_id == yt_id))
+                  if not existing:
+                      db.add(Song(id=uuid.uuid4(), title=title, artist=artist,
+                                  youtube_video_id=yt_id, sort_order=i, enabled=True))
+                      count += 1
+              db.commit()
+              print(f'✓ Seeded {count} new songs')
+          finally:
+              db.close()
+          "
+          else
+            echo "No data/songs.txt found — skipping song seed"
+            echo "Create backend/data/songs.txt with format: Title|Artist|YouTubeVideoID"
+          fi
+
+      # ── rollback ────────────────────────────────────────────────────────────
+      - name: Rollback last migration
+        if: github.event.inputs.operation == 'rollback'
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "yes" ]; then
+            echo "ERROR: Rollback requires confirm='yes'. Re-run with confirm set to 'yes'."
+            exit 1
+          fi
+          echo "WARNING: Rolling back last migration..."
+          alembic current
+          alembic downgrade -1
+          echo ""
+          echo "Current state after rollback:"
+          alembic current
+          echo "✓ Rollback complete"
+
+      # ── status ──────────────────────────────────────────────────────────────
+      - name: Show migration status
+        if: github.event.inputs.operation == 'status'
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: |
+          echo "Current migration state:"
+          alembic current
+          echo ""
+          echo "Migration history:"
+          alembic history --verbose

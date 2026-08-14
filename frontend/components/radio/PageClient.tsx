@@ -81,13 +81,13 @@ export default function PageClient() {
   const [sessionId, setSessionId] = useState("");
   const audioNodeRef = useRef<AudioNode | null>(null);
 
-  // Generate a stable session ID on mount (used for SSE + chat)
+  // Use the shared localStorage session ID (same as ListenerCount) so that
+  // multiple tabs of the same browser share one session and don't inflate
+  // the listener count. sessionStorage would give each tab a unique ID.
   useEffect(() => {
-    const stored = sessionStorage.getItem("chhath_session_id");
-    if (stored) { setSessionId(stored); return; }
-    const id = crypto.randomUUID();
-    sessionStorage.setItem("chhath_session_id", id);
-    setSessionId(id);
+    import("@/lib/session").then(({ getOrCreateSessionId }) => {
+      setSessionId(getOrCreateSessionId());
+    });
   }, []);
 
   const handleCountChange = useCallback((c: number) => setListenerCount(c), []);
