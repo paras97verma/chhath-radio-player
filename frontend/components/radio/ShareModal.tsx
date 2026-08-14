@@ -212,14 +212,16 @@ export default function ShareModal({ onClose }: ShareModalProps) {
             background: "rgba(14,5,2,0.98)",
             border: "1px solid rgba(249,115,22,0.25)",
             borderRadius: 24,
-            padding: "28px 24px 24px",
+            padding: "20px 16px 16px",
             width: "100%",
-            maxWidth: 420,
+            maxWidth: 380,
+            maxHeight: "90vh",
+            overflowY: "auto",
             boxShadow: "0 24px 64px rgba(0,0,0,0.7), 0 0 0 1px rgba(249,115,22,0.08)",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
-            gap: 20,
+            gap: 14,
           }}
         >
           {/* Close button */}
@@ -275,14 +277,13 @@ export default function ShareModal({ onClose }: ShareModalProps) {
             </div>
           </div>
 
-          {/* Card preview area — portrait 9:16 ratio to match ShareCard */}
+          {/* Card preview area — fixed height container, image scales to fit */}
           <div
             style={{
               width: "100%",
-              minHeight: 460,
-              aspectRatio: "9 / 16",
+              height: 420,
               borderRadius: 16,
-              overflow: "hidden",
+              overflow: "visible",
               border: "1px solid rgba(249,115,22,0.15)",
               background: "rgba(255,255,255,0.03)",
               display: "flex",
@@ -355,103 +356,53 @@ export default function ShareModal({ onClose }: ShareModalProps) {
                 src={dataUrl}
                 alt="Share card preview"
                 style={{
-                  width: "100%",
-                  height: "auto",
+                  maxWidth: "100%",
+                  maxHeight: "100%",
+                  width: "auto",
+                  height: "100%",
+                  objectFit: "contain",
                   display: "block",
-                  borderRadius: 16,
+                  borderRadius: 12,
                 }}
               />
+            )}
+
+            {/* Circular download icon — bottom-right edge of preview */}
+            {dataUrl && (
+              <a
+                href={dataUrl}
+                download="chhath-radio-share.png"
+                aria-label="Download share card"
+                title="Download"
+                style={{
+                  position: "absolute",
+                  bottom: -16,
+                  right: -16,
+                  width: 44,
+                  height: 44,
+                  borderRadius: "50%",
+                  background: "linear-gradient(135deg, #f97316, #ea580c)",
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  textDecoration: "none",
+                  boxShadow: "0 4px 16px rgba(249,115,22,0.45), 0 0 0 2px rgba(249,115,22,0.2)",
+                  transition: "opacity 0.15s, transform 0.15s",
+                  zIndex: 10,
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.88"; e.currentTarget.style.transform = "scale(1.08)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.transform = "scale(1)"; }}
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 18, height: 18 }}>
+                  <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+                </svg>
+              </a>
             )}
           </div>
 
           {/* Action buttons */}
           <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 10 }}>
-            {/* Primary row: Download + Native Share */}
-            <div style={{ display: "flex", gap: 8 }}>
-              {/* Download */}
-              {dataUrl ? (
-                <a
-                  href={dataUrl}
-                  download="chhath-radio-share.png"
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                    padding: "11px 0",
-                    borderRadius: 12,
-                    background: "linear-gradient(135deg, #f97316, #ea580c)",
-                    color: "#fff",
-                    fontWeight: 700,
-                    fontSize: 13,
-                    textDecoration: "none",
-                    boxShadow: "0 4px 16px rgba(249,115,22,0.35)",
-                    transition: "opacity 0.15s",
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.88")}
-                  onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
-                >
-                  <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 16, height: 16 }}>
-                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
-                  </svg>
-                  Download
-                </a>
-              ) : (
-                <div
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: "11px 0",
-                    borderRadius: 12,
-                    background: "rgba(249,115,22,0.08)",
-                    color: "rgba(249,115,22,0.3)",
-                    fontSize: 13,
-                    fontWeight: 700,
-                  }}
-                >
-                  Download
-                </div>
-              )}
-
-              {/* Native Share (mobile) */}
-              {"share" in navigator && (
-                <button
-                  onClick={handleNativeShare}
-                  disabled={!dataUrl}
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                    padding: "11px 0",
-                    borderRadius: 12,
-                    background: "rgba(249,115,22,0.12)",
-                    border: "1px solid rgba(249,115,22,0.3)",
-                    color: dataUrl ? "#f97316" : "rgba(249,115,22,0.3)",
-                    fontWeight: 700,
-                    fontSize: 13,
-                    cursor: dataUrl ? "pointer" : "default",
-                    transition: "all 0.15s",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (dataUrl) e.currentTarget.style.background = "rgba(249,115,22,0.2)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "rgba(249,115,22,0.12)";
-                  }}
-                >
-                  <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 16, height: 16 }}>
-                    <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
-                  </svg>
-                  Share
-                </button>
-              )}
-            </div>
-
             {/* Divider */}
             <div
               style={{

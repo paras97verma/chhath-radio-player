@@ -467,14 +467,23 @@ function PlaylistDrawer({
 
 // ─── Main RadioPlayer ─────────────────────────────────────────────────────────
 
-export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boolean }) {
+export default function RadioPlayer({
+  hasTunedIn = false,
+  showPlaylist: showPlaylistProp,
+  onPlaylistToggle,
+}: {
+  hasTunedIn?: boolean;
+  /** Lifted state — controlled by PageClient so it can hide side elements when playlist is open */
+  showPlaylist?: boolean;
+  onPlaylistToggle?: () => void;
+}) {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<YouTubeIFramePlayerAdapter | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(80);
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showPlaylist, setShowPlaylist] = useState(false);
+  const showPlaylist = showPlaylistProp ?? false;
   const showPlaylistRef = useRef(false);
   const [playlistFocusIdx, setPlaylistFocusIdx] = useState<number>(-1);
 
@@ -567,7 +576,7 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
         });
       } else if (e.code === "KeyP") {
         e.preventDefault();
-        setShowPlaylist((v) => !v);
+        onPlaylistToggle?.();
       }
     };
     window.addEventListener("keydown", handleKey);
@@ -605,8 +614,8 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
     if (!state.adapter) return;
     useRadioStore.setState({ currentIndex: index, playState: "BUFFERING" });
     await state.adapter.loadVideo(song.youtube_video_id);
-    setShowPlaylist(false);
-  }, []);
+    if (showPlaylistRef.current) onPlaylistToggle?.();
+  }, [onPlaylistToggle]);
 
   useEffect(() => {
     if (!hasTunedIn) return;
@@ -671,7 +680,7 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
 
         {/* Playlist drawer */}
         {showPlaylist && isReady && (
-          <PlaylistDrawer onClose={() => setShowPlaylist(false)} onPlaySong={handlePlaySong} />
+          <PlaylistDrawer onClose={() => onPlaylistToggle?.()} onPlaySong={handlePlaySong} />
         )}
 
         {/* ── Modern glassmorphic pill ── */}
@@ -689,13 +698,28 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
             ].join(", "),
           }}
         >
+          {/* Mobile only: song name strip at top of pill */}
+          {currentSong && (
+            <div
+              className="sm:hidden flex flex-col items-center px-5 pt-3 pb-1 border-b"
+              style={{ borderColor: "rgba(249,115,22,0.10)" }}
+            >
+              <p className="text-white text-sm font-bold truncate w-full text-center leading-tight">
+                {currentSong.title}
+              </p>
+              <p className="text-[11px] truncate w-full text-center mt-0.5" style={{ color: "rgba(249,115,22,0.70)" }}>
+                {currentSong.artist}
+              </p>
+            </div>
+          )}
+
           {/* Main row */}
           <div className="flex items-center gap-3 px-5 pt-3 pb-2">
             {/* Vinyl art */}
             <VinylArt src={albumArt} isPlaying={isPlaying} />
 
-            {/* Song info */}
-            <div className="flex-1 min-w-0">
+            {/* Song info — hidden on mobile (shown in top strip instead) */}
+            <div className="flex-1 min-w-0 hidden sm:block">
               {error ? (
                 <p className="text-red-400 text-xs" role="alert">{error}</p>
               ) : !isReady ? (
@@ -795,7 +819,7 @@ export default function RadioPlayer({ hasTunedIn = false }: { hasTunedIn?: boole
 
               {/* Playlist toggle */}
               <button
-                onClick={() => setShowPlaylist((v) => !v)}
+                onClick={() => onPlaylistToggle?.()}
                 disabled={!isReady}
                 aria-label="Toggle playlist"
                 aria-expanded={showPlaylist}

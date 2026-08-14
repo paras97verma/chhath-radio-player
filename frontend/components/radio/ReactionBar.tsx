@@ -41,9 +41,11 @@ function saveSessionReactions(counts: Record<string, number>) {
 
 interface Props {
   onReact?: (emoji: string) => void;
+  /** "right" (default) arcs up-right; "left" arcs up-left for right-edge placement */
+  arcDirection?: "right" | "left";
 }
 
-export default function ReactionBar({ onReact }: Props) {
+export default function ReactionBar({ onReact, arcDirection = "right" }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const lastTap = useRef<Record<string, number>>({});
@@ -76,12 +78,11 @@ export default function ReactionBar({ onReact }: Props) {
 
   const totalReactions = Object.values(counts).reduce((a, b) => a + b, 0);
 
-  // Arc: 5 emojis fan from mostly-up (280°) to pure-right (360°) — quarter-circle
-  // away from the player pill. 270°=up, 360°=right in standard math coords.
-  // Screen Y is inverted so sin<0 = upward, cos>0 = rightward.
-  // Radius 130: chord ≈ 45px between adjacent 40px buttons — no overlap.
-  const arcAngles = [280, 300, 320, 340, 360];
-  const arcRadius = 130;
+  // Arc angles: "right" fans up-right (desktop, right of pill); "left" fans left (mobile, right edge)
+  const arcAngles = arcDirection === "left"
+    ? [135, 157, 180, 203, 225]   // left arc: 90° spread centered on pure-left (180°), radius 105px keeps buttons non-overlapping
+    : [280, 300, 320, 340, 360];  // right arc: up-right quarter-circle
+  const arcRadius = arcDirection === "left" ? 105 : 130;
 
   return (
     <>
@@ -97,13 +98,15 @@ export default function ReactionBar({ onReact }: Props) {
         onMouseLeave={handleMouseLeave}
         className="relative w-12 h-12"
       >
-        {/* Invisible hover extension rightward (covers arc area to the right) */}
+        {/* Invisible hover extension — covers arc area in the direction of expansion */}
         {expanded && (
           <div
             style={{
               position: "absolute",
               top: "50%",
-              left: "50%",
+              ...(arcDirection === "left"
+                ? { right: "50%", left: "auto" }
+                : { left: "50%", right: "auto" }),
               width: arcRadius + 60,
               height: arcRadius * 2 + 48,
               transform: "translateY(-50%)",

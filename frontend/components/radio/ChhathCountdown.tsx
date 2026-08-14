@@ -6,9 +6,9 @@
  *
  * API: GET /api/chhath-dates  →  { year, days: [...] }
  *
- * Responsive:
- *   - Mobile (< 640px): compact single-row clickable pill
- *   - Desktop (≥ 640px): full neumorphic card with countdown digits
+ * Always renders the full neumorphic card on all screen sizes.
+ * Scaling for mobile is handled by the parent wrapper in PageClient.tsx
+ * (transformOrigin: "top right", transform: "scale(0.72)").
  */
 
 import { useEffect, useState } from "react";
@@ -52,52 +52,6 @@ const NM_CARD = "6px 6px 16px rgba(0,0,0,0.72), -3px -3px 10px rgba(60,30,10,0.3
 const NM_BTN  = "4px 4px 10px rgba(0,0,0,0.65), -2px -2px 6px rgba(60,30,10,0.28)";
 const NM_BTN_PRESSED = "inset 3px 3px 8px rgba(0,0,0,0.60), inset -1px -1px 4px rgba(60,30,10,0.20)";
 
-// ─── Compact mobile pill ──────────────────────────────────────────────────────
-
-function CompactPill({
-  selectedDay,
-  isPast,
-  countdown,
-  onCycle,
-}: {
-  selectedDay: ChhathDay;
-  isPast: boolean;
-  countdown: ReturnType<typeof computeCountdown>;
-  onCycle: () => void;
-}) {
-  // Build a short countdown string: "90d 11h 55m" or "11h 55m" or "55m" or "✓"
-  let countdownStr = "";
-  if (isPast) {
-    countdownStr = "✓";
-  } else if (countdown.days > 0) {
-    countdownStr = `${countdown.days}d ${pad(countdown.hours)}h ${pad(countdown.minutes)}m`;
-  } else if (countdown.hours > 0) {
-    countdownStr = `${pad(countdown.hours)}h ${pad(countdown.minutes)}m`;
-  } else {
-    countdownStr = `${pad(countdown.minutes)}m ${pad(countdown.seconds)}s`;
-  }
-
-  return (
-    <button
-      onClick={onCycle}
-      aria-label={`${selectedDay.name} — ${countdownStr} — tap to switch day`}
-      className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 select-none"
-      style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_CARD }}
-      onMouseDown={(e) => { e.currentTarget.style.boxShadow = NM_BTN_PRESSED; }}
-      onMouseUp={(e) => { e.currentTarget.style.boxShadow = NM_CARD; }}
-      onMouseLeave={(e) => { e.currentTarget.style.boxShadow = NM_CARD; }}
-    >
-      <span className="text-base leading-none shrink-0">{selectedDay.emoji}</span>
-      <span className="text-[11px] font-semibold text-white/90 whitespace-nowrap leading-none">
-        {selectedDay.name}
-      </span>
-      <span className="text-[10px] font-mono text-orange-400 whitespace-nowrap leading-none">
-        {countdownStr}
-      </span>
-    </button>
-  );
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ChhathCountdown() {
@@ -105,15 +59,6 @@ export default function ChhathCountdown() {
   const [error, setError] = useState(false);
   const [activeDayIndex, setActiveDayIndex] = useState(0);
   const [tick, setTick] = useState(0);
-  const [isMobile, setIsMobile] = useState(false);
-
-  // Detect mobile on mount and on resize
-  useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 640);
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, []);
 
   useEffect(() => {
     const CACHE_KEY = "chhath_dates_cache_v4";
@@ -164,7 +109,7 @@ export default function ChhathCountdown() {
   if (!data && !error) {
     return (
       <div
-        className={isMobile ? "rounded-xl px-2.5 py-1.5" : "min-w-[140px] text-center rounded-2xl px-3 py-2"}
+        className="min-w-[140px] text-center rounded-2xl px-3 py-2"
         style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_CARD }}
       >
         <p className="text-[11px] tracking-[0.1em] text-orange-500/55">Loading…</p>
@@ -176,7 +121,7 @@ export default function ChhathCountdown() {
   if (error || !data) {
     return (
       <div
-        className={isMobile ? "rounded-xl px-2.5 py-1.5" : "min-w-[140px] text-center rounded-2xl px-3 py-2"}
+        className="min-w-[140px] text-center rounded-2xl px-3 py-2"
         style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_CARD }}
       >
         <p className="text-[11px] text-orange-500/55">🪔 Unavailable</p>
@@ -195,22 +140,7 @@ export default function ChhathCountdown() {
 
   const handleCycle = () => setActiveDayIndex((activeDayIndex + 1) % days.length);
 
-  // ── Mobile: compact single-row pill ──────────────────────────────────────────
-  if (isMobile) {
-    return (
-      <>
-        <span className="hidden">{tick}</span>
-        <CompactPill
-          selectedDay={selectedDay}
-          isPast={isPast}
-          countdown={countdown}
-          onCycle={handleCycle}
-        />
-      </>
-    );
-  }
-
-  // ── Desktop: full neumorphic card ─────────────────────────────────────────────
+  // ── Full neumorphic card (all screen sizes — mobile scaling handled by PageClient wrapper) ──
   return (
     <div
       className="flex flex-col items-center gap-2 text-center select-none w-[200px] rounded-2xl px-4 py-2.5"

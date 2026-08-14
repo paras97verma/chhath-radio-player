@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CUSTOMIZATION — edit these values to personalise the footer
@@ -184,9 +184,118 @@ function CoffeeIcon() {
 // UPI Donate Modal
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Download a UPI card image: QR code + UPI ID + branding, drawn on canvas */
+async function downloadUpiCard(upiLink: string, upiId: string, payeeName: string): Promise<void> {
+  const W = 400, H = 520;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  // Background gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, "#1a0800");
+  grad.addColorStop(0.6, "#2d1200");
+  grad.addColorStop(1, "#1a0800");
+  ctx.fillStyle = grad;
+  ctx.roundRect(0, 0, W, H, 24);
+  ctx.fill();
+
+  // Orange border
+  ctx.strokeStyle = "rgba(249,115,22,0.45)";
+  ctx.lineWidth = 1.5;
+  ctx.roundRect(1, 1, W - 2, H - 2, 23);
+  ctx.stroke();
+
+  // Diya emoji header
+  ctx.font = "40px serif";
+  ctx.textAlign = "center";
+  ctx.fillText("🪔", W / 2, 64);
+
+  // Title
+  ctx.fillStyle = "#fb923c";
+  ctx.font = "bold 22px system-ui, sans-serif";
+  ctx.fillText("Chhath Radio", W / 2, 104);
+
+  // Subtitle
+  ctx.fillStyle = "rgba(253,186,116,0.65)";
+  ctx.font = "13px system-ui, sans-serif";
+  ctx.fillText("Scan to donate via UPI", W / 2, 128);
+
+  // QR code image
+  const qrSize = 180;
+  const qrX = (W - qrSize) / 2;
+  const qrY = 148;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${qrSize * 2}x${qrSize * 2}&data=${encodeURIComponent(upiLink)}&bgcolor=ffffff&color=111111&margin=6`;
+
+  await new Promise<void>((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      // White rounded rect behind QR
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.roundRect(qrX - 10, qrY - 10, qrSize + 20, qrSize + 20, 14);
+      ctx.fill();
+      ctx.drawImage(img, qrX, qrY, qrSize, qrSize);
+      resolve();
+    };
+    img.onerror = () => resolve();
+    img.src = qrUrl;
+  });
+
+  // UPI ID box
+  const boxY = qrY + qrSize + 28;
+  ctx.fillStyle = "rgba(249,115,22,0.10)";
+  ctx.beginPath();
+  ctx.roundRect(40, boxY, W - 80, 64, 12);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(249,115,22,0.28)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(40, boxY, W - 80, 64, 12);
+  ctx.stroke();
+
+  ctx.fillStyle = "rgba(253,186,116,0.55)";
+  ctx.font = "11px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("UPI ID", W / 2, boxY + 20);
+
+  ctx.fillStyle = "#fb923c";
+  ctx.font = "bold 16px monospace";
+  ctx.fillText(upiId, W / 2, boxY + 44);
+
+  // Payee name
+  ctx.fillStyle = "rgba(253,186,116,0.40)";
+  ctx.font = "12px system-ui, sans-serif";
+  ctx.fillText(payeeName, W / 2, boxY + 88);
+
+  // Footer note
+  ctx.fillStyle = "rgba(253,186,116,0.28)";
+  ctx.font = "11px system-ui, sans-serif";
+  ctx.fillText("GPay · PhonePe · Paytm · koi bhi UPI app 🙏", W / 2, H - 20);
+
+  // Trigger download
+  const link = document.createElement("a");
+  link.download = "chhath-radio-donate.png";
+  link.href = canvas.toDataURL("image/png");
+  link.click();
+}
+
 export function UpiDonateModal({ onClose }: { onClose: () => void }) {
   const { upi } = FOOTER_CONFIG.payment;
   const upiLink = buildUpiLink(upi);
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownload = useCallback(async () => {
+    setDownloading(true);
+    try {
+      await downloadUpiCard(upiLink, upi.id, upi.payeeName);
+    } finally {
+      setDownloading(false);
+    }
+  }, [upiLink, upi.id, upi.payeeName]);
 
   return (
     <div
@@ -222,22 +331,64 @@ export function UpiDonateModal({ onClose }: { onClose: () => void }) {
           Chhathi Maiya ki kripa se ye geet bajte rahe 🎵
         </p>
 
-        {/* QR Code — plain white bg, black dots, no saffron tint */}
+        {/* QR Code — with circular download icon overlay (same style as ShareModal) */}
         <div className="flex justify-center mb-3">
-          <div className="rounded-xl overflow-hidden border border-orange-500/25 p-2 bg-white">
-            <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=148x148&data=${encodeURIComponent(upiLink)}&bgcolor=ffffff&color=111111&margin=4`}
-              alt="Scan to pay via UPI"
-              width={148}
-              height={148}
-              className="block"
-            />
+          <div className="relative">
+            <div className="rounded-xl overflow-hidden border border-orange-500/25 p-2 bg-white">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=148x148&data=${encodeURIComponent(upiLink)}&bgcolor=ffffff&color=111111&margin=4`}
+                alt="Scan to pay via UPI"
+                width={148}
+                height={148}
+                className="block"
+              />
+            </div>
+
+            {/* Circular download icon — same style as ShareModal */}
+            <button
+              onClick={handleDownload}
+              aria-label="Download UPI QR card"
+              title="Download UPI card"
+              disabled={downloading}
+              style={{
+                position: "absolute",
+                bottom: -16,
+                right: -16,
+                width: 44,
+                height: 44,
+                borderRadius: "50%",
+                background: "linear-gradient(135deg, #f97316, #ea580c)",
+                color: "#fff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                border: "none",
+                cursor: downloading ? "wait" : "pointer",
+                boxShadow: "0 4px 16px rgba(249,115,22,0.45), 0 0 0 2px rgba(249,115,22,0.2)",
+                transition: "opacity 0.15s, transform 0.15s",
+                zIndex: 10,
+                opacity: downloading ? 0.7 : 1,
+              }}
+              onMouseEnter={(e) => { if (!downloading) { e.currentTarget.style.opacity = "0.88"; e.currentTarget.style.transform = "scale(1.08)"; } }}
+              onMouseLeave={(e) => { e.currentTarget.style.opacity = downloading ? "0.7" : "1"; e.currentTarget.style.transform = "scale(1)"; }}
+            >
+              {downloading ? (
+                <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 18, height: 18 }} className="animate-spin">
+                  <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z" opacity=".3"/>
+                  <path d="M12 2a10 10 0 0 1 10 10h-2a8 8 0 0 0-8-8z"/>
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 18, height: 18 }}>
+                  <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+                </svg>
+              )}
+            </button>
           </div>
         </div>
 
         {/* UPI ID display */}
         <div
-          className="rounded-xl px-4 py-3 mb-4"
+          className="rounded-xl px-4 py-3 mb-4 mt-6"
           style={{
             background: "rgba(249,115,22,0.08)",
             border: "1px solid rgba(249,115,22,0.22)",

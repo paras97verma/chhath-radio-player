@@ -3,35 +3,39 @@
 /**
  * PageClient — Client Component containing all interactive UI for the main page.
  *
- * Layout (fixed positions, Tailwind-only, no hardcoded px):
+ * Mobile layout (< 640px):
+ *   TOP ROW:
+ *     ListenerCount   → fixed top-left
+ *     ChhathCountdown → fixed top-RIGHT (scaled down, full card)
+ *   LEFT SIDE:
+ *     ShareFloatingButton → fixed left-0 top-1/2 (tab)
+ *   BOTTOM STACK:
+ *     Footer          → fixed bottom-0
+ *     RadioPlayer     → fixed above footer (full width)
+ *     ChhathFacts     → fixed above player
+ *   Hidden on mobile: LiveClock, LiveChatDrawer, ReactionBar, KeyboardHelpButton,
+ *                     MilestoneCelebration, ReactionSplash
  *
+ * Desktop layout (≥ 640px) — full HUD:
  *   TOP ROW:
  *     ListenerCount   → fixed top-3 left-3
  *     ChhathCountdown → fixed top-3 left-1/2 -translate-x-1/2
  *     LiveClock       → fixed top-3 right-3
- *
  *   SIDES:
  *     ShareFloatingButton → fixed left-0 top-1/2 -translate-y-1/2  (z-30)
- *
+ *     LiveChatDrawer FAB  → fixed right, vertically centered on player
  *   BOTTOM STACK (from bottom up):
  *     Footer          → fixed bottom-0   h-11 sm:h-12
  *     RadioPlayer     → fixed bottom-12  (above footer)
  *     ChhathFacts     → fixed bottom-28  (above player)
- *     HelpButton "?"  → fixed bottom-14 left-3   (player-left)
- *
- *   MOBILE-ONLY (< 640px):
- *     ReactionBar     → fixed above player, centered
- *     LiveChatDrawer  → fixed bottom-right corner
- *
- *   DESKTOP-ONLY (≥ 640px):
- *     ReactionBar     → absolute right of player pill
- *     LiveChatDrawer  → absolute right of player row
- *
+ *     HelpButton "?"  → fixed bottom-14 left-3
+ *     ReactionFAB     → absolute right of player pill
  *   OVERLAY:
  *     TuneInSplash    → fixed inset-0 z-[100]  (until user clicks)
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { useRadioStore } from "@/lib/radio-store";
 import RadioPlayer from "@/components/radio/RadioPlayer";
 import TuneInSplash from "@/components/radio/TuneInSplash";
 import ListenerCount from "@/components/radio/ListenerCount";
@@ -80,17 +84,17 @@ function IconHeart() {
 // ─── PageClient ───────────────────────────────────────────────────────────────
 
 export default function PageClient() {
+  const currentSong = useRadioStore((s) => s.currentSong());
   const [showDonate, setShowDonate] = useState(false);
   const [hasTunedIn, setHasTunedIn] = useState(false);
   const [listenerCount, setListenerCount] = useState(0);
   const [splashEmoji, setSplashEmoji] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState("");
   const [isMobile, setIsMobile] = useState(false);
+  const [showPlaylist, setShowPlaylist] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   const audioNodeRef = useRef<AudioNode | null>(null);
 
-  // Use the shared localStorage session ID (same as ListenerCount) so that
-  // multiple tabs of the same browser share one session and don't inflate
-  // the listener count. sessionStorage would give each tab a unique ID.
   useEffect(() => {
     import("@/lib/session").then(({ getOrCreateSessionId }) => {
       setSessionId(getOrCreateSessionId());
@@ -108,6 +112,7 @@ export default function PageClient() {
   const handleCountChange = useCallback((c: number) => setListenerCount(c), []);
   const handleReact = useCallback((emoji: string) => setSplashEmoji(emoji), []);
   const handleSplashDone = useCallback(() => setSplashEmoji(null), []);
+  const handlePlaylistToggle = useCallback(() => setShowPlaylist((v) => !v), []);
 
   return (
     <>
@@ -119,9 +124,7 @@ export default function PageClient() {
       {/* ── Layer 1: Full-canvas dark overlay for wallpaper depth ── */}
       <div
         className="absolute inset-0 z-[1] pointer-events-none"
-        style={{
-          background: "rgba(5,2,1,0.38)",
-        }}
+        style={{ background: "rgba(5,2,1,0.38)" }}
         aria-hidden="true"
       />
 
@@ -147,26 +150,42 @@ export default function PageClient() {
           TOP ROW HUD
       ══════════════════════════════════════════════════════════ */}
 
-      {/* Top-left: Listener count */}
+      {/* Top-left: Listener count — always visible */}
       <div className="fixed z-20" style={{ top: "var(--hud-inset)", left: "var(--hud-inset)" }}>
         <ListenerCount onCountChange={handleCountChange} />
       </div>
 
-      {/* Top-center: Chhath countdown */}
-      <div className="fixed z-20" style={{ top: "var(--hud-inset)", left: "50%", transform: "translateX(-50%)" }}>
+      {/* Top-center: Chhath countdown — desktop only, centered */}
+      <div
+        className="fixed z-20 hidden sm:block"
+        style={{ top: "var(--hud-inset)", left: "50%", transform: "translateX(-50%)" }}
+      >
         <ChhathCountdown />
       </div>
 
-      {/* Top-right: Live clock */}
-      <div className="fixed z-20" style={{ top: "var(--hud-inset)", right: "var(--hud-inset)" }}>
+      {/* Top-right: Chhath countdown — mobile only, top-right, scaled to fit */}
+      <div
+        className="fixed z-20 sm:hidden"
+        style={{
+          top: "var(--hud-inset)",
+          right: "var(--hud-inset)",
+          transformOrigin: "top right",
+          transform: "scale(0.72)",
+        }}
+      >
+        <ChhathCountdown />
+      </div>
+
+      {/* Top-right: Live clock — desktop only */}
+      <div className="fixed z-20 hidden sm:block" style={{ top: "var(--hud-inset)", right: "var(--hud-inset)" }}>
         <LiveClock />
       </div>
 
       {/* ══════════════════════════════════════════════════════════
-          BOTTOM STACK (footer → player → facts)
+          BOTTOM STACK
       ══════════════════════════════════════════════════════════ */}
 
-      {/* Facts ticker — above player, derived from CSS layout tokens */}
+      {/* Facts ticker — always visible */}
       <div
         className="fixed left-0 right-0 z-20 flex justify-center px-4 pointer-events-none"
         style={{ bottom: "var(--facts-bottom)" }}
@@ -174,40 +193,29 @@ export default function PageClient() {
         <ChhathFacts />
       </div>
 
-      {/* ── Mobile: ReactionBar centered above player ── */}
-      {isMobile && (
-        <div
-          className="fixed left-0 right-0 z-20 flex justify-center pointer-events-none"
-          style={{ bottom: "calc(var(--player-bottom) + var(--player-h) + 0.5rem)" }}
-        >
-          <div className="pointer-events-auto">
-            <ReactionBar onReact={handleReact} />
-          </div>
-        </div>
-      )}
-
-      {/* Player row — pill truly centered; FABs absolutely positioned relative to this row */}
+      {/* Player row — always visible, pill centered */}
       <div
         className="fixed left-0 right-0 z-20 flex items-center justify-center px-3 sm:px-4"
         style={{ bottom: "var(--player-bottom)" }}
       >
-        {/* Radio player pill — the only flex child, so justify-center truly centers it */}
+        {/* Radio player pill */}
         <div className="relative min-w-0 max-w-lg w-full">
-          <RadioPlayer hasTunedIn={hasTunedIn} />
+          <RadioPlayer
+            hasTunedIn={hasTunedIn}
+            showPlaylist={showPlaylist}
+            onPlaylistToggle={handlePlaylistToggle}
+          />
 
-          {/* Desktop only: Reaction FAB — out of flow, anchored to the right edge of the pill */}
-          {!isMobile && (
-            <div
-              className="absolute top-1/2 -translate-y-1/2"
-              style={{ left: "calc(100% + 12px)" }}
-            >
-              <ReactionBar onReact={handleReact} />
-            </div>
-          )}
+          {/* Desktop only: Reaction FAB — right of pill */}
+          <div
+            className="absolute top-1/2 -translate-y-1/2 hidden sm:block"
+            style={{ left: "calc(100% + 12px)" }}
+          >
+            <ReactionBar onReact={handleReact} />
+          </div>
         </div>
 
-        {/* Desktop only: Chat FAB — absolutely positioned to the far right of the viewport,
-            vertically centered on the player row (same as ReactionBar) */}
+        {/* Desktop only: Chat FAB — far right of viewport */}
         {!isMobile && sessionId && (
           <div
             className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
@@ -218,28 +226,15 @@ export default function PageClient() {
         )}
       </div>
 
-      {/* Mobile only: Chat FAB — fixed bottom-right corner above footer */}
-      {isMobile && sessionId && (
-        <div
-          className="fixed z-30 pointer-events-none"
-          style={{
-            bottom: "calc(var(--player-bottom) + var(--player-h) + 0.5rem)",
-            right: "var(--hud-inset)",
-          }}
-        >
-          <LiveChatDrawer sessionId={sessionId} listenerCount={listenerCount} />
-        </div>
-      )}
-
-      {/* Keyboard help "?" — fixed bottom-left, above footer */}
+      {/* Keyboard help "?" — desktop only */}
       <div
-        className="fixed z-30"
+        className="fixed z-30 hidden sm:block"
         style={{ bottom: "var(--player-bottom)", left: "var(--hud-inset)" }}
       >
         <KeyboardHelpButton />
       </div>
 
-      {/* Footer bar — neumorphic, full-width */}
+      {/* Footer bar — always visible */}
       <div
         className="fixed bottom-0 left-0 right-0 z-20 h-11 sm:h-12"
         style={{
@@ -248,7 +243,7 @@ export default function PageClient() {
         }}
       >
         <div className="flex items-center justify-between h-full px-4 sm:px-5 gap-3">
-          {/* Left: Hindi tagline */}
+          {/* Left: Hindi tagline — desktop only */}
           <span
             className="text-xs shrink-0 hidden sm:block text-orange-400 font-bold tracking-wide"
             style={{ fontFamily: "'Noto Sans Devanagari', 'Mangal', sans-serif" }}
@@ -311,17 +306,18 @@ export default function PageClient() {
           SIDE ELEMENTS
       ══════════════════════════════════════════════════════════ */}
 
-      {/* Left-center: 3D share tab */}
-      <ShareFloatingButton />
+      {/* Left-center: 3D share tab — hidden on mobile when playlist is open */}
+      {!(isMobile && showPlaylist) && (
+        <ShareFloatingButton onOpenChange={(open) => setShowShare(open)} />
+      )}
 
+      {/* Milestone celebration — desktop only */}
+      {!isMobile && <MilestoneCelebration count={listenerCount} />}
 
-      {/* Milestone celebration */}
-      <MilestoneCelebration count={listenerCount} />
-
-      {/* Full-screen reaction splash */}
+      {/* Full-screen reaction splash — all devices */}
       <ReactionSplash emoji={splashEmoji} onDone={handleSplashDone} />
 
-      {/* PWA install banner */}
+      {/* PWA install banner — desktop only (guarded inside component too) */}
       <PwaInstallBanner />
 
       {/* UPI Donate Modal */}
@@ -331,6 +327,23 @@ export default function PageClient() {
     {/* ── TuneInSplash rendered OUTSIDE <main> to avoid overflow-hidden clipping ── */}
     {!hasTunedIn && (
       <TuneInSplash onTuneIn={() => setHasTunedIn(true)} />
+    )}
+
+    {/* Mobile only: ReactionBar — OUTSIDE <main> to avoid overflow-hidden clipping.
+        Hidden when playlist or share modal is open. right:8px so FAB is fully visible. */}
+    {!(isMobile && (showPlaylist || showShare)) && (
+      <div
+        className="sm:hidden"
+        style={{
+          position: "fixed",
+          right: "8px",
+          top: "50%",
+          transform: "translateY(-50%)",
+          zIndex: 30,
+        }}
+      >
+        <ReactionBar onReact={handleReact} arcDirection="left" />
+      </div>
     )}
     </>
   );

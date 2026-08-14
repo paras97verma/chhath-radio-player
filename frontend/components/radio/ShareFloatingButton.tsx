@@ -13,8 +13,11 @@ import dynamic from "next/dynamic";
 
 const ShareModal = dynamic(() => import("./ShareModal"), { ssr: false });
 
-export default function ShareFloatingButton() {
+export default function ShareFloatingButton({ onOpenChange }: { onOpenChange?: (open: boolean) => void } = {}) {
   const [open, setOpen] = useState(false);
+
+  const handleOpen = () => { setOpen(true); onOpenChange?.(true); };
+  const handleClose = () => { setOpen(false); onOpenChange?.(false); };
 
   return (
     <>
@@ -23,7 +26,7 @@ export default function ShareFloatingButton() {
         style={{ perspective: "600px" }}
       >
         <button
-          onClick={() => setOpen(true)}
+          onClick={handleOpen}
           aria-label="Share Chhath Radio"
           title="Share"
           className="flex flex-col items-center justify-center gap-1.5
@@ -79,7 +82,7 @@ export default function ShareFloatingButton() {
         </button>
       </div>
 
-      {open && <ShareModal onClose={() => setOpen(false)} />}
+      {open && <ShareModal onClose={handleClose} />}
     </>
   );
 }

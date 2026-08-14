@@ -36,6 +36,13 @@
   --chat-fab-bottom: calc(var(--fab-bottom) + 2rem);
 }
 
+/* Mobile-only override: push facts higher to clear the song name strip in the pill */
+@media (max-width: 639px) {
+  :root {
+    --player-h: 8rem; /* pill is taller on mobile due to song name strip (~3rem extra) */
+  }
+}
+
 /* Responsive overrides at sm (640px+) */
 @media (min-width: 640px) {
   :root {
