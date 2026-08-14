@@ -79,12 +79,17 @@ run_e2e() {
   # Ensure Playwright browsers are installed before running tests.
   # This is a no-op if browsers are already present (fast check).
   info "Checking Playwright browser installation…"
-  if ! npx playwright install chromium --with-deps 2>&1 | grep -q "already installed\|Skipping"; then
-    # install ran (or failed silently) — proceed regardless
-    :
+  npx playwright install chromium 2>&1 | tail -1 || true
+
+  # Support headed mode: HEADED=1 bash scripts/test.sh e2e
+  # or: HEADED=1 make test SUITE=e2e
+  local pw_args="--reporter=list"
+  if [[ "${HEADED:-}" == "1" ]]; then
+    info "Running in HEADED mode (visible browser)…"
+    export HEADED=1
   fi
 
-  if npx playwright test --reporter=list; then
+  if npx playwright test ${pw_args}; then
     pass "E2E tests passed"
     return 0
   else

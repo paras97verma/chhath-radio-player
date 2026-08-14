@@ -208,8 +208,10 @@ test-frontend test-frontend-unit:
 	@bash scripts/test.sh frontend-unit
 
 # Frontend E2E (Playwright)
+# Run headless (default):  make test-e2e
+# Run headed (visible):    make test-e2e HEADED=1
 test-e2e:
-	@bash scripts/test.sh e2e
+	@HEADED=$(HEADED) bash scripts/test.sh e2e
 
 # Load / stress test (legacy qa-tests runner)
 test-load:

@@ -5,12 +5,34 @@
  * Verifies the chat FAB, drawer open/close, message sending, and rate limiting.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+
+/**
+ * Dismiss the TuneInSplash overlay so underlying UI is interactable.
+ *
+ * The splash is a full-screen dialog at z-[9999]. Its inner card stops
+ * propagation, so we must click the "Tune In" button directly. After clicking,
+ * the splash fades out over 300ms (CSS transition) then unmounts.
+ */
+async function dismissSplash(page: Page) {
+  const splash = page.getByRole("dialog", { name: /click to start/i });
+  const isSplashVisible = await splash.isVisible().catch(() => false);
+  if (!isSplashVisible) return;
+
+  // Click the "Tune In" button — this triggers handleClick() → fading=true
+  const tuneInBtn = page.getByRole("button", { name: /tune in|start chhath radio/i });
+  await tuneInBtn.click();
+
+  // Wait for the 300ms CSS fade + React unmount (give it up to 3s)
+  await expect(splash).not.toBeVisible({ timeout: 3_000 });
+}
 
 test.describe("Live Chat Drawer", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
+    // Dismiss the TuneInSplash so the chat FAB is interactable
+    await dismissSplash(page);
   });
 
   test("chat FAB button is visible", async ({ page }) => {
@@ -36,8 +58,8 @@ test.describe("Live Chat Drawer", () => {
     const messageInput = page.getByPlaceholder(/Jai Chhathi Maiya/i);
     await expect(messageInput).toBeVisible();
 
-    // Send button
-    const sendButton = page.getByRole("button", { name: /send/i });
+    // Send button — use exact label to avoid matching "Send a reaction" (ReactionBar)
+    const sendButton = page.getByRole("button", { name: "Send message", exact: true });
     await expect(sendButton).toBeVisible();
   });
 
@@ -49,7 +71,7 @@ test.describe("Live Chat Drawer", () => {
     const messageInput = page.getByPlaceholder(/Jai Chhathi Maiya/i);
     await messageInput.fill("Test message from E2E");
 
-    const sendButton = page.getByRole("button", { name: /send/i });
+    const sendButton = page.getByRole("button", { name: "Send message", exact: true });
     await sendButton.click();
 
     // The message should appear in the chat list
@@ -62,7 +84,7 @@ test.describe("Live Chat Drawer", () => {
     await expect(page.getByRole("dialog", { name: "Live Chat" })).toBeVisible({ timeout: 5_000 });
 
     const messageInput = page.getByPlaceholder(/Jai Chhathi Maiya/i);
-    const sendButton = page.getByRole("button", { name: /send/i });
+    const sendButton = page.getByRole("button", { name: "Send message", exact: true });
 
     // Send first message
     await messageInput.fill("First message");
