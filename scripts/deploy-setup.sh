@@ -85,9 +85,63 @@ gen_secret() {
 
 # ── Generate VAPID key pair ───────────────────────────────────────────────────
 gen_vapid_keys() {
-  if command -v npx >/dev/null 2>&1; then
+  # Strategy 1: use web-push from the frontend's node_modules (already installed)
+  if command -v node >/dev/null 2>&1; then
     local output
-    output=$(cd "$PROJECT_ROOT/frontend" && npx web-push generate-vapid-keys --json 2>/dev/null || echo "")
+    output=$(node -e "
+try {
+  const wp = require('$PROJECT_ROOT/frontend/node_modules/web-push');
+  const keys = wp.generateVAPIDKeys();
+  console.log(JSON.stringify(keys));
+} catch(e) { process.exit(1); }
+" 2>/dev/null || echo "")
+    if [ -n "$output" ]; then
+      VAPID_PUBLIC_KEY=$(echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['publicKey'])" 2>/dev/null || echo "")
+      VAPID_PRIVATE_KEY=$(echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['privateKey'])" 2>/dev/null || echo "")
+      if [ -n "$VAPID_PUBLIC_KEY" ] && [ -n "$VAPID_PRIVATE_KEY" ]; then
+        return
+      fi
+    fi
+  fi
+
+  # Strategy 2: install web-push in a temp dir and use it
+  if command -v npm >/dev/null 2>&1; then
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local output
+    output=$(cd "$tmpdir" && npm install web-push --silent 2>/dev/null \
+      && node -e "const wp=require('web-push');const k=wp.generateVAPIDKeys();console.log(JSON.stringify(k));" 2>/dev/null || echo "")
+    rm -rf "$tmpdir"
+    if [ -n "$output" ]; then
+      VAPID_PUBLIC_KEY=$(echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['publicKey'])" 2>/dev/null || echo "")
+      VAPID_PRIVATE_KEY=$(echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['privateKey'])" 2>/dev/null || echo "")
+      if [ -n "$VAPID_PUBLIC_KEY" ] && [ -n "$VAPID_PRIVATE_KEY" ]; then
+        return
+      fi
+    fi
+  fi
+
+  # Strategy 3: generate using openssl (ECDH P-256 raw key pair → base64url)
+  if command -v openssl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+    local output
+    output=$(python3 - <<'PYEOF' 2>/dev/null
+import base64, os, struct
+try:
+    from cryptography.hazmat.primitives.asymmetric.ec import generate_private_key, SECP256R1
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, PrivateFormat, NoEncryption
+    key = generate_private_key(SECP256R1())
+    pub = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+    priv = key.private_bytes(Encoding.DER, PrivateFormat.PKCS8, NoEncryption())
+    # Extract raw 32-byte private scalar from DER (last 32 bytes before public key)
+    raw_priv = key.private_numbers().private_value.to_bytes(32, 'big')
+    pub_b64 = base64.urlsafe_b64encode(pub).rstrip(b'=').decode()
+    priv_b64 = base64.urlsafe_b64encode(raw_priv).rstrip(b'=').decode()
+    import json
+    print(json.dumps({"publicKey": pub_b64, "privateKey": priv_b64}))
+except ImportError:
+    pass
+PYEOF
+)
     if [ -n "$output" ]; then
       VAPID_PUBLIC_KEY=$(echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['publicKey'])" 2>/dev/null || echo "")
       VAPID_PRIVATE_KEY=$(echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['privateKey'])" 2>/dev/null || echo "")
@@ -319,7 +373,9 @@ collect_render() {
   box_line "   • Root Directory: backend"
   box_line "   • Branch: main"
   box_line "   • Auto-Deploy: ${BOLD}NO${NC} (GitHub Actions controls deploys)"
-  box_line "4. Click Create Web Service"
+  box_line "4. Under Advanced → Health Check Path: ${BOLD}/api/health${NC}"
+  box_line "   (Render uses this to verify your service is up — must be set!)"
+  box_line "5. Click Create Web Service"
   box_end
   echo ""
   link "Open Render: https://dashboard.render.com"
