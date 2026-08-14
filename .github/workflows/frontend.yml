@@ -1,0 +1,165 @@
+# =============================================================================
+# Chhath Radio — Frontend CI/CD
+#
+# Triggers on push to main (frontend/** changes) or any PR touching frontend.
+# Pipeline:
+#   1. Run vitest unit tests
+#   2. Build production Docker image (smoke test with NEXT_PUBLIC_* from secrets)
+#   3. On pass + main branch: deploy to Vercel via Vercel CLI
+#   4. Verify Vercel deployment is live
+#
+# Required GitHub Secrets (set via scripts/deploy-setup.sh):
+#   VERCEL_TOKEN              — Vercel personal access token
+#   VERCEL_ORG_ID             — Vercel team/org ID (from vercel link)
+#   VERCEL_PROJECT_ID         — Vercel project ID (from vercel link)
+#   NEXT_PUBLIC_API_URL       — Backend URL e.g. https://chhath-api.onrender.com
+#   NEXT_PUBLIC_SITE_URL      — Frontend URL e.g. https://chhathradio.vercel.app
+#   NEXT_PUBLIC_VAPID_PUBLIC_KEY — VAPID public key for push notifications
+# =============================================================================
+
+name: Frontend CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend.yml'
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ── Job 1: Run unit tests ─────────────────────────────────────────────────
+  test:
+    name: vitest
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run unit tests
+        working-directory: frontend
+        run: npm run test:unit -- --reporter=verbose
+
+  # ── Job 2: Production Docker build smoke test ─────────────────────────────
+  build-check:
+    name: Production build check
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build production Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: false
+          tags: chhath-frontend:ci
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_SITE_URL=${{ secrets.NEXT_PUBLIC_SITE_URL }}
+            NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test — verify image starts and responds
+        run: |
+          docker run -d --name fe-smoke \
+            -e PORT=3000 \
+            -e HOSTNAME=0.0.0.0 \
+            -p 3000:3000 \
+            chhath-frontend:ci
+          echo "Waiting for Next.js to start..."
+          sleep 10
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/ || echo "000")
+          docker stop fe-smoke && docker rm fe-smoke
+          echo "Frontend smoke test: HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "308" ]; then
+            echo "✓ Frontend smoke test passed"
+          else
+            echo "ERROR: Frontend returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+  # ── Job 3: Deploy to Vercel (main branch only, after build passes) ─────────
+  deploy:
+    name: Deploy to Vercel
+    needs: build-check
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel project settings
+        working-directory: frontend
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Build for Vercel (with NEXT_PUBLIC_* from secrets)
+        working-directory: frontend
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_SITE_URL: ${{ secrets.NEXT_PUBLIC_SITE_URL }}
+          NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
+
+      - name: Deploy prebuilt output to Vercel production
+        working-directory: frontend
+        run: |
+          DEPLOY_URL=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
+          echo "✓ Deployed to: $DEPLOY_URL"
+          echo "DEPLOY_URL=$DEPLOY_URL" >> $GITHUB_ENV
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Verify Vercel deployment
+        run: |
+          SITE_URL="${{ secrets.NEXT_PUBLIC_SITE_URL }}"
+          echo "Verifying deployment at $SITE_URL..."
+          sleep 15
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$SITE_URL" || echo "000")
+          echo "Frontend health check: HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "308" ]; then
+            echo "✓ Frontend is live at $SITE_URL"
+          else
+            echo "WARNING: Got HTTP $HTTP_CODE — deployment may still be propagating"
+          fi

@@ -1,0 +1,39 @@
+# =============================================================================
+# Chhath Radio — YouTube URL Import List
+#
+# Format: one YouTube URL per line.
+# Blank lines and lines starting with # are ignored.
+#
+# Supported URL formats:
+#   https://www.youtube.com/watch?v=VIDEO_ID
+#   https://youtu.be/VIDEO_ID
+#   https://www.youtube.com/shorts/VIDEO_ID
+#   https://www.youtube.com/embed/VIDEO_ID
+#
+# Usage:
+#   Copy this file to urls.txt, fill in your URLs, then run:
+#
+#   Local (dry-run first — recommended):
+#     make import-songs-local-dry FILE=scripts/urls.txt
+#
+#   Local (live import):
+#     make import-songs-local FILE=scripts/urls.txt TOKEN=<your-jwt>
+#
+#   Production:
+#     make import-songs FILE=scripts/urls.txt TOKEN=<your-jwt> API=https://api.chhathradio.com
+#
+# Tips:
+#   - Get your JWT by logging into /admin and copying it from the browser DevTools
+#     (Application → Local Storage → token), or via:
+#       curl -X POST http://localhost:8000/api/admin/login \
+#            -H "Content-Type: application/json" \
+#            -d '{"email":"admin@example.com","password":"yourpassword"}'
+#   - Use --artist "Sharda Sinha" to override the artist for all songs in this file
+#   - Use --category "Chhath Geet" to tag all songs with a category
+#   - Use --start-order 10 to set the starting sort order (increments by 1 per song)
+# =============================================================================
+
+# ── Example URLs (replace with real ones) ────────────────────────────────────
+https://www.youtube.com/watch?v=dQw4w9WgXcQ
+https://youtu.be/abc123defgh
+# https://www.youtube.com/shorts/xyz789uvwxy   ← uncomment to include

@@ -1,0 +1,874 @@
+{
+  "title": "Chhath Puja Facts",
+  "version": "1.0",
+  "fact_count": 140,
+  "usage": "Randomly display one fact at a time on a website.",
+  "status_legend": {
+    "verified": "Supported by official/credible sources or widely documented practice.",
+    "traditional": "Religious/cultural belief or tradition; not necessarily independently historically verified.",
+    "context": "Important qualification or historical/contextual explanation.",
+    "observed": "Contemporary cultural observation; may vary by place.",
+    "interpretive": "Reasonable cultural interpretation rather than a hard historical fact.",
+    "modern": "Contemporary practice/technology."
+  },
+  "sources": [
+    {
+      "name": "Bihar Tourism",
+      "url": "https://tourism.bihar.gov.in/en/experiences/festivals-and-fairs/festivals/chhath-puja"
+    },
+    {
+      "name": "Incredible India / Ministry of Tourism",
+      "url": "https://www.incredibleindia.gov.in/en/festivals-and-events/chhath-puja"
+    },
+    {
+      "name": "Utsav / Government of India",
+      "url": "https://utsav.gov.in/public/view-event/chhath-puja"
+    },
+    {
+      "name": "Wikipedia - Chhath",
+      "url": "https://en.wikipedia.org/wiki/Chhath"
+    }
+  ],
+  "facts": [
+    {
+      "id": 1,
+      "fact": "Chhath Puja is a major Hindu festival dedicated to Surya, the Sun deity.",
+      "category": "basics",
+      "status": "verified"
+    },
+    {
+      "id": 2,
+      "fact": "Chhath is especially prominent in Bihar and eastern Uttar Pradesh.",
+      "category": "geography",
+      "status": "verified"
+    },
+    {
+      "id": 3,
+      "fact": "Chhath is also widely observed in Jharkhand and parts of Nepal.",
+      "category": "geography",
+      "status": "verified"
+    },
+    {
+      "id": 4,
+      "fact": "Chhath Puja is also known as Surya Shashti.",
+      "category": "names",
+      "status": "verified"
+    },
+    {
+      "id": 5,
+      "fact": "The main Kartik Chhath observance occurs in the Hindu month of Kartik.",
+      "category": "calendar",
+      "status": "verified"
+    },
+    {
+      "id": 6,
+      "fact": "The festival is traditionally observed over four main days.",
+      "category": "rituals",
+      "status": "verified"
+    },
+    {
+      "id": 7,
+      "fact": "The four main stages are Nahay Khay, Kharna/Lohanda, Sandhya Arghya and Usha Arghya.",
+      "category": "rituals",
+      "status": "verified"
+    },
+    {
+      "id": 8,
+      "fact": "Nahay Khay is the first day of Chhath.",
+      "category": "rituals",
+      "status": "verified"
+    },
+    {
+      "id": 9,
+      "fact": "Nahay Khay emphasizes bathing, cleanliness and ritual preparation.",
+      "category": "rituals",
+      "status": "verified"
+    },
+    {
+      "id": 10,
+      "fact": "Homes are traditionally cleaned as part of Nahay Khay preparations.",
+      "category": "rituals",
+      "status": "verified"
+    },
+    {
+      "id": 11,
+      "fact": "The second day is called Kharna, also known as Lohanda in some traditions.",
+      "category": "rituals",
+      "status": "verified"
+    },
+    {
+      "id": 12,
+      "fact": "Kharna involves a day-long fast followed by an evening ritual meal.",
+      "category": "fasting",
+      "status": "verified"
+    },
+    {
+      "id": 13,
+      "fact": "Kheer made with rice and jaggery is a traditional Kharna preparation.",
+      "category": "food",
+      "status": "verified"
+    },
+    {
+      "id": 14,
+      "fact": "Fruits are commonly included in Kharna offerings.",
+      "category": "food",
+      "status": "verified"
+    },
+    {
+      "id": 15,
+      "fact": "The third day culminates in Sandhya Arghya to the setting Sun.",
+      "category": "rituals",
+      "status": "verified"
+    },
+    {
+      "id": 16,
+      "fact": "The fourth day culminates in Usha Arghya to the rising Sun.",
+      "category": "rituals",
+      "status": "verified"
+    },
+    {
+      "id": 17,
+      "fact": "One distinctive feature of Chhath is worship of both the setting and rising Sun.",
+      "category": "unique",
+      "status": "verified"
+    },
+    {
+      "id": 18,
+      "fact": "Arghya is a ritual offering made to the Sun during Chhath.",
+      "category": "rituals",
+      "status": "verified"
+    },
+    {
+      "id": 19,
+      "fact": "Devotees commonly make Arghya while standing in water.",
+      "category": "rituals",
+      "status": "verified"
+    },
+    {
+      "id": 20,
+      "fact": "Rivers, ponds, lakes and other water bodies can serve as Chhath worship sites.",
+      "category": "ghats",
+      "status": "verified"
+    },
+    {
+      "id": 21,
+      "fact": "A Chhath ghat is a place where devotees gather near a water body for the rituals.",
+      "category": "ghats",
+      "status": "verified"
+    },
+    {
+      "id": 22,
+      "fact": "The person observing the main Chhath fast is commonly called a Vrati.",
+      "category": "vocabulary",
+      "status": "verified"
+    },
+    {
+      "id": 23,
+      "fact": "Both women and men can observe the Chhath vrat.",
+      "category": "culture",
+      "status": "verified"
+    },
+    {
+      "id": 24,
+      "fact": "Chhath is known for strict fasting and self-discipline.",
+      "category": "fasting",
+      "status": "verified"
+    },
+    {
+      "id": 25,
+      "fact": "Some devotees observe a waterless fast during the strict fasting period.",
+      "category": "fasting",
+      "status": "verified"
+    },
+    {
+      "id": 26,
+      "fact": "The fast is completed after the concluding Usha Arghya.",
+      "category": "fasting",
+      "status": "verified"
+    },
+    {
+      "id": 27,
+      "fact": "Thekua is one of the best-known Chhath prasad items.",
+      "category": "food",
+      "status": "verified"
+    },
+    {
+      "id": 28,
+      "fact": "Thekua is traditionally made primarily from wheat flour and jaggery or sugar.",
+      "category": "food",
+      "status": "verified"
+    },
+    {
+      "id": 29,
+      "fact": "Thekua is often shaped with decorative moulds.",
+      "category": "food",
+      "status": "verified"
+    },
+    {
+      "id": 30,
+      "fact": "Seasonal fruits are important offerings during Chhath.",
+      "category": "food",
+      "status": "verified"
+    },
+    {
+      "id": 31,
+      "fact": "Sugarcane is a common Chhath offering and decoration.",
+      "category": "food",
+      "status": "verified"
+    },
+    {
+      "id": 32,
+      "fact": "Coconut is commonly included among Chhath offerings.",
+      "category": "food",
+      "status": "verified"
+    },
+    {
+      "id": 33,
+      "fact": "Bamboo baskets are strongly associated with Chhath offerings.",
+      "category": "ritual-objects",
+      "status": "verified"
+    },
+    {
+      "id": 34,
+      "fact": "A daura is a traditional bamboo basket used to carry Chhath offerings.",
+      "category": "ritual-objects",
+      "status": "verified"
+    },
+    {
+      "id": 35,
+      "fact": "A supa is a traditional bamboo winnowing basket used in Chhath rituals.",
+      "category": "ritual-objects",
+      "status": "verified"
+    },
+    {
+      "id": 36,
+      "fact": "Kosi is a colorful ritual associated with the night of the third day in many traditions.",
+      "category": "rituals",
+      "status": "verified"
+    },
+    {
+      "id": 37,
+      "fact": "Kosi can involve a canopy made from sugarcane stalks.",
+      "category": "rituals",
+      "status": "verified"
+    },
+    {
+      "id": 38,
+      "fact": "Earthen lamps are commonly used in Kosi and Chhath decorations.",
+      "category": "ritual-objects",
+      "status": "verified"
+    },
+    {
+      "id": 39,
+      "fact": "Chhath folk songs are an important part of the festival's cultural expression.",
+      "category": "music",
+      "status": "verified"
+    },
+    {
+      "id": 40,
+      "fact": "Bhojpuri is one of the major languages of traditional Chhath songs.",
+      "category": "music",
+      "status": "verified"
+    },
+    {
+      "id": 41,
+      "fact": "Maithili is another important language of Chhath folk songs.",
+      "category": "music",
+      "status": "verified"
+    },
+    {
+      "id": 42,
+      "fact": "Magahi also has a strong Chhath song tradition.",
+      "category": "music",
+      "status": "verified"
+    },
+    {
+      "id": 43,
+      "fact": "Chhath songs often address Surya Dev and Chhathi Maiya.",
+      "category": "music",
+      "status": "verified"
+    },
+    {
+      "id": 44,
+      "fact": "Chhath music often expresses family devotion and wishes for well-being.",
+      "category": "music",
+      "status": "verified"
+    },
+    {
+      "id": 45,
+      "fact": "Sharda Sinha became one of the most recognizable voices associated with Chhath music.",
+      "category": "people",
+      "status": "verified"
+    },
+    {
+      "id": 46,
+      "fact": "Sharda Sinha helped bring Bihari folk music to a much wider audience.",
+      "category": "people",
+      "status": "verified"
+    },
+    {
+      "id": 47,
+      "fact": "Chhathi Maiya is a popular maternal deity associated with Chhath.",
+      "category": "deities",
+      "status": "traditional"
+    },
+    {
+      "id": 48,
+      "fact": "Chhathi Maiya is commonly associated with Shashthi.",
+      "category": "deities",
+      "status": "traditional"
+    },
+    {
+      "id": 49,
+      "fact": "Shashthi is traditionally associated with protection of children and childbirth.",
+      "category": "deities",
+      "status": "traditional"
+    },
+    {
+      "id": 50,
+      "fact": "Chhath combines solar worship with traditions surrounding family and children's well-being.",
+      "category": "culture",
+      "status": "traditional"
+    },
+    {
+      "id": 51,
+      "fact": "Chhath has ancient roots in Indian traditions of Sun worship.",
+      "category": "history",
+      "status": "verified"
+    },
+    {
+      "id": 52,
+      "fact": "Government tourism sources describe Chhath as rooted in ancient Vedic traditions.",
+      "category": "history",
+      "status": "verified"
+    },
+    {
+      "id": 53,
+      "fact": "The existence of ancient Sun worship does not by itself prove that the modern four-day Chhath had exactly the same form in antiquity.",
+      "category": "history",
+      "status": "context"
+    },
+    {
+      "id": 54,
+      "fact": "Traditional stories connect Chhath with figures from the Ramayana and Mahabharata.",
+      "category": "legends",
+      "status": "traditional"
+    },
+    {
+      "id": 55,
+      "fact": "Karna is associated with Surya in the Mahabharata tradition.",
+      "category": "legends",
+      "status": "traditional"
+    },
+    {
+      "id": 56,
+      "fact": "Popular Chhath traditions sometimes connect Karna's devotion to Surya with the festival.",
+      "category": "legends",
+      "status": "traditional"
+    },
+    {
+      "id": 57,
+      "fact": "Some Chhath traditions associate Draupadi and the Pandavas with Surya worship.",
+      "category": "legends",
+      "status": "traditional"
+    },
+    {
+      "id": 58,
+      "fact": "Popular traditions also connect Rama and Sita with Sun worship after their return to Ayodhya.",
+      "category": "legends",
+      "status": "traditional"
+    },
+    {
+      "id": 59,
+      "fact": "These epic origin stories are best presented as religious traditions or legends rather than independently proven history.",
+      "category": "history",
+      "status": "context"
+    },
+    {
+      "id": 60,
+      "fact": "Deo Surya Mandir in Aurangabad district, Bihar, is an important Sun temple associated with Chhath.",
+      "category": "places",
+      "status": "verified"
+    },
+    {
+      "id": 61,
+      "fact": "Deo Surya Mandir is dedicated to Surya.",
+      "category": "places",
+      "status": "verified"
+    },
+    {
+      "id": 62,
+      "fact": "The area around Deo is an important pilgrimage center during Chhath.",
+      "category": "places",
+      "status": "verified"
+    },
+    {
+      "id": 63,
+      "fact": "Deo is traditionally associated by local accounts with the origin of Chhath, but this should be treated as a traditional claim rather than settled historical fact.",
+      "category": "history",
+      "status": "traditional"
+    },
+    {
+      "id": 64,
+      "fact": "Bihar has several historically important Sun temples.",
+      "category": "places",
+      "status": "verified"
+    },
+    {
+      "id": 65,
+      "fact": "Kandaha Sun Temple in Saharsa district is associated with Surya worship.",
+      "category": "places",
+      "status": "verified"
+    },
+    {
+      "id": 66,
+      "fact": "Chhath is deeply connected with Bihari cultural identity.",
+      "category": "culture",
+      "status": "verified"
+    },
+    {
+      "id": 67,
+      "fact": "Chhath is also important to Bhojpuri, Maithili and Magahi-speaking communities.",
+      "category": "culture",
+      "status": "verified"
+    },
+    {
+      "id": 68,
+      "fact": "Chhath often brings migrant families back to their home regions.",
+      "category": "migration",
+      "status": "verified"
+    },
+    {
+      "id": 69,
+      "fact": "Seasonal travel demand rises sharply around Chhath.",
+      "category": "modern",
+      "status": "verified"
+    },
+    {
+      "id": 70,
+      "fact": "Special trains are often operated around the Chhath travel period.",
+      "category": "modern",
+      "status": "verified"
+    },
+    {
+      "id": 71,
+      "fact": "Delhi has developed large public Chhath celebrations outside Bihar.",
+      "category": "modern",
+      "status": "verified"
+    },
+    {
+      "id": 72,
+      "fact": "Mumbai hosts significant Chhath celebrations.",
+      "category": "modern",
+      "status": "verified"
+    },
+    {
+      "id": 73,
+      "fact": "Kolkata has substantial Chhath observances.",
+      "category": "modern",
+      "status": "verified"
+    },
+    {
+      "id": 74,
+      "fact": "Bengaluru and other Indian cities also host Chhath celebrations.",
+      "category": "modern",
+      "status": "verified"
+    },
+    {
+      "id": 75,
+      "fact": "Temporary ghats allow Chhath to be observed in cities without traditional riverfronts.",
+      "category": "modern",
+      "status": "verified"
+    },
+    {
+      "id": 76,
+      "fact": "Artificial ponds can be prepared for urban Chhath celebrations.",
+      "category": "modern",
+      "status": "verified"
+    },
+    {
+      "id": 77,
+      "fact": "Municipal authorities often clean and prepare ghats before Chhath.",
+      "category": "modern",
+      "status": "verified"
+    },
+    {
+      "id": 78,
+      "fact": "Large Chhath gatherings require traffic and crowd management.",
+      "category": "modern",
+      "status": "verified"
+    },
+    {
+      "id": 79,
+      "fact": "Medical and emergency arrangements may be deployed at major Chhath sites.",
+      "category": "modern",
+      "status": "verified"
+    },
+    {
+      "id": 80,
+      "fact": "Chhath has a major public and community dimension in addition to household worship.",
+      "category": "culture",
+      "status": "verified"
+    },
+    {
+      "id": 81,
+      "fact": "Prasad is traditionally shared with relatives, neighbors and other community members.",
+      "category": "culture",
+      "status": "verified"
+    },
+    {
+      "id": 82,
+      "fact": "Family members who are not fasting can still participate in Chhath preparations.",
+      "category": "culture",
+      "status": "verified"
+    },
+    {
+      "id": 83,
+      "fact": "Children often participate by helping carry offerings or accompanying families to the ghat.",
+      "category": "culture",
+      "status": "observed"
+    },
+    {
+      "id": 84,
+      "fact": "Bamboo craft workers can experience seasonal demand for Chhath baskets.",
+      "category": "economy",
+      "status": "context"
+    },
+    {
+      "id": 85,
+      "fact": "Fruit sellers commonly see increased demand during Chhath.",
+      "category": "economy",
+      "status": "context"
+    },
+    {
+      "id": 86,
+      "fact": "Sugarcane sellers commonly see increased demand during Chhath.",
+      "category": "economy",
+      "status": "context"
+    },
+    {
+      "id": 87,
+      "fact": "Chhath has strong associations with seasonal agricultural produce.",
+      "category": "agriculture",
+      "status": "verified"
+    },
+    {
+      "id": 88,
+      "fact": "Rice is an important ingredient in several Chhath preparations.",
+      "category": "food",
+      "status": "verified"
+    },
+    {
+      "id": 89,
+      "fact": "Wheat flour is used for Thekua.",
+      "category": "food",
+      "status": "verified"
+    },
+    {
+      "id": 90,
+      "fact": "Jaggery is used in several traditional Chhath preparations.",
+      "category": "food",
+      "status": "verified"
+    },
+    {
+      "id": 91,
+      "fact": "The festival's offerings prominently feature natural and seasonal foods.",
+      "category": "culture",
+      "status": "verified"
+    },
+    {
+      "id": 92,
+      "fact": "Chhath has a strong symbolic relationship with Sun, water, agriculture and life.",
+      "category": "symbolism",
+      "status": "interpretive"
+    },
+    {
+      "id": 93,
+      "fact": "Cleanliness is a central value in Chhath preparation and observance.",
+      "category": "ritual-values",
+      "status": "verified"
+    },
+    {
+      "id": 94,
+      "fact": "Ritual food is often prepared with separate utensils and strict cleanliness practices.",
+      "category": "ritual-values",
+      "status": "traditional"
+    },
+    {
+      "id": 95,
+      "fact": "Many Chhath households avoid onion and garlic in festival food.",
+      "category": "food",
+      "status": "traditional"
+    },
+    {
+      "id": 96,
+      "fact": "Exact food and ritual rules can vary by family and region.",
+      "category": "culture",
+      "status": "verified"
+    },
+    {
+      "id": 97,
+      "fact": "Chhath is not exclusively a women's festival even though women are prominent among Vratis.",
+      "category": "culture",
+      "status": "verified"
+    },
+    {
+      "id": 98,
+      "fact": "Men can also observe the Chhath vrat.",
+      "category": "culture",
+      "status": "verified"
+    },
+    {
+      "id": 99,
+      "fact": "Chhath is celebrated in Nepal's Terai and Madhesh regions.",
+      "category": "geography",
+      "status": "verified"
+    },
+    {
+      "id": 100,
+      "fact": "Janakpur is an important Chhath celebration center in Nepal.",
+      "category": "geography",
+      "status": "verified"
+    },
+    {
+      "id": 101,
+      "fact": "Chhath is observed around water bodies in Nepal as well as India.",
+      "category": "geography",
+      "status": "verified"
+    },
+    {
+      "id": 102,
+      "fact": "Chhath traditions cross the India-Nepal cultural border.",
+      "category": "geography",
+      "status": "verified"
+    },
+    {
+      "id": 103,
+      "fact": "Chhath has spread through migration to Indian metropolitan areas.",
+      "category": "migration",
+      "status": "verified"
+    },
+    {
+      "id": 104,
+      "fact": "Chhath is also practiced by diaspora communities outside India and Nepal.",
+      "category": "diaspora",
+      "status": "verified"
+    },
+    {
+      "id": 105,
+      "fact": "Diaspora communities may use artificial ponds when natural water bodies are unavailable.",
+      "category": "diaspora",
+      "status": "observed"
+    },
+    {
+      "id": 106,
+      "fact": "Chaiti Chhath is another annual Chhath observance held in the month of Chaitra.",
+      "category": "calendar",
+      "status": "verified"
+    },
+    {
+      "id": 107,
+      "fact": "Kartik Chhath is generally the larger and more widely recognized Chhath observance.",
+      "category": "calendar",
+      "status": "verified"
+    },
+    {
+      "id": 108,
+      "fact": "Chaiti Chhath also follows the characteristic multi-day ritual structure.",
+      "category": "calendar",
+      "status": "verified"
+    },
+    {
+      "id": 109,
+      "fact": "Chhath is often called Chhath Mahaparv, emphasizing its cultural importance.",
+      "category": "names",
+      "status": "verified"
+    },
+    {
+      "id": 110,
+      "fact": "The word Chhath is associated with the sixth lunar day, Shashthi.",
+      "category": "names",
+      "status": "context"
+    },
+    {
+      "id": 111,
+      "fact": "Chhath is unusual among major festivals because sunset is itself a major worship moment.",
+      "category": "unique",
+      "status": "verified"
+    },
+    {
+      "id": 112,
+      "fact": "The festival's central worship can take place outdoors rather than inside a temple.",
+      "category": "unique",
+      "status": "verified"
+    },
+    {
+      "id": 113,
+      "fact": "The horizon and natural light become part of the ritual setting during Arghya.",
+      "category": "symbolism",
+      "status": "interpretive"
+    },
+    {
+      "id": 114,
+      "fact": "Water reflects sunlight during Arghya, creating a distinctive visual aspect of Chhath.",
+      "category": "symbolism",
+      "status": "interpretive"
+    },
+    {
+      "id": 115,
+      "fact": "Chhath folk traditions have been transmitted orally across generations.",
+      "category": "culture",
+      "status": "verified"
+    },
+    {
+      "id": 116,
+      "fact": "Modern recordings have helped Chhath songs reach audiences beyond their traditional regions.",
+      "category": "music",
+      "status": "verified"
+    },
+    {
+      "id": 117,
+      "fact": "YouTube and streaming services have expanded access to Chhath music.",
+      "category": "technology",
+      "status": "modern"
+    },
+    {
+      "id": 118,
+      "fact": "Social media is now used to share Chhath greetings and coordinate community activities.",
+      "category": "technology",
+      "status": "modern"
+    },
+    {
+      "id": 119,
+      "fact": "Online platforms allow people living far from home to participate remotely in Chhath culture.",
+      "category": "technology",
+      "status": "modern"
+    },
+    {
+      "id": 120,
+      "fact": "Chhath demonstrates how an old ritual tradition can adapt to modern urban and digital life.",
+      "category": "modern",
+      "status": "interpretive"
+    },
+    {
+      "id": 121,
+      "fact": "Traditional bamboo baskets remain an important visual symbol of Chhath.",
+      "category": "ritual-objects",
+      "status": "verified"
+    },
+    {
+      "id": 122,
+      "fact": "Earthen diyas are commonly used to illuminate Chhath spaces.",
+      "category": "ritual-objects",
+      "status": "verified"
+    },
+    {
+      "id": 123,
+      "fact": "Folk songs can be heard at Chhath ghats during evening worship.",
+      "category": "music",
+      "status": "verified"
+    },
+    {
+      "id": 124,
+      "fact": "Chhath gatherings can turn ordinary public spaces into temporary sacred spaces.",
+      "category": "culture",
+      "status": "interpretive"
+    },
+    {
+      "id": 125,
+      "fact": "The festival combines personal austerity with large-scale community participation.",
+      "category": "culture",
+      "status": "interpretive"
+    },
+    {
+      "id": 126,
+      "fact": "Chhath is often associated with prayers for family health, prosperity and well-being.",
+      "category": "beliefs",
+      "status": "traditional"
+    },
+    {
+      "id": 127,
+      "fact": "Devotees may undertake the vrat as an expression of gratitude as well as prayer.",
+      "category": "beliefs",
+      "status": "traditional"
+    },
+    {
+      "id": 128,
+      "fact": "The Sun is traditionally regarded as a source of light, energy and life.",
+      "category": "beliefs",
+      "status": "traditional"
+    },
+    {
+      "id": 129,
+      "fact": "Chhath's focus on water bodies makes river and pond cleanliness especially important to devotees.",
+      "category": "environment",
+      "status": "context"
+    },
+    {
+      "id": 130,
+      "fact": "Modern celebrations can create environmental challenges through plastic and crowd-generated waste.",
+      "category": "environment",
+      "status": "verified"
+    },
+    {
+      "id": 131,
+      "fact": "Pollution of rivers can affect the experience and safety of Chhath gatherings.",
+      "category": "environment",
+      "status": "verified"
+    },
+    {
+      "id": 132,
+      "fact": "Traditional Chhath materials include bamboo, earthen lamps and natural food offerings.",
+      "category": "environment",
+      "status": "verified"
+    },
+    {
+      "id": 133,
+      "fact": "Chhath is often described as nature-oriented because Sun and water are central to its worship.",
+      "category": "environment",
+      "status": "interpretive"
+    },
+    {
+      "id": 134,
+      "fact": "Chhath songs often express longing for home and family among migrant communities.",
+      "category": "migration",
+      "status": "observed"
+    },
+    {
+      "id": 135,
+      "fact": "The festival can strengthen intergenerational transmission of recipes, songs and ritual knowledge.",
+      "category": "culture",
+      "status": "interpretive"
+    },
+    {
+      "id": 136,
+      "fact": "Chhath can involve extensive volunteer and community coordination at public ghats.",
+      "category": "community",
+      "status": "observed"
+    },
+    {
+      "id": 137,
+      "fact": "Local governments can become deeply involved in preparing public Chhath infrastructure.",
+      "category": "modern",
+      "status": "verified"
+    },
+    {
+      "id": 138,
+      "fact": "Chhath has become an important cultural event in many Indian cities with Purvanchali and Bihari communities.",
+      "category": "modern",
+      "status": "verified"
+    },
+    {
+      "id": 139,
+      "fact": "The festival's regional variations mean there is no single universal Chhath procedure followed identically everywhere.",
+      "category": "culture",
+      "status": "verified"
+    },
+    {
+      "id": 140,
+      "fact": "A good way to understand Chhath is as a living tradition combining devotion, family, nature, food, music and community.",
+      "category": "overview",
+      "status": "interpretive"
+    }
+  ]
+}
