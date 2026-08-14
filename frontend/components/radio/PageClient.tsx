@@ -330,8 +330,8 @@ export default function PageClient() {
     )}
 
     {/* Mobile only: ReactionBar — OUTSIDE <main> to avoid overflow-hidden clipping.
-        Hidden when playlist or share modal is open. right:8px so FAB is fully visible. */}
-    {!(isMobile && (showPlaylist || showShare)) && (
+        Hidden when playlist, share modal, or donate modal is open. right:8px so FAB is fully visible. */}
+    {!(isMobile && (showPlaylist || showShare || showDonate)) && (
       <div
         className="sm:hidden"
         style={{

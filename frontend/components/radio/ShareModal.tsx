@@ -93,8 +93,23 @@ export default function ShareModal({ onClose }: ShareModalProps) {
     setGenerating(true);
     setError(false);
     try {
-      // Give the DOM time to fully render the card (fonts, images, layout)
-      await new Promise((r) => setTimeout(r, 300));
+      // Wait for all images inside the card to finish loading before capturing.
+      // Without this, the album art <img> may still be in-flight when toPng runs,
+      // producing a blank image on the first open.
+      const images = Array.from(cardRef.current.querySelectorAll("img"));
+      await Promise.all(
+        images.map(
+          (img) =>
+            img.complete
+              ? Promise.resolve()
+              : new Promise<void>((resolve) => {
+                  img.onload = () => resolve();
+                  img.onerror = () => resolve(); // resolve even on error so capture still runs
+                })
+        )
+      );
+      // Small extra tick to let the browser paint the loaded images into layout
+      await new Promise((r) => setTimeout(r, 80));
       const png = await toPng(cardRef.current, {
         pixelRatio: 2,
         cacheBust: true,
