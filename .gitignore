@@ -77,3 +77,6 @@ frontend/next-env.d.ts
 # Misc
 .vercel
 *.pem
+
+# Lyzo AI assistant memory (local only — never commit)
+.lyzo/

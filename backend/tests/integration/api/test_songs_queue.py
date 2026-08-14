@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models.song import Song
+from app.services.song_service import QUEUE_CACHE_KEY, _cache_delete
 
 
 def make_song(db: Session, title: str, sort_order: int, enabled: bool = True) -> Song:
@@ -60,6 +61,13 @@ class TestPublicSongsAPI:
 
 
 class TestRadioQueueAPI:
+    @pytest.fixture(autouse=True)
+    def flush_queue_cache(self):
+        """Clear the Redis queue cache before each test to prevent cross-test cache leakage."""
+        _cache_delete(QUEUE_CACHE_KEY)
+        yield
+        _cache_delete(QUEUE_CACHE_KEY)
+
     def test_radio_queue_returns_enabled_songs_in_order(self, client: TestClient, db: Session):
         """GET /api/radio/queue returns enabled songs in sort_order."""
         make_song(db, "Song B", sort_order=2)

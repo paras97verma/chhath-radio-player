@@ -15,7 +15,7 @@
         shell-backend shell-frontend \
         migrate migrate-auto migrate-local migrate-auto-local \
         seed seed-songs seed-songs-clear seed-songs-fast \
-        test qa smoke \
+        test smoke \
         test-backend test-backend-unit test-backend-int \
         test-frontend test-frontend-unit test-e2e \
         test-load test-all \
@@ -23,6 +23,15 @@
         build clean clean-volumes \
         download-sounds import-songs \
         prod-backend
+
+# ─── Test suite selector ──────────────────────────────────────────────────────
+# Usage:
+#   make test              → runs all suites (backend + frontend unit + E2E)
+#   make test SUITE=backend
+#   make test SUITE=frontend
+#   make test SUITE=frontend-unit
+#   make test SUITE=e2e
+SUITE ?=
 
 # ─── Compose file helpers ──────────────────────────────────────────────────────
 # Local stack uses local/docker-compose.local.yml; prod stack uses docker-compose.yml
@@ -67,8 +76,11 @@ help:
 	@echo "    make clean-volumes      Remove containers AND volumes"
 	@echo ""
 	@echo "$(CYAN)  QA / Testing$(NC)"
-	@echo "    make test               Interactive QA runner (choose what to run)"
-	@echo "    make qa                 Alias for make test"
+	@echo "    make test               Run all test suites (backend + frontend unit + E2E)"
+	@echo "    make test SUITE=backend Run backend tests only"
+	@echo "    make test SUITE=frontend Run frontend unit + E2E tests"
+	@echo "    make test SUITE=frontend-unit Run frontend unit tests only"
+	@echo "    make test SUITE=e2e     Run E2E tests only"
 	@echo "    make smoke              Smoke tests only (~30s)"
 	@echo "    make test-backend       Backend unit + integration tests"
 	@echo "    make test-backend-unit  Backend unit tests only (no server needed)"
@@ -164,44 +176,49 @@ clean-volumes:
 
 # ─── QA / Testing ─────────────────────────────────────────────────────────────
 
-# Interactive runner — choose which tests to run
-test qa:
-	@bash qa-tests/run.sh
+# Run test suites via scripts/test.sh
+# Usage:
+#   make test              → all suites (backend + frontend unit + E2E)
+#   make test SUITE=backend
+#   make test SUITE=frontend
+#   make test SUITE=frontend-unit
+#   make test SUITE=e2e
+test:
+	@bash scripts/test.sh $(SUITE)
 
-# Smoke tests — fast API sanity checks
+# Smoke tests — fast API sanity checks (legacy qa-tests runner)
 smoke:
 	@API_URL=$(API_URL) FRONTEND_URL=$(FRONTEND_URL) \
 	  bash qa-tests/run.sh --smoke
 
-# Backend unit tests (no running server needed)
+# Backend tests (unit + integration via pytest)
+test-backend:
+	@bash scripts/test.sh backend
+
+# Backend unit tests only (alias)
 test-backend-unit:
-	@API_URL=$(API_URL) bash qa-tests/run.sh --backend-unit
+	@bash scripts/test.sh backend
 
-# Backend integration tests (needs running API)
+# Backend integration tests (needs running API — alias)
 test-backend-int:
-	@API_URL=$(API_URL) bash qa-tests/run.sh --backend-int
+	@bash scripts/test.sh backend
 
-# Both backend suites
-test-backend: test-backend-unit test-backend-int
-
-# Frontend unit tests (vitest)
+# Frontend unit tests (Vitest)
 test-frontend test-frontend-unit:
-	@bash qa-tests/run.sh --frontend-unit
+	@bash scripts/test.sh frontend-unit
 
 # Frontend E2E (Playwright)
 test-e2e:
-	@FRONTEND_URL=$(FRONTEND_URL) bash qa-tests/run.sh --e2e
+	@bash scripts/test.sh e2e
 
-# Load / stress test
+# Load / stress test (legacy qa-tests runner)
 test-load:
 	@API_URL=$(API_URL) LOAD_USERS=$(LOAD_USERS) LOAD_DURATION=$(LOAD_DURATION) \
 	  bash qa-tests/run.sh --load
 
 # Run ALL test suites
 test-all:
-	@API_URL=$(API_URL) FRONTEND_URL=$(FRONTEND_URL) \
-	  LOAD_USERS=$(LOAD_USERS) LOAD_DURATION=$(LOAD_DURATION) \
-	  bash qa-tests/run.sh --all
+	@bash scripts/test.sh
 
 # ─── Linting ──────────────────────────────────────────────────────────────────
 
