@@ -5,22 +5,28 @@ Endpoints:
   POST /api/chat/messages  — Send a chat message (anonymous)
   GET  /api/chat/messages  — Fetch last N messages (initial load)
 
-Messages are stored in Redis as a time-sorted set (score = unix timestamp).
-Max 200 messages; messages older than 10 minutes are automatically pruned.
-New messages are broadcast to all active SSE connections via a
-module-level asyncio.Queue registry (imported by events.py).
+Storage:
+  Messages are stored in Redis as a time-sorted set (score = unix timestamp).
+  Max 200 messages; messages older than 10 minutes are automatically pruned.
+  An in-memory deque(maxlen=200) acts as a write-through cache so GET requests
+  don't need a Redis round-trip after the first load.
 
-Rate limiting: 1 message per 3 seconds per IP.
-  - Primary: Redis sliding-window (works across multiple Gunicorn workers).
-  - Fallback: in-memory dict (used when Redis is unavailable).
+Real-time broadcast:
+  New messages are pushed to all active WebSocket connections via ws_chat.broadcast().
+  (Previously used SSE asyncio.Queue — replaced by WebSocket in ws_chat.py.)
+
+Rate limiting:
+  In-memory dict (1 message per 3 seconds per IP).
+  Sufficient for a single Gunicorn worker. If you ever scale to multiple workers,
+  replace with Redis SET NX PX rate limiting.
 """
 
-import asyncio
 import json
 import logging
 import time
 import uuid
 import random
+from collections import deque
 from functools import lru_cache
 from typing import Any, Optional
 
@@ -38,28 +44,15 @@ CHAT_KEY = "chhath:chat:messages"
 MAX_MESSAGES = 200          # hard cap on stored messages
 MESSAGE_TTL_SECONDS = 600   # 10 minutes — messages older than this are pruned
 
-# ─── Rate limiting ────────────────────────────────────────────────────────────
-# Primary: Redis sliding-window (cross-worker safe).
-# Fallback: in-memory dict (used when Redis is unavailable).
+# ─── In-memory write-through cache ───────────────────────────────────────────
+# Populated on first _load_messages() call and kept in sync via _store_message().
+# deque(maxlen=200) automatically drops the oldest entry when the 201st is appended.
+_message_buffer: deque = deque(maxlen=MAX_MESSAGES)
+_buffer_loaded: bool = False  # True after first Redis load
+
+# ─── Rate limiting (in-memory, single-worker) ─────────────────────────────────
 _rate_limit: dict[str, float] = {}
 RATE_LIMIT_SECONDS = 3.0
-RATE_LIMIT_REDIS_KEY_PREFIX = "chhath:chat:rl:"
-
-
-def _is_rate_limited_redis(client_ip: str, now: float) -> bool:
-    """
-    Redis-backed rate limit check using SET NX PX (atomic).
-    Returns True if the client is rate-limited, False if the message is allowed.
-    """
-    r = _get_redis()
-    if r is None:
-        return False  # fall through to in-memory check
-    key = f"{RATE_LIMIT_REDIS_KEY_PREFIX}{client_ip}"
-    ttl_ms = int(RATE_LIMIT_SECONDS * 1000)
-    # SET key 1 NX PX ttl_ms — only sets if key does not exist
-    result = r.set(key, 1, nx=True, px=ttl_ms)
-    # result is True if key was newly set (allowed), None if key already existed (limited)
-    return result is None
 
 # ─── Funny bhakti-style anonymous name pool ───────────────────────────────────
 _NAMES = [
@@ -105,30 +98,10 @@ _NAMES = [
     "🌸 Kolkata_Wali_Maiya",
 ]
 
+
 def _random_name() -> str:
     return random.choice(_NAMES)
 
-# ─── Broadcaster registry (shared with events.py) ────────────────────────────
-# Each SSE connection registers an asyncio.Queue here.
-# When a chat message arrives, it's pushed to all queues.
-_chat_queues: set[asyncio.Queue] = set()
-
-def register_chat_queue(q: asyncio.Queue) -> None:
-    _chat_queues.add(q)
-
-def unregister_chat_queue(q: asyncio.Queue) -> None:
-    _chat_queues.discard(q)
-
-async def broadcast_message(msg: dict[str, Any]) -> None:
-    """Push a chat message to all active SSE connections."""
-    dead: list[asyncio.Queue] = []
-    for q in list(_chat_queues):
-        try:
-            q.put_nowait(msg)
-        except asyncio.QueueFull:
-            dead.append(q)
-    for q in dead:
-        _chat_queues.discard(q)
 
 # ─── Redis helpers ────────────────────────────────────────────────────────────
 
@@ -158,60 +131,67 @@ def _get_redis() -> Optional[redis_lib.Redis]:
     pool = _get_redis_pool()
     return redis_lib.Redis(connection_pool=pool) if pool else None
 
-# In-memory fallback when Redis is unavailable
-_memory_messages: list[dict[str, Any]] = []
+
+# ─── Message storage ──────────────────────────────────────────────────────────
 
 def _store_message(msg: dict[str, Any]) -> None:
     """
-    Store message in Redis sorted set (score = unix timestamp).
-    Prunes messages older than MESSAGE_TTL_SECONDS and enforces MAX_MESSAGES cap.
-    Falls back to in-memory list if Redis is unavailable.
+    Store a message in both the in-memory deque and Redis sorted set.
+
+    The deque write is always performed first (instant, no failure risk).
+    The Redis write is best-effort — if it fails, the message is still in the
+    deque and will be broadcast to connected WebSocket clients.
     """
+    # 1. Write to in-memory cache (deque auto-drops oldest if > MAX_MESSAGES)
+    _message_buffer.append(msg)
+
+    # 2. Persist to Redis sorted set (score = unix timestamp for time-ordering)
     try:
         r = _get_redis()
         if r:
             ts = msg["ts"]
             cutoff = ts - MESSAGE_TTL_SECONDS
             pipe = r.pipeline()
-            # Add message; score = unix timestamp for time-ordering
             pipe.zadd(CHAT_KEY, {json.dumps(msg): ts})
             # Prune messages older than 10 minutes
             pipe.zremrangebyscore(CHAT_KEY, "-inf", cutoff)
             # Enforce hard cap — keep only the newest MAX_MESSAGES entries
             pipe.zremrangebyrank(CHAT_KEY, 0, -(MAX_MESSAGES + 1))
             pipe.execute()
-            return
     except Exception as exc:
-        logger.warning("Redis chat store failed: %s", exc)
-    # Memory fallback
-    _memory_messages.insert(0, msg)
-    # Prune by time
-    cutoff = time.time() - MESSAGE_TTL_SECONDS
-    _memory_messages[:] = [m for m in _memory_messages if m["ts"] >= cutoff]
-    # Enforce hard cap
-    if len(_memory_messages) > MAX_MESSAGES:
-        _memory_messages[MAX_MESSAGES:] = []
+        logger.warning("Redis chat store failed (message in deque): %s", exc)
+
 
 def _load_messages(limit: int = 50) -> list[dict[str, Any]]:
     """
-    Load last N messages from Redis within the 10-minute window.
-    Returns messages in oldest-first order (for display).
-    Falls back to in-memory list if Redis is unavailable.
+    Load last N messages for initial load (e.g. on WebSocket connect).
+
+    On first call, loads from Redis and populates the in-memory deque.
+    Subsequent calls read from the deque (no Redis round-trip).
+    Falls back to the deque if Redis is unavailable.
     """
-    try:
-        r = _get_redis()
-        if r:
-            cutoff = time.time() - MESSAGE_TTL_SECONDS
-            # ZRANGEBYSCORE returns members with score >= cutoff, oldest-first
-            raw = r.zrangebyscore(CHAT_KEY, cutoff, "+inf")
-            msgs = [json.loads(m) for m in raw]
-            return msgs[-limit:]  # return the newest `limit` messages, oldest-first
-    except Exception as exc:
-        logger.warning("Redis chat load failed: %s", exc)
-    # Memory fallback
-    cutoff = time.time() - MESSAGE_TTL_SECONDS
-    recent = [m for m in _memory_messages if m["ts"] >= cutoff]
-    return list(reversed(recent[:limit]))
+    global _buffer_loaded
+
+    # Populate deque from Redis on first call
+    if not _buffer_loaded:
+        try:
+            r = _get_redis()
+            if r:
+                cutoff = time.time() - MESSAGE_TTL_SECONDS
+                raw = r.zrangebyscore(CHAT_KEY, cutoff, "+inf")
+                msgs = [json.loads(m) for m in raw]
+                # Load into deque (respects maxlen=200)
+                for m in msgs:
+                    _message_buffer.append(m)
+                _buffer_loaded = True
+                logger.info("Loaded %d messages from Redis into deque", len(msgs))
+        except Exception as exc:
+            logger.warning("Redis chat load failed, using empty deque: %s", exc)
+            _buffer_loaded = True  # don't retry on every call
+
+    msgs = list(_message_buffer)
+    return msgs[-limit:]  # newest `limit` messages, oldest-first
+
 
 # ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -219,11 +199,13 @@ class ChatMessageIn(BaseModel):
     name: str = Field(default="", max_length=40)
     text: str = Field(..., min_length=1, max_length=200)
 
+
 class ChatMessageOut(BaseModel):
     id: str
     name: str
     text: str
     ts: int
+
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
@@ -233,21 +215,14 @@ async def send_message(body: ChatMessageIn, request: Request) -> ChatMessageOut:
     client_ip = request.client.host if request.client else "unknown"
     now = time.time()
 
-    # Rate limit check — try Redis first, fall back to in-memory
-    if _is_rate_limited_redis(client_ip, now):
+    # In-memory rate limit check
+    last = _rate_limit.get(client_ip, 0)
+    if now - last < RATE_LIMIT_SECONDS:
         raise HTTPException(
             status_code=429,
             detail=f"Please wait {RATE_LIMIT_SECONDS:.0f} seconds between messages.",
         )
-    else:
-        # In-memory fallback (also guards when Redis is unavailable)
-        last = _rate_limit.get(client_ip, 0)
-        if now - last < RATE_LIMIT_SECONDS:
-            raise HTTPException(
-                status_code=429,
-                detail=f"Please wait {RATE_LIMIT_SECONDS:.0f} seconds between messages.",
-            )
-        _rate_limit[client_ip] = now
+    _rate_limit[client_ip] = now
 
     # Clean up old rate limit entries (keep dict small)
     if len(_rate_limit) > 10_000:
@@ -266,7 +241,14 @@ async def send_message(body: ChatMessageIn, request: Request) -> ChatMessageOut:
     }
 
     _store_message(msg)
-    await broadcast_message(msg)
+
+    # Broadcast to all connected WebSocket clients
+    # Import here to avoid circular import (ws_chat imports from chat)
+    try:
+        from app.api import ws_chat
+        await ws_chat.broadcast({"type": "chat_message", **msg})
+    except Exception as exc:
+        logger.warning("WS broadcast failed: %s", exc)
 
     logger.info("Chat message from %s: %s", name, msg["text"][:40])
     return ChatMessageOut(**msg)

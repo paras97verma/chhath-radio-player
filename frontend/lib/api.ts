@@ -98,7 +98,7 @@ export async function sendHeartbeat(sessionId: string): Promise<void> {
   });
 }
 
-// ─── Chat API ─────────────────────────────────────────────────────────────────
+// ─── Chat HTTP API (fallback / admin use) ─────────────────────────────────────
 
 export async function fetchChatHistory(limit = 50): Promise<ChatMessage[]> {
   try {
@@ -121,6 +121,70 @@ export async function postChatMessage(name: string, text: string): Promise<ChatM
     throw new Error((err as { detail?: string }).detail ?? "Failed to send message");
   }
   return res.json();
+}
+
+// ─── Chat WebSocket ────────────────────────────────────────────────────────────
+//
+// Primary real-time chat transport. Replaces the SSE-based chat relay.
+//
+// Server → Client events:
+//   {"type": "history",      "messages": ChatMessage[]}   — on connect
+//   {"type": "chat_message", "id": string, "name": string, "text": string, "ts": number}
+//   {"type": "error",        "detail": string}            — rate limit / validation
+//
+// Client → Server:
+//   {"name": string, "text": string}
+
+export type ChatWsEvent =
+  | { type: "history"; messages: ChatMessage[] }
+  | { type: "chat_message"; id: string; name: string; text: string; ts: number; _nonce?: string }
+  | { type: "error"; detail: string };
+
+/**
+ * Open a WebSocket connection to the chat endpoint.
+ * Returns the WebSocket instance so the caller can close it on unmount.
+ *
+ * Usage in a React component:
+ *   useEffect(() => {
+ *     const ws = connectChatWebSocket(sessionId, (event) => {
+ *       if (event.type === "history")      setMessages(event.messages);
+ *       if (event.type === "chat_message") setMessages((prev) => [...prev, event]);
+ *     });
+ *     return () => ws.close();
+ *   }, [sessionId]);
+ */
+export function connectChatWebSocket(
+  sessionId: string,
+  onEvent: (event: ChatWsEvent) => void,
+): WebSocket {
+  // Convert https:// → wss://, http:// → ws:// for the backend URL.
+  // Falls back to a relative ws:// path when NEXT_PUBLIC_API_URL is not set
+  // (Next.js dev server proxies /api/* to the backend).
+  const base = (process.env.NEXT_PUBLIC_API_URL ?? "")
+    .replace(/^https:\/\//, "wss://")
+    .replace(/^http:\/\//, "ws://");
+
+  const ws = new WebSocket(`${base}/api/ws/chat?session_id=${sessionId}`);
+
+  ws.onmessage = (e) => {
+    try {
+      onEvent(JSON.parse(e.data) as ChatWsEvent);
+    } catch {
+      // ignore malformed frames
+    }
+  };
+
+  return ws;
+}
+
+/**
+ * Send a chat message over an open WebSocket connection.
+ * No-op if the socket is not in OPEN state.
+ */
+export function sendChatMessageWs(ws: WebSocket, name: string, text: string): void {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ name, text }));
+  }
 }
 
 // ─── Admin API ────────────────────────────────────────────────────────────────

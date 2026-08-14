@@ -200,11 +200,10 @@ print_urls() {
   echo ""
 
   # Auto-open homepage and admin in the default browser
-  info "Opening ${GREEN}${frontend_url}${NC} in your browser..."
+  info "Homepage ${GREEN}${frontend_url}${NC} "
   open_browser "$frontend_url"
   sleep 1
-  info "Opening ${GREEN}${admin_url}${NC} in your browser..."
-  open_browser "$admin_url"
+  info "Admin Panel ${GREEN}${admin_url}${NC} "
 }
 
 # ── Commands ──────────────────────────────────────────────────────────────────

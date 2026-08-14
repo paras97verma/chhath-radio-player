@@ -34,6 +34,14 @@
      Reaction bar uses absolute top-1/2 on the pill body; chat FAB uses fixed bottom.
      Offset tuned to visually align centers: fab-bottom + 2rem raises it to match. */
   --chat-fab-bottom: calc(var(--fab-bottom) + 2rem);
+  /* Chat drawer bottom: aligns the drawer's bottom edge with the FAB's top edge.
+     FAB center = player-bottom + player-h/2.
+     FAB half-height = 1.25rem (half of minHeight 2.5rem).
+     Drawer bottom = FAB center + FAB half-height = player-bottom + player-h/2 + 1.25rem */
+  --chat-drawer-bottom: calc(var(--player-bottom) + var(--player-h) / 2 + 1.25rem);
+  /* Chat drawer height: fills from drawer bottom up to just below the LiveClock.
+     Clock sits at top: var(--hud-inset) and is ~3.5rem tall → reserve hud-inset + 3.5rem. */
+  --chat-drawer-max-h: calc(100dvh - var(--chat-drawer-bottom) - var(--hud-inset) - 3.5rem);
 }
 
 /* Mobile-only override: push facts higher to clear the song name strip in the pill */

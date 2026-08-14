@@ -1,17 +1,24 @@
 """
-Presence service — manages real-time listener count using Redis.
+Presence service — manages real-time listener count.
 
-Scale design:
-  - Uses a single Redis counter key (INCR/DECR) instead of per-session keys.
-    This is O(1) regardless of listener count — no SCAN over 1M keys.
-  - Session TTL is enforced via a separate sorted set (session_id → expiry score).
-    A background cleanup task removes expired sessions and decrements the counter.
-  - Falls back to an in-memory counter if Redis is unavailable (local dev without Redis).
-  - Connection is created once per process via a module-level pool (not per-request).
+Design (single-worker, Render free tier):
+  - Live session tracking uses an in-memory dict (session_id → expiry timestamp).
+    This is O(1) per heartbeat with zero network I/O — no Redis round-trip per second.
+  - A "last known count" is periodically written to Redis so that after a server
+    restart/deploy, the SSE endpoint can show the pre-restart count as a display
+    fallback for the ~5–10 seconds it takes clients to reconnect.
+  - Falls back gracefully if Redis is unavailable (last_known just returns 0).
+
+Why not Redis for live sessions?
+  - On Render free tier there is 1 Gunicorn worker. All SSE connections share the
+    same process, so in-memory is sufficient and avoids a Redis round-trip on every
+    heartbeat (every 1s × N listeners).
+  - Listener count resets on every deploy regardless of storage because all
+    connections are dropped when the process restarts. Redis cannot preserve live
+    connections — only the last-known count for display purposes.
 
 Redis key layout:
-  chhath:listeners:count   — integer counter of active sessions
-  chhath:listeners:sessions — sorted set: session_id → expiry_unix_timestamp
+  chhath:listeners:last_known  — integer, last known listener count (TTL 1 hour)
 """
 
 import time
@@ -20,7 +27,6 @@ from functools import lru_cache
 from typing import Optional
 
 import redis as redis_lib
-from redis.exceptions import RedisError
 
 from app.core.config import settings
 
@@ -28,15 +34,24 @@ logger = logging.getLogger(__name__)
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
-COUNTER_KEY = "chhath:listeners:count"
-SESSIONS_KEY = "chhath:listeners:sessions"
 # Session TTL: how long after the last heartbeat before a session is considered gone.
-# The SSE loop refreshes every PUSH_INTERVAL (2s), so 6s gives 3 missed heartbeats
-# before expiry. This means listener count drops within ~6s of a tab closing,
-# while still tolerating brief network hiccups.
+# The SSE loop refreshes every PUSH_INTERVAL (1s), so 6s gives 3 missed heartbeats
+# before expiry.
 SESSION_TTL_SECONDS = 6
 
-# ─── Connection pool (one per process, shared across requests) ────────────────
+# Redis key for the last-known listener count (display fallback after restart)
+LAST_KNOWN_KEY = "chhath:listeners:last_known"
+
+# How often to write the current count to Redis (seconds).
+# Writing every 30s is sufficient — the value is only used for ~5–10s after restart.
+LAST_KNOWN_WRITE_INTERVAL = 30
+
+# ─── In-memory session store ──────────────────────────────────────────────────
+
+_mem_sessions: dict[str, float] = {}  # session_id → expiry timestamp
+_last_known_write: float = 0.0        # unix timestamp of last Redis write
+
+# ─── Redis connection (for last-known count only) ─────────────────────────────
 
 @lru_cache(maxsize=1)
 def _get_pool() -> Optional[redis_lib.ConnectionPool]:
@@ -48,41 +63,20 @@ def _get_pool() -> Optional[redis_lib.ConnectionPool]:
         pool = redis_lib.ConnectionPool.from_url(
             settings.REDIS_URL,
             decode_responses=True,
-            max_connections=50,
+            max_connections=10,
             socket_connect_timeout=2,
             socket_timeout=2,
         )
-        # Verify connectivity
-        client = redis_lib.Redis(connection_pool=pool)
-        client.ping()
+        redis_lib.Redis(connection_pool=pool).ping()
         return pool
     except Exception as exc:
-        logger.warning("Redis unavailable — falling back to in-memory presence: %s", exc)
+        logger.warning("Redis unavailable for presence last-known: %s", exc)
         return None
 
 
 def _get_client() -> Optional[redis_lib.Redis]:
     pool = _get_pool()
-    if pool is None:
-        return None
-    return redis_lib.Redis(connection_pool=pool)
-
-
-# ─── In-memory fallback (single-process dev only) ────────────────────────────
-
-_mem_sessions: dict[str, float] = {}  # session_id → expiry timestamp
-
-
-def _mem_heartbeat(session_id: str) -> None:
-    _mem_sessions[session_id] = time.time() + SESSION_TTL_SECONDS
-
-
-def _mem_count() -> int:
-    now = time.time()
-    expired = [sid for sid, exp in _mem_sessions.items() if exp < now]
-    for sid in expired:
-        del _mem_sessions[sid]
-    return len(_mem_sessions)
+    return redis_lib.Redis(connection_pool=pool) if pool else None
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
@@ -90,95 +84,64 @@ def _mem_count() -> int:
 def record_heartbeat(session_id: str) -> None:
     """
     Record or refresh a listener's heartbeat.
-
-    Redis implementation (O(log N)):
-      - ZADD the session with score = current_unix_time + TTL
-      - If this is a new session (ZADD returned 1), INCR the counter
-      - Periodically prune expired sessions from the sorted set
-
-    Falls back to in-memory dict if Redis is unavailable.
+    Updates the in-memory expiry timestamp for the session. O(1), no network I/O.
     """
-    client = _get_client()
-    if client is None:
-        _mem_heartbeat(session_id)
-        return
-
-    try:
-        expiry = time.time() + SESSION_TTL_SECONDS
-        # ZADD NX: only add if not already present (returns 1 for new, 0 for update)
-        added = client.zadd(SESSIONS_KEY, {session_id: expiry}, nx=True)
-        if added:
-            # New session — increment counter
-            client.incr(COUNTER_KEY)
-        else:
-            # Existing session — just refresh the score
-            client.zadd(SESSIONS_KEY, {session_id: expiry})
-
-        # Prune expired sessions (those with score < now) — O(log N + M)
-        # Run on every heartbeat since PUSH_INTERVAL=1s and TTL=6s means
-        # sessions expire quickly and need frequent cleanup for accurate counts.
-        _prune_expired(client)
-
-    except RedisError as exc:
-        logger.error("Redis heartbeat error: %s", exc)
-        _mem_heartbeat(session_id)
+    _mem_sessions[session_id] = time.time() + SESSION_TTL_SECONDS
 
 
 def get_listener_count() -> int:
     """
-    Return the current listener count.
+    Return the current live listener count.
 
-    Always derived from the live sorted set (sessions with expiry > now).
-    This is accurate regardless of counter drift from restarts or crashes.
-    O(log N) — fast enough for this scale.
-
-    Falls back to in-memory count if Redis is unavailable.
+    Prunes expired sessions from the in-memory dict, then returns the count.
+    Periodically writes the count to Redis as a display fallback for after restarts.
     """
-    client = _get_client()
-    if client is None:
-        return _mem_count()
+    global _last_known_write
 
+    now = time.time()
+
+    # Prune expired sessions
+    expired = [sid for sid, exp in _mem_sessions.items() if exp < now]
+    for sid in expired:
+        del _mem_sessions[sid]
+
+    count = len(_mem_sessions)
+
+    # Periodically persist last-known count to Redis
+    if count > 0 and (now - _last_known_write) >= LAST_KNOWN_WRITE_INTERVAL:
+        try:
+            r = _get_client()
+            if r:
+                r.set(LAST_KNOWN_KEY, count, ex=3600)  # expire after 1 hour
+                _last_known_write = now
+                logger.debug("Wrote last_known listener count to Redis: %d", count)
+        except Exception as exc:
+            logger.warning("Redis last_known write failed: %s", exc)
+
+    return count
+
+
+def get_last_known_count() -> int:
+    """
+    Return the last known listener count from Redis.
+
+    Used as a display fallback immediately after server restart, before real
+    connections rebuild (typically within 5–10 seconds). Returns 0 if Redis
+    is unavailable or the key has expired.
+    """
     try:
-        now = time.time()
-        return int(client.zcount(SESSIONS_KEY, now, "+inf"))
-    except RedisError as exc:
-        logger.error("Redis count error: %s", exc)
-        return _mem_count()
+        r = _get_client()
+        if r:
+            val = r.get(LAST_KNOWN_KEY)
+            return int(val) if val else 0
+    except Exception as exc:
+        logger.warning("Redis last_known read failed: %s", exc)
+    return 0
 
 
 def remove_session(session_id: str) -> None:
     """
     Explicitly remove a session (e.g. on SSE disconnect).
-    Decrements the counter and removes from the sorted set.
+    No-op if the session does not exist.
     """
-    client = _get_client()
-    if client is None:
-        _mem_sessions.pop(session_id, None)
-        return
-
-    try:
-        removed = client.zrem(SESSIONS_KEY, session_id)
-        if removed:
-            # Decrement but never go below 0
-            new_val = client.decr(COUNTER_KEY)
-            if new_val < 0:
-                client.set(COUNTER_KEY, 0)
-    except RedisError as exc:
-        logger.error("Redis remove_session error: %s", exc)
-
-
-def _prune_expired(client: redis_lib.Redis) -> None:
-    """
-    Remove sessions whose TTL has elapsed from the sorted set and
-    correct the counter accordingly.
-    """
-    try:
-        now = time.time()
-        # ZREMRANGEBYSCORE removes all members with score < now
-        removed = client.zremrangebyscore(SESSIONS_KEY, "-inf", now)
-        if removed:
-            new_val = client.decrby(COUNTER_KEY, removed)
-            if new_val < 0:
-                client.set(COUNTER_KEY, 0)
-    except RedisError as exc:
-        logger.error("Redis prune error: %s", exc)
+    _mem_sessions.pop(session_id, None)

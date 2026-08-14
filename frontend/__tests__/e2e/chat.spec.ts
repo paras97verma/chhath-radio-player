@@ -74,8 +74,10 @@ test.describe("Live Chat Drawer", () => {
     const sendButton = page.getByRole("button", { name: "Send message", exact: true });
     await sendButton.click();
 
-    // The message should appear in the chat list
-    await expect(page.getByText("Test message from E2E")).toBeVisible({ timeout: 5_000 });
+    // The message should appear in the chat list.
+    // Use .first() to handle the case where this message already exists in
+    // persisted chat history from a previous test run (strict mode violation guard).
+    await expect(page.getByText("Test message from E2E").first()).toBeVisible({ timeout: 5_000 });
   });
 
   test("sending a second message within 3 seconds shows rate limit feedback", async ({ page }) => {

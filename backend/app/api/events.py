@@ -1,27 +1,29 @@
 """
-SSE (Server-Sent Events) endpoint for real-time listener count and now-playing updates.
+SSE (Server-Sent Events) endpoint for real-time listener count updates.
 
-Why SSE instead of polling?
-  At 1M concurrent listeners polling every 30s = 33,333 req/s just for presence.
-  With SSE, each client holds one persistent connection. The server pushes updates
-  only when the count changes (or every 30s as a keepalive heartbeat).
-  This reduces presence-related load by ~99%.
+Why SSE for listener count?
+  SSE is server-push only, auto-reconnects on disconnect, and requires zero
+  client-side reconnect logic. Perfect for a one-way "N listeners" counter.
+
+Why not SSE for chat?
+  Chat is now handled by the WebSocket endpoint at /api/ws/chat (ws_chat.py).
+  WebSocket is bidirectional — clients send messages over the same connection
+  instead of a separate POST request.
 
 Endpoint: GET /api/events
-  - Client connects once and receives a stream of JSON events.
+  - Client connects once and receives a stream of listener count events.
   - Connection is kept alive with periodic heartbeat events.
-  - On disconnect, the session is removed from the presence counter.
+  - On disconnect, the session expires naturally via SESSION_TTL_SECONDS.
 
 Event types:
-  {"type": "listeners", "count": N}
-  {"type": "heartbeat", "ts": unix_timestamp}
+  {"type": "listeners", "count": N}   — pushed when count changes or on heartbeat
 
 Usage (frontend):
   const es = new EventSource('/api/events?session_id=...');
-  es.onmessage = (e) => {
+  es.addEventListener('listener_count', (e) => {
     const data = JSON.parse(e.data);
-    if (data.type === 'listeners') setCount(data.count);
-  };
+    setCount(data.count);
+  });
 """
 
 import asyncio
@@ -37,6 +39,7 @@ from fastapi.responses import StreamingResponse
 from app.services.presence_service import (
     record_heartbeat,
     get_listener_count,
+    get_last_known_count,
 )
 
 _UUID_RE = re.compile(
@@ -48,14 +51,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["events"])
 
 # How often to push a listener count update (seconds) — near-realtime.
-# Lower = faster drop detection when a listener leaves.
 PUSH_INTERVAL = 1
 
 # How often to send a keepalive heartbeat even if count hasn't changed (seconds)
 HEARTBEAT_INTERVAL = 15
-
-# Chat message queue size per connection
-CHAT_QUEUE_SIZE = 50
 
 
 async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, None]:
@@ -63,24 +62,26 @@ async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, 
     Async generator that yields SSE-formatted strings.
 
     Lifecycle:
-      1. Record initial heartbeat (increments listener count).
-      2. Push current listener count immediately.
-      3. Loop: push count every PUSH_INTERVAL seconds + relay chat messages.
-      4. On disconnect (client closes tab / navigates away), remove session.
+      1. Record initial heartbeat (registers session in presence service).
+      2. Push current listener count immediately (uses last-known from Redis
+         as a display fallback if no real sessions have reconnected yet after
+         a server restart).
+      3. Loop: sleep PUSH_INTERVAL, refresh heartbeat, push count if changed
+         or on HEARTBEAT_INTERVAL keepalive.
+      4. On disconnect (client closes tab / navigates away), exit loop.
     """
-    # Import here to avoid circular import (chat.py imports from events.py indirectly)
-    from app.api.chat import register_chat_queue, unregister_chat_queue
-
-    # Register this session
     record_heartbeat(session_id)
     logger.info("SSE connect: session=%s", session_id)
 
-    # Register a chat queue for this connection
-    chat_q: asyncio.Queue = asyncio.Queue(maxsize=CHAT_QUEUE_SIZE)
-    register_chat_queue(chat_q)
-
-    last_count = -1
+    # Use last-known count as initial value to avoid "0 listeners" flash
+    # immediately after a deploy (before clients have reconnected).
+    initial_count = get_listener_count() or get_last_known_count()
+    last_count = initial_count
     last_heartbeat = time.time()
+
+    # Push initial count immediately on connect
+    payload = json.dumps({"type": "listeners", "count": initial_count})
+    yield f"event: listener_count\ndata: {payload}\n\n"
 
     try:
         while True:
@@ -88,28 +89,10 @@ async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, 
             if await request.is_disconnected():
                 break
 
-            # Wait for a chat message OR timeout (whichever comes first).
-            # This makes chat delivery instant: as soon as a message is put
-            # into the queue, wait_for returns immediately instead of sleeping
-            # for the full PUSH_INTERVAL.
-            try:
-                msg = await asyncio.wait_for(chat_q.get(), timeout=PUSH_INTERVAL)
-                payload = json.dumps({"type": "chat_message", **msg})
-                yield f"event: chat_message\ndata: {payload}\n\n"
-                # Drain any additional messages that arrived while we were yielding
-                while not chat_q.empty():
-                    try:
-                        extra = chat_q.get_nowait()
-                        payload = json.dumps({"type": "chat_message", **extra})
-                        yield f"event: chat_message\ndata: {payload}\n\n"
-                    except asyncio.QueueEmpty:
-                        break
-            except asyncio.TimeoutError:
-                pass  # No chat message arrived — fall through to count/heartbeat
-
+            await asyncio.sleep(PUSH_INTERVAL)
             now = time.time()
 
-            # Refresh heartbeat in Redis
+            # Refresh heartbeat (keeps session alive in presence service)
             record_heartbeat(session_id)
 
             # Get current count
@@ -129,8 +112,6 @@ async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, 
     finally:
         # Do NOT call remove_session here — the same session_id may be open in
         # another tab. Let the TTL (SESSION_TTL_SECONDS) handle natural expiry.
-        # The session will expire within SESSION_TTL_SECONDS of the last heartbeat.
-        unregister_chat_queue(chat_q)
         logger.info("SSE disconnect: session=%s", session_id)
 
 
@@ -139,13 +120,19 @@ async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, 
     summary="SSE stream for real-time listener count",
     description=(
         "Server-Sent Events stream. Connect once; receive listener count updates "
-        "every 15 seconds. Session is automatically cleaned up on disconnect."
+        "whenever the count changes (or every 15 seconds as a keepalive). "
+        "Chat messages are delivered via WebSocket at /api/ws/chat."
     ),
     response_class=StreamingResponse,
 )
 async def sse_events(
     request: Request,
-    session_id: str = Query(..., min_length=36, max_length=36, description="Unique anonymous session ID (UUID v4)"),
+    session_id: str = Query(
+        ...,
+        min_length=36,
+        max_length=36,
+        description="Unique anonymous session ID (UUID v4)",
+    ),
 ) -> StreamingResponse:
     if not _UUID_RE.match(session_id):
         raise HTTPException(status_code=422, detail="session_id must be a valid UUID")

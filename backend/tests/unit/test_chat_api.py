@@ -7,13 +7,12 @@ Tests cover:
   - Rate limiting: per-IP 3-second window
   - POST /api/chat/messages endpoint: validation, random name, 201 response
   - GET  /api/chat/messages endpoint: returns list, respects limit
-  - broadcast_message: pushes to all queues, removes full queues
 """
-import asyncio
 import json
 import time
 import uuid
-from unittest.mock import MagicMock, patch, AsyncMock
+from collections import deque
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,10 +25,7 @@ from app.api.chat import (
     RATE_LIMIT_SECONDS,
     _store_message,
     _load_messages,
-    broadcast_message,
-    register_chat_queue,
-    unregister_chat_queue,
-    _memory_messages,
+    _message_buffer,
     _rate_limit,
 )
 
@@ -58,7 +54,7 @@ def make_mock_redis() -> MagicMock:
 
 class TestStoreMessage:
     def setup_method(self):
-        _memory_messages.clear()
+        _message_buffer.clear()
 
     def test_stores_to_redis_sorted_set_with_timestamp_score(self):
         """Message is added to Redis sorted set with score = unix timestamp."""
@@ -92,19 +88,19 @@ class TestStoreMessage:
 
         pipe.zremrangebyrank.assert_called_once_with(CHAT_KEY, 0, -(MAX_MESSAGES + 1))
 
-    def test_falls_back_to_memory_when_redis_unavailable(self):
-        """When _get_redis returns None, message is stored in _memory_messages."""
-        _memory_messages.clear()
+    def test_always_writes_to_memory_buffer(self):
+        """Message is always appended to _message_buffer regardless of Redis."""
+        _message_buffer.clear()
 
         with patch("app.api.chat._get_redis", return_value=None):
             msg = make_msg()
             _store_message(msg)
 
-        assert msg in _memory_messages
+        assert msg in _message_buffer
 
     def test_falls_back_to_memory_on_redis_exception(self):
-        """On Redis exception, message is stored in _memory_messages."""
-        _memory_messages.clear()
+        """On Redis exception, message is still stored in _message_buffer."""
+        _message_buffer.clear()
         mock_redis = make_mock_redis()
         mock_redis.pipeline.side_effect = Exception("Redis error")
 
@@ -112,17 +108,20 @@ class TestStoreMessage:
             msg = make_msg()
             _store_message(msg)
 
-        assert msg in _memory_messages
+        assert msg in _message_buffer
 
     def teardown_method(self):
-        _memory_messages.clear()
+        _message_buffer.clear()
 
 
 # ─── TestLoadMessages ─────────────────────────────────────────────────────────
 
 class TestLoadMessages:
     def setup_method(self):
-        _memory_messages.clear()
+        _message_buffer.clear()
+        # Reset the buffer-loaded flag so each test starts fresh
+        import app.api.chat as chat_mod
+        chat_mod._buffer_loaded = False
 
     def test_loads_from_redis_zrangebyscore_with_cutoff(self):
         """Calls zrangebyscore with cutoff = now - MESSAGE_TTL_SECONDS."""
@@ -152,10 +151,10 @@ class TestLoadMessages:
         assert result == msgs[-5:]
 
     def test_falls_back_to_memory_when_redis_unavailable(self):
-        """When _get_redis returns None, returns from _memory_messages."""
-        _memory_messages.clear()
+        """When _get_redis returns None, returns from _message_buffer."""
+        _message_buffer.clear()
         msg = make_msg()
-        _memory_messages.append(msg)
+        _message_buffer.append(msg)
 
         with patch("app.api.chat._get_redis", return_value=None):
             result = _load_messages(limit=50)
@@ -163,10 +162,10 @@ class TestLoadMessages:
         assert msg in result
 
     def test_falls_back_to_memory_on_redis_exception(self):
-        """On Redis exception, returns from _memory_messages."""
-        _memory_messages.clear()
+        """On Redis exception, returns from _message_buffer."""
+        _message_buffer.clear()
         msg = make_msg()
-        _memory_messages.append(msg)
+        _message_buffer.append(msg)
         mock_redis = make_mock_redis()
         mock_redis.zrangebyscore.side_effect = Exception("Redis error")
 
@@ -176,7 +175,9 @@ class TestLoadMessages:
         assert msg in result
 
     def teardown_method(self):
-        _memory_messages.clear()
+        _message_buffer.clear()
+        import app.api.chat as chat_mod
+        chat_mod._buffer_loaded = False
 
 
 # ─── TestRateLimit ────────────────────────────────────────────────────────────
@@ -184,7 +185,7 @@ class TestLoadMessages:
 class TestRateLimit:
     def setup_method(self):
         _rate_limit.clear()
-        _memory_messages.clear()
+        _message_buffer.clear()
 
     def test_first_message_from_ip_is_allowed(self, client):
         """First message from an IP is accepted (201)."""
@@ -210,7 +211,7 @@ class TestRateLimit:
 
     def teardown_method(self):
         _rate_limit.clear()
-        _memory_messages.clear()
+        _message_buffer.clear()
 
 
 # ─── TestSendMessageEndpoint ──────────────────────────────────────────────────
@@ -218,7 +219,7 @@ class TestRateLimit:
 class TestSendMessageEndpoint:
     def setup_method(self):
         _rate_limit.clear()
-        _memory_messages.clear()
+        _message_buffer.clear()
 
     def test_valid_body_returns_201_with_chat_message_out(self, client):
         """POST with valid body returns 201 and ChatMessageOut schema."""
@@ -276,14 +277,16 @@ class TestSendMessageEndpoint:
 
     def teardown_method(self):
         _rate_limit.clear()
-        _memory_messages.clear()
+        _message_buffer.clear()
 
 
 # ─── TestGetMessagesEndpoint ──────────────────────────────────────────────────
 
 class TestGetMessagesEndpoint:
     def setup_method(self):
-        _memory_messages.clear()
+        _message_buffer.clear()
+        import app.api.chat as chat_mod
+        chat_mod._buffer_loaded = False
 
     def test_returns_200_with_list(self, client):
         """GET /api/chat/messages returns 200 with a list."""
@@ -295,10 +298,13 @@ class TestGetMessagesEndpoint:
 
     def test_limit_param_is_respected(self, client):
         """limit query param caps the number of returned messages."""
-        # Pre-populate memory with 10 messages
+        # Pre-populate buffer with 10 messages
         now = int(time.time())
         for i in range(10):
-            _memory_messages.append({"id": str(uuid.uuid4()), "name": "Bhakt", "text": f"msg {i}", "ts": now - i})
+            _message_buffer.append({"id": str(uuid.uuid4()), "name": "Bhakt", "text": f"msg {i}", "ts": now - i})
+
+        import app.api.chat as chat_mod
+        chat_mod._buffer_loaded = True  # skip Redis load
 
         with patch("app.api.chat._get_redis", return_value=None):
             resp = client.get("/api/chat/messages?limit=3")
@@ -314,40 +320,9 @@ class TestGetMessagesEndpoint:
         assert resp.status_code == 200
 
     def teardown_method(self):
-        _memory_messages.clear()
-
-
-# ─── TestBroadcast ────────────────────────────────────────────────────────────
-
-class TestBroadcast:
-    def test_broadcast_pushes_to_all_registered_queues(self):
-        """broadcast_message puts the message into every registered queue."""
-        q1 = asyncio.Queue()
-        q2 = asyncio.Queue()
-        register_chat_queue(q1)
-        register_chat_queue(q2)
-
-        msg = make_msg()
-        asyncio.get_event_loop().run_until_complete(broadcast_message(msg))
-
-        assert q1.get_nowait() == msg
-        assert q2.get_nowait() == msg
-
-        unregister_chat_queue(q1)
-        unregister_chat_queue(q2)
-
-    def test_full_queue_is_removed_from_registry(self):
-        """A full queue is removed from _chat_queues (dead queue cleanup)."""
-        from app.api.chat import _chat_queues
-
-        q_full = asyncio.Queue(maxsize=1)
-        q_full.put_nowait({"dummy": True})  # fill it up
-        register_chat_queue(q_full)
-
-        msg = make_msg()
-        asyncio.get_event_loop().run_until_complete(broadcast_message(msg))
-
-        assert q_full not in _chat_queues
+        _message_buffer.clear()
+        import app.api.chat as chat_mod
+        chat_mod._buffer_loaded = False
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────

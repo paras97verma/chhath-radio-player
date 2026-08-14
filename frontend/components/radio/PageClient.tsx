@@ -217,23 +217,21 @@ export default function PageClient() {
           </div>
         </div>
 
-        {/* Desktop only: Chat FAB — far right of viewport */}
-        {false && !isMobile && sessionId && (
-          <div
-            className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
-            style={{ right: "var(--hud-inset)" }}
-          >
-            <LiveChatDrawer sessionId={sessionId} listenerCount={listenerCount} />
-          </div>
-        )}
       </div>
+
+      {/* Desktop only: Chat FAB + drawer — rendered OUTSIDE the player row so that
+          the -translate-y-1/2 transform on the player row does NOT create a new
+          containing block that breaks the drawer's fixed positioning. */}
+      {!isMobile && sessionId && (
+        <LiveChatDrawer sessionId={sessionId} listenerCount={listenerCount} />
+      )}
 
       {/* ══════════════════════════════════════════════════════════
           MOBILE CHAT FAB — fixed bottom-right, above footer
           Hidden when any other modal is open
       ══════════════════════════════════════════════════════════ */}
       {/* Mobile chat FAB — top-left, below the listener count pill, clear of all other elements */}
-      {false && isMobile && sessionId && !(showPlaylist || showShare || showDonate || showChat) && (
+      {isMobile && sessionId && !(showPlaylist || showShare || showDonate || showChat) && (
         <div
           className="fixed z-30 sm:hidden"
           style={{ top: "calc(var(--hud-inset) + 2.6rem)", left: "var(--hud-inset)" }}
@@ -405,7 +403,7 @@ export default function PageClient() {
     )}
 
     {/* Mobile only: LiveChatDrawer bottom-sheet — OUTSIDE <main> to avoid overflow-hidden clipping */}
-    {false && isMobile && sessionId && (
+    {isMobile && sessionId && (
       <LiveChatDrawer
         sessionId={sessionId}
         listenerCount={listenerCount}

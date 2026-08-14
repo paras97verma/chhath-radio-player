@@ -3,26 +3,31 @@
 /**
  * LiveChatDrawer — Neumorphic live chat panel for Chhath Radio.
  *
- * - FAB fixed bottom-right (above footer)
- * - Drawer slides in from right
- * - Real-time messages via SSE (chat_message events)
- * - Auto-scroll, optional name (sessionStorage), rate-limited send (3s cooldown)
- * - Neumorphic dark design
+ * Transport: WebSocket (/api/ws/chat?session_id=<uuid>)
+ *   - On connect: server sends {"type":"history","messages":[...]}
+ *   - Incoming: {"type":"chat_message","id":"...","name":"...","text":"...","ts":0}
+ *   - Outgoing: {"name":"...","text":"..."} sent directly over the socket
+ *   - Ping: {"ping":true} sent every 20 s to keep Render free-tier alive
+ *   - Reconnect: exponential back-off (1 s → 2 s → 4 s … max 30 s)
  *
- * Fixes applied:
- *   1. Listener count shown on FAB (collapsed state) — left of green dot
- *   2. Name field always visible in drawer with edit-chip toggle
- *   3. Messages persisted in sessionStorage (instant hydration on mount)
- *   4. Own messages added to state immediately (optimistic update) — no SSE wait
+ * Features:
+ *   - FAB fixed right of player pill (desktop) / controlled bottom-sheet (mobile)
+ *   - Real-time messages via WebSocket broadcast
+ *   - Own messages shown on right (orange) — persisted in sessionStorage across refresh
+ *   - Unread badge increments for messages received while drawer is closed
+ *   - Name persisted in sessionStorage; random bhakti name assigned if blank
+ *   - Auto-scroll, 3 s send cooldown, optimistic message add
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { fetchChatHistory, postChatMessage } from "@/lib/api";
-import type { ChatMessage } from "@/lib/api";
+import { connectChatWebSocket, sendChatMessageWs } from "@/lib/api";
+import type { ChatMessage, ChatWsEvent } from "@/lib/api";
 
-const NAME_KEY     = "chhath_chat_name_v1";
-const MESSAGES_KEY = "chhath_chat_messages_v1";
-const API_BASE     = process.env.NEXT_PUBLIC_API_URL ?? "";
+const NAME_KEY        = "chhath_chat_name_v1";
+const MESSAGES_KEY    = "chhath_chat_messages_v1";
+const MY_IDS_KEY      = "chhath_chat_my_ids_v1";
+const PING_INTERVAL   = 20_000;   // 20 s — keeps Render free-tier WS alive
+const MAX_RECONNECT   = 30_000;   // 30 s max back-off
 
 const NM_DRAWER = "12px 12px 32px rgba(0,0,0,0.82), -6px -6px 20px rgba(60,30,10,0.28), inset 0 1px 0 rgba(255,255,255,0.04)";
 const NM_FAB    = "5px 5px 14px rgba(0,0,0,0.70), -3px -3px 8px rgba(60,30,10,0.28)";
@@ -47,13 +52,29 @@ function loadSessionMessages(): ChatMessage[] {
 }
 function saveSessionMessages(msgs: ChatMessage[]) {
   try {
-    // Keep last 100 messages to avoid bloating sessionStorage
     sessionStorage.setItem(MESSAGES_KEY, JSON.stringify(msgs.slice(-100)));
   } catch { /* ignore */ }
 }
 
+function loadMyIds(): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(MY_IDS_KEY);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw) as string[]);
+  } catch { return new Set(); }
+}
+function saveMyIds(ids: Set<string>) {
+  try {
+    // Keep only the last 200 IDs to avoid bloating sessionStorage
+    const arr = Array.from(ids).slice(-200);
+    sessionStorage.setItem(MY_IDS_KEY, JSON.stringify(arr));
+  } catch { /* ignore */ }
+}
+
 function formatTime(ts: number): string {
-  return new Date(ts * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+  return new Date(ts * 1000).toLocaleTimeString("en-IN", {
+    hour: "2-digit", minute: "2-digit", hour12: true,
+  });
 }
 
 // ─── Message bubble ───────────────────────────────────────────────────────────
@@ -71,7 +92,7 @@ function MessageBubble({ msg, isOwn }: { msg: ChatMessage; isOwn: boolean }) {
         <span className="text-[9px] text-white/20">{formatTime(msg.ts)}</span>
       </div>
       <div
-        className={`max-w-[85%] px-3 py-1.5 text-[13px] leading-[1.45] break-words`}
+        className="max-w-[85%] px-3 py-1.5 text-[13px] leading-[1.45] break-words"
         style={{
           borderRadius: isOwn ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
           background: isOwn
@@ -94,13 +115,10 @@ function MessageBubble({ msg, isOwn }: { msg: ChatMessage; isOwn: boolean }) {
 interface Props {
   sessionId: string;
   listenerCount?: number | null;
-  /** When provided, the component renders in mobile bottom-sheet mode:
-   *  - No internal FAB (open/close is controlled externally)
-   *  - Drawer fills the screen from bottom up
-   *  - onMobileClose is called when the user taps the close button or backdrop */
+  /** Mobile bottom-sheet mode: open/close controlled externally */
   mobileOpen?: boolean;
   onMobileClose?: () => void;
-  /** Called whenever the unread count changes — lets the parent show a badge on the FAB */
+  /** Called whenever the unread count changes — lets the parent show a badge */
   onUnreadChange?: (count: number) => void;
 }
 
@@ -113,79 +131,176 @@ export default function LiveChatDrawer({
 }: Props) {
   const isMobileControlled = mobileOpen !== undefined;
   const [isOpen, setIsOpen] = useState(false);
-  // In mobile-controlled mode the effective open state comes from the parent
   const effectiveOpen = isMobileControlled ? (mobileOpen ?? false) : isOpen;
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [myMessageIds, setMyMessageIds] = useState<Set<string>>(new Set());
   const [inputText, setInputText] = useState("");
-  const [myName, setMyName] = useState("");          // committed name (saved)
-  const [nameInput, setNameInput] = useState("");    // draft while typing
+  const [myName, setMyName] = useState("");
+  const [nameInput, setNameInput] = useState("");
   const [isEditingName, setIsEditingName] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [cooldown, setCooldown] = useState(0);
-  const [myMessageIds, setMyMessageIds] = useState<Set<string>>(new Set());
+  const [wsConnected, setWsConnected] = useState(false);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const nameInputRef = useRef<HTMLInputElement>(null);
-  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isOpenRef = useRef(false);
+  const messagesEndRef   = useRef<HTMLDivElement>(null);
+  const inputRef         = useRef<HTMLInputElement>(null);
+  const nameInputRef     = useRef<HTMLInputElement>(null);
+  const cooldownRef      = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isOpenRef        = useRef(false);
+  const wsRef            = useRef<WebSocket | null>(null);
+  const reconnectTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pingTimer        = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reconnectAttempt = useRef(0);
+  const unmountedRef     = useRef(false);
+  // nonce → sentAt (ms): used to identify our own echoed messages
+  const pendingNonces    = useRef<Map<string, number>>(new Map());
 
   useEffect(() => { isOpenRef.current = effectiveOpen; }, [effectiveOpen]);
 
-  // Load name from sessionStorage on mount
+  // ── Hydrate name + IDs from sessionStorage on mount ──────────────────────
   useEffect(() => {
     const saved = getSavedName();
     setMyName(saved);
     setNameInput(saved);
-  }, []);
+    setMyMessageIds(loadMyIds());
 
-  // Fix 3: Hydrate messages from sessionStorage instantly, then replace with fresh API data
-  useEffect(() => {
+    // Hydrate messages from sessionStorage instantly (before WS connects)
     const cached = loadSessionMessages();
     if (cached.length > 0) setMessages(cached);
-
-    fetchChatHistory(50).then((msgs) => {
-      setMessages(msgs);
-      saveSessionMessages(msgs);
-    });
   }, []);
 
-  // SSE: real-time chat messages + listener count
-  useEffect(() => {
-    if (!sessionId) return;
-    const es = new EventSource(`${API_BASE}/api/events?session_id=${sessionId}`);
+  // ── WebSocket connection with exponential reconnect ───────────────────────
+  const connectWs = useCallback(() => {
+    if (unmountedRef.current || !sessionId) return;
 
-    es.addEventListener("chat_message", (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data);
-        const msg: ChatMessage = { id: data.id, name: data.name, text: data.text, ts: data.ts };
+    // Clean up any existing connection
+    if (wsRef.current) {
+      wsRef.current.onclose = null; // prevent reconnect loop on intentional close
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    if (pingTimer.current) { clearInterval(pingTimer.current); pingTimer.current = null; }
+
+    const ws = connectChatWebSocket(sessionId, (event: ChatWsEvent) => {
+      if (unmountedRef.current) return;
+
+      if (event.type === "history") {
+        // Replace messages with authoritative history from server.
+        // Cross-reference with persisted myMessageIds so own messages stay right-aligned.
+        setMessages(event.messages);
+        saveSessionMessages(event.messages);
+        // myMessageIds already loaded from sessionStorage — no change needed here
+      } else if (event.type === "chat_message") {
+        const msg: ChatMessage = {
+          id: event.id,
+          name: event.name,
+          text: event.text,
+          ts: event.ts,
+        };
+
+        // Check if this echo belongs to us via nonce matching.
+        // The server echoes the _nonce field back in the broadcast payload.
+        const echoNonce = event._nonce;
+        const isOwnEcho = echoNonce ? pendingNonces.current.has(echoNonce) : false;
+        if (echoNonce) pendingNonces.current.delete(echoNonce);
+
+        // Clean up stale nonces older than 10 s
+        const now = Date.now();
+        for (const [n, t] of pendingNonces.current) {
+          if (now - t > 10_000) pendingNonces.current.delete(n);
+        }
+
         setMessages((prev) => {
-          // Deduplication: skip if already added optimistically
-          if (prev.some((m) => m.id === msg.id)) return prev;
+          if (prev.some((m) => m.id === msg.id)) return prev; // dedup
           const next = [...prev, msg];
-          saveSessionMessages(next); // Fix 3: persist on every new message
+          saveSessionMessages(next);
           return next;
         });
-        if (!isOpenRef.current) setUnreadCount((n) => n + 1);
-      } catch { /* ignore */ }
+
+        if (isOwnEcho) {
+          // Mark this message ID as ours and persist so it survives refresh
+          setMyMessageIds((ids) => {
+            const next = new Set(ids);
+            next.add(msg.id);
+            saveMyIds(next);
+            return next;
+          });
+        } else if (!isOpenRef.current) {
+          // Only increment unread for messages from others while drawer is closed
+          setUnreadCount((n) => n + 1);
+        }
+      } else if (event.type === "error") {
+        // Suppress spurious "text cannot be empty" errors — these are triggered
+        // by the keep-alive ping {"ping":true} on older server versions that
+        // don't yet handle pings silently. Only show real user-facing errors.
+        const detail = event.detail ?? "";
+        if (!detail.toLowerCase().includes("cannot be empty")) {
+          setSendError(detail);
+        }
+        setIsSending(false);
+      }
     });
 
-    return () => es.close();
-  }, [sessionId]);
+    wsRef.current = ws;
 
-  // Auto-scroll when messages change (only if drawer is open)
+    ws.onopen = () => {
+      if (unmountedRef.current) return;
+      setWsConnected(true);
+      reconnectAttempt.current = 0;
+
+      // Ping every 20 s to keep Render free-tier connection alive
+      pingTimer.current = setInterval(() => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ ping: true }));
+        }
+      }, PING_INTERVAL);
+    };
+
+    ws.onclose = () => {
+      if (unmountedRef.current) return;
+      setWsConnected(false);
+      if (pingTimer.current) { clearInterval(pingTimer.current); pingTimer.current = null; }
+
+      // Exponential back-off: 1s, 2s, 4s, 8s, 16s, 30s (max)
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempt.current), MAX_RECONNECT);
+      reconnectAttempt.current += 1;
+      reconnectTimer.current = setTimeout(connectWs, delay);
+    };
+
+    ws.onerror = () => {
+      // onclose fires after onerror — reconnect handled there
+      setWsConnected(false);
+    };
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    unmountedRef.current = false;
+    connectWs();
+    return () => {
+      unmountedRef.current = true;
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+      if (pingTimer.current) clearInterval(pingTimer.current);
+      if (wsRef.current) {
+        wsRef.current.onclose = null; // prevent reconnect on intentional unmount
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, [connectWs]);
+
+  // ── Auto-scroll when messages change (only if drawer is open) ────────────
   useEffect(() => {
     if (effectiveOpen) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, effectiveOpen]);
 
-  // On open: clear unread, focus appropriate input, scroll to bottom
+  // ── On open: clear unread, focus input, scroll to bottom ─────────────────
   useEffect(() => {
     if (effectiveOpen) {
       setUnreadCount(0);
       setTimeout(() => {
-        // If no name set yet, focus the name input first so user can set it
         if (!myName.trim()) {
           nameInputRef.current?.focus();
         } else {
@@ -196,14 +311,14 @@ export default function LiveChatDrawer({
     }
   }, [effectiveOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Focus name input when entering edit mode
+  // ── Focus name input when entering edit mode ──────────────────────────────
   useEffect(() => {
     if (isEditingName) {
       setTimeout(() => nameInputRef.current?.focus(), 50);
     }
   }, [isEditingName]);
 
-  // Notify parent of unread count changes (for mobile FAB badge)
+  // ── Notify parent of unread count changes ─────────────────────────────────
   useEffect(() => {
     onUnreadChange?.(unreadCount);
   }, [unreadCount, onUnreadChange]);
@@ -212,51 +327,44 @@ export default function LiveChatDrawer({
     setCooldown(3);
     if (cooldownRef.current) clearInterval(cooldownRef.current);
     cooldownRef.current = setInterval(() => {
-      setCooldown((prev) => { if (prev <= 1) { clearInterval(cooldownRef.current!); return 0; } return prev - 1; });
+      setCooldown((prev) => {
+        if (prev <= 1) { clearInterval(cooldownRef.current!); return 0; }
+        return prev - 1;
+      });
     }, 1000);
   }, []);
 
-  const handleSend = useCallback(async () => {
+  const handleSendWithNonce = useCallback(() => {
     const text = inputText.trim();
     if (!text || isSending || cooldown > 0) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      setSendError("Not connected — reconnecting…");
+      return;
+    }
+
     const trimmedName = myName.trim();
     if (trimmedName) saveName(trimmedName);
+
+    // Generate a nonce to identify our own echo
+    const nonce = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    pendingNonces.current.set(nonce, Date.now());
+
     setIsSending(true);
     setSendError(null);
-    try {
-      const msg = await postChatMessage(trimmedName, text);
-      setMyMessageIds((prev) => new Set([...prev, msg.id]));
 
-      // If user had no name set, persist the server-assigned random name for the session
-      // so all subsequent messages use the same name
-      if (!trimmedName && msg.name) {
-        setMyName(msg.name);
-        setNameInput(msg.name);
-        saveName(msg.name);
-      }
-
-      // Add own message to state immediately (optimistic update)
-      // SSE deduplication above will skip it when the broadcast arrives
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === msg.id)) return prev;
-        const next = [...prev, msg];
-        saveSessionMessages(next);
-        return next;
-      });
-
-      setInputText("");
-      startCooldown();
-      // Re-focus input so the user can type the next message immediately
-      setTimeout(() => inputRef.current?.focus(), 50);
-    } catch (err) {
-      setSendError(err instanceof Error ? err.message : "Failed to send");
-    } finally {
-      setIsSending(false);
+    // Send with nonce embedded — server broadcasts it back so we can identify our echo
+    if (wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ name: trimmedName, text, _nonce: nonce }));
     }
+
+    setInputText("");
+    setIsSending(false);
+    startCooldown();
+    setTimeout(() => inputRef.current?.focus(), 50);
   }, [inputText, myName, isSending, cooldown, startCooldown]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendWithNonce(); }
   };
 
   const commitName = () => {
@@ -270,20 +378,14 @@ export default function LiveChatDrawer({
   const handleNameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") { commitName(); }
     if (e.key === "Escape") {
-      // Revert draft to last committed name
       setNameInput(myName);
       setIsEditingName(false);
       inputRef.current?.focus();
     }
   };
 
-  const canSend = !!inputText.trim() && !isSending && cooldown === 0;
+  const canSend = !!inputText.trim() && !isSending && cooldown === 0 && wsConnected;
 
-  const formattedListenerCount = listenerCountProp !== null && listenerCountProp !== undefined
-    ? new Intl.NumberFormat("en-IN").format(listenerCountProp)
-    : null;
-
-  // Shared close handler — works for both desktop (internal) and mobile (external)
   const handleClose = () => {
     if (isMobileControlled) {
       onMobileClose?.();
@@ -294,14 +396,15 @@ export default function LiveChatDrawer({
 
   return (
     <>
-      {/* ── FAB — pill-shaped, absolute within the player-row wrapper (desktop only) ── */}
-      {!isMobileControlled && (
+      {/* ── FAB — desktop only, hidden when drawer is open (drawer has its own close button) ── */}
+      {!isMobileControlled && !effectiveOpen && (
         <button
           onClick={() => setIsOpen((v) => !v)}
           aria-label={effectiveOpen ? "Close live chat" : "Open live chat"}
           title={effectiveOpen ? "Close chat" : "Live Chat"}
-          className="absolute top-1/2 -translate-y-1/2 z-[45] flex items-center cursor-pointer select-none pointer-events-auto"
+          className="fixed z-[45] flex items-center cursor-pointer select-none pointer-events-auto"
           style={{
+            bottom: "var(--chat-fab-bottom)",
             right: "var(--hud-inset)",
             gap: effectiveOpen ? 0 : "0.45rem",
             padding: effectiveOpen ? "0.55rem" : "0.45rem 0.9rem 0.45rem 0.7rem",
@@ -322,17 +425,13 @@ export default function LiveChatDrawer({
           }}
         >
           {effectiveOpen ? (
-            /* Close state — just an X icon, pill collapses to circle */
             <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white shrink-0">
               <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
             </svg>
           ) : (
-            /* Open state — waveform icon + label + listener count + live dot */
             <>
-              {/* Waveform / chat icon */}
               <span className="relative shrink-0 flex items-center justify-center w-[22px] h-[22px]">
                 <svg viewBox="0 0 24 24" fill="none" className="w-[22px] h-[22px]">
-                  {/* Chat bubble with waveform bars inside */}
                   <path
                     d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
                     fill="rgba(249,115,22,0.18)"
@@ -340,29 +439,29 @@ export default function LiveChatDrawer({
                     strokeWidth="1.5"
                     strokeLinejoin="round"
                   />
-                  {/* Waveform bars */}
                   <rect x="7"  y="10" width="1.5" height="4" rx="0.75" fill="#fb923c"/>
                   <rect x="10" y="8"  width="1.5" height="6" rx="0.75" fill="#fb923c"/>
                   <rect x="13" y="9"  width="1.5" height="5" rx="0.75" fill="#fb923c"/>
                   <rect x="16" y="11" width="1.5" height="3" rx="0.75" fill="#fb923c"/>
                 </svg>
               </span>
-
-              {/* Label */}
               <span
                 className="text-[12px] font-semibold tracking-wide whitespace-nowrap"
                 style={{ color: "rgba(249,115,22,0.95)" }}
               >
                 Chat
               </span>
-
-              {/* Live pulse dot */}
+              {/* Connection status dot */}
               <span className="relative flex shrink-0 w-2 h-2 ml-0.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60" />
-                <span className="relative inline-flex rounded-full w-2 h-2 bg-green-400" />
+                {wsConnected ? (
+                  <>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60" />
+                    <span className="relative inline-flex rounded-full w-2 h-2 bg-green-400" />
+                  </>
+                ) : (
+                  <span className="relative inline-flex rounded-full w-2 h-2 bg-yellow-500" />
+                )}
               </span>
-
-              {/* Unread badge */}
               {unreadCount > 0 && (
                 <span
                   className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full
@@ -378,7 +477,7 @@ export default function LiveChatDrawer({
         </button>
       )}
 
-      {/* ── Mobile backdrop — tap to close ── */}
+      {/* ── Mobile backdrop ── */}
       {isMobileControlled && effectiveOpen && (
         <div
           className="fixed inset-0 z-[48] bg-black/60"
@@ -407,10 +506,13 @@ export default function LiveChatDrawer({
                   animation: "chatDrawerUpIn 0.30s cubic-bezier(0.34,1.2,0.64,1) forwards",
                 }
               : {
-                  bottom: "calc(var(--player-bottom) + var(--player-h) + var(--stack-gap))",
+                  /* --chat-drawer-bottom and --chat-drawer-max-h are defined in
+                     globals.css using only existing layout tokens — no hardcoded px. */
+                  bottom: "var(--chat-drawer-bottom)",
                   right: "var(--hud-inset)",
                   width: "min(92vw, 340px)",
-                  height: "min(70vh, 520px)",
+                  height: "var(--chat-drawer-max-h)",
+                  maxHeight: "520px",
                   background: "rgba(10,4,2,0.97)",
                   boxShadow: NM_DRAWER,
                   animation: "chatDrawerIn 0.25s cubic-bezier(0.34,1.56,0.64,1) forwards",
@@ -434,7 +536,7 @@ export default function LiveChatDrawer({
               <div>
                 <p className="text-orange-400 font-bold text-[13px] m-0">Live Chat</p>
                 <p className="text-white/30 text-[10px] m-0">
-                  {messages.length} messages
+                  {wsConnected ? `${messages.length} messages` : "Connecting…"}
                 </p>
               </div>
             </div>
@@ -447,12 +549,13 @@ export default function LiveChatDrawer({
                   {new Intl.NumberFormat("en-IN").format(listenerCountProp)}
                 </span>
               )}
-              <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"
-                   style={{ boxShadow: "0 0 6px #4ade80" }} />
-              {/* Close button — always shown, especially important on mobile */}
+              <div
+                className={`w-2 h-2 rounded-full ${wsConnected ? "bg-green-400 animate-pulse" : "bg-yellow-500"}`}
+                style={wsConnected ? { boxShadow: "0 0 6px #4ade80" } : {}}
+              />
               <button
                 onClick={handleClose}
-                aria-label="Close chat"
+                aria-label="Close live chat"
                 className="w-7 h-7 flex items-center justify-center rounded-full text-white/40
                            hover:text-white/80 hover:bg-white/10 transition-colors ml-1"
               >
@@ -478,10 +581,9 @@ export default function LiveChatDrawer({
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Fix 2: Name field — always visible, with edit-chip toggle */}
+          {/* Name field */}
           <div className="px-3.5 pt-2 pb-1" style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
             {myName && !isEditingName ? (
-              /* Chip mode: show committed name as editable pill */
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] text-white/30">Chatting as</span>
                 <button
@@ -495,14 +597,12 @@ export default function LiveChatDrawer({
                   }}
                 >
                   {myName}
-                  {/* Pencil icon */}
                   <svg viewBox="0 0 24 24" fill="currentColor" className="w-2.5 h-2.5 opacity-60">
                     <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
                   </svg>
                 </button>
               </div>
             ) : (
-              /* Input mode: draft field — commits only on Enter or blur */
               <input
                 ref={nameInputRef}
                 type="text"
@@ -535,13 +635,11 @@ export default function LiveChatDrawer({
                 value={inputText}
                 onChange={(e) => { setInputText(e.target.value); setSendError(null); }}
                 onKeyDown={handleKeyDown}
-                onKeyUp={(e) => { if (e.key === "Enter") handleSend(); }}
-                className="flex-1 rounded-xl px-3 py-2 text-white outline-none border-none
-                           transition-all"
+                className="flex-1 rounded-xl px-3 py-2 text-white outline-none border-none transition-all"
                 style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_INPUT, fontSize: "16px" }}
               />
               <button
-                onClick={handleSend}
+                onClick={handleSendWithNonce}
                 disabled={!canSend}
                 aria-label="Send message"
                 className="w-10 h-10 rounded-full flex items-center justify-center shrink-0

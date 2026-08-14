@@ -20,15 +20,22 @@ const scriptSrc = isProd
 // connect-src: must include the backend URL so SSE (EventSource) and heartbeat
 // POST requests are not blocked by CSP in production.
 const connectSrcParts = ["'self'", "blob:"];
-if (PUBLIC_API_URL) connectSrcParts.push(PUBLIC_API_URL);
-// In local dev without NEXT_PUBLIC_API_URL, the browser hits /api/* which Next.js
-// rewrites to the backend. The browser only sees localhost:3000, so no extra
-// connect-src entry is needed. Docker-internal hostnames (chhath_backend) are
-// server-side only and must NOT appear in browser-facing CSP headers.
-if (!isProd && !PUBLIC_API_URL) {
-  // Next.js rewrites /api/* → backend, so browser only needs 'self'
-  // No extra entry needed — 'self' covers localhost:3000/api/*
+
+if (PUBLIC_API_URL) {
+  // Production: include the backend HTTP URL and its WebSocket equivalent.
+  // NEXT_PUBLIC_API_URL is https://... so we derive wss:// from it.
+  connectSrcParts.push(PUBLIC_API_URL);
+  const wsUrl = PUBLIC_API_URL
+    .replace(/^https:\/\//, "wss://")
+    .replace(/^http:\/\//, "ws://");
+  if (wsUrl !== PUBLIC_API_URL) connectSrcParts.push(wsUrl);
+} else {
+  // Local dev: Next.js HTTP rewrites proxy /api/* → backend, but WebSocket
+  // connections are NOT proxied — the browser must connect directly to the
+  // backend on port 8000. Add both ws:// and wss:// for localhost.
+  connectSrcParts.push("ws://localhost:8000", "wss://localhost:8000");
 }
+
 const connectSrc = connectSrcParts.join(" ");
 
 const nextConfig: NextConfig = {
