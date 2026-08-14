@@ -155,14 +155,21 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
     if (isOpen) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isOpen]);
 
-  // On open: clear unread, focus input, scroll to bottom
+  // On open: clear unread, focus appropriate input, scroll to bottom
   useEffect(() => {
     if (isOpen) {
       setUnreadCount(0);
-      setTimeout(() => inputRef.current?.focus(), 150);
+      setTimeout(() => {
+        // If no name set yet, focus the name input first so user can set it
+        if (!myName.trim()) {
+          nameInputRef.current?.focus();
+        } else {
+          inputRef.current?.focus();
+        }
+      }, 150);
       messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
     }
-  }, [isOpen]);
+  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Focus name input when entering edit mode
   useEffect(() => {
@@ -182,20 +189,27 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
   const handleSend = useCallback(async () => {
     const text = inputText.trim();
     if (!text || isSending || cooldown > 0) return;
-    const name = myName.trim() || undefined;
-    if (name) saveName(name);
+    const trimmedName = myName.trim();
+    if (trimmedName) saveName(trimmedName);
     setIsSending(true);
     setSendError(null);
     try {
-      const msg = await postChatMessage(name ?? "", text);
+      const msg = await postChatMessage(trimmedName, text);
       setMyMessageIds((prev) => new Set([...prev, msg.id]));
 
-      // Fix 4: Add own message to state immediately (optimistic update)
+      // If user had no name set, persist the server-assigned random name for the session
+      // so all subsequent messages use the same name
+      if (!trimmedName && msg.name) {
+        setMyName(msg.name);
+        saveName(msg.name);
+      }
+
+      // Add own message to state immediately (optimistic update)
       // SSE deduplication above will skip it when the broadcast arrives
       setMessages((prev) => {
         if (prev.some((m) => m.id === msg.id)) return prev;
         const next = [...prev, msg];
-        saveSessionMessages(next); // Fix 3: persist optimistic message too
+        saveSessionMessages(next);
         return next;
       });
 
@@ -214,14 +228,9 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
-  const handleNameBlur = () => {
-    saveName(myName.trim());
-    setIsEditingName(false);
-  };
-
   const handleNameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") { saveName(myName.trim()); setIsEditingName(false); }
-    if (e.key === "Escape") { setIsEditingName(false); }
+    if (e.key === "Enter") { saveName(myName.trim()); setIsEditingName(false); inputRef.current?.focus(); }
+    if (e.key === "Escape") { setIsEditingName(false); inputRef.current?.focus(); }
   };
 
   const canSend = !!inputText.trim() && !isSending && cooldown === 0;
@@ -329,7 +338,7 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
         <div
           role="dialog"
           aria-label="Live Chat"
-          className="fixed z-[44] flex flex-col rounded-[20px] overflow-hidden"
+          className="fixed z-[44] flex flex-col rounded-[20px] overflow-hidden pointer-events-auto"
           style={{
             bottom: "calc(var(--player-bottom) + var(--player-h) + var(--stack-gap))",
             right: "var(--hud-inset)",
@@ -411,11 +420,10 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
               <input
                 ref={nameInputRef}
                 type="text"
-                placeholder="Your name (optional) — press Enter to save"
+                placeholder="Your name (optional) — Enter to save, Esc to cancel"
                 maxLength={40}
                 value={myName}
                 onChange={(e) => setMyName(e.target.value)}
-                onBlur={handleNameBlur}
                 onKeyDown={handleNameKeyDown}
                 className="w-full rounded-lg px-2.5 py-1.5 text-white/70 text-[11px] outline-none border-none"
                 style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_INPUT }}
@@ -436,9 +444,8 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
                 value={inputText}
                 onChange={(e) => { setInputText(e.target.value); setSendError(null); }}
                 onKeyDown={handleKeyDown}
-                disabled={isSending}
                 className="flex-1 rounded-xl px-3 py-2 text-white text-[13px] outline-none border-none
-                           disabled:opacity-50 transition-all"
+                           transition-all"
                 style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_INPUT }}
               />
               <button
