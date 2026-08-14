@@ -154,23 +154,21 @@ jobs:
 
       - name: Create Vercel project link from secrets
         run: |
-          mkdir -p frontend/.vercel
+          mkdir -p .vercel
           printf '{"orgId":"%s","projectId":"%s"}\n' \
             "${{ secrets.VERCEL_ORG_ID }}" \
             "${{ secrets.VERCEL_PROJECT_ID }}" \
-            > frontend/.vercel/project.json
-          echo "✓ frontend/.vercel/project.json written"
-          cat frontend/.vercel/project.json
+            > .vercel/project.json
+          echo "✓ .vercel/project.json written"
+          cat .vercel/project.json
 
       - name: Pull Vercel Environment Information
-        working-directory: frontend
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Build for Vercel (with NEXT_PUBLIC_* from secrets)
-        working-directory: frontend
         run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -179,7 +177,6 @@ jobs:
           NEXT_PUBLIC_SITE_URL: ${{ secrets.NEXT_PUBLIC_SITE_URL }}
 
       - name: Deploy prebuilt output to Vercel production
-        working-directory: frontend
         run: |
           DEPLOY_URL=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
           echo "✓ Deployed to: $DEPLOY_URL"
