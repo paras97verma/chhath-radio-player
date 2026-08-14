@@ -133,8 +133,14 @@ jobs:
         working-directory: frontend
         run: |
           mkdir -p .vercel
-          printf '{"orgId":"%s","projectId":"%s"}' \
-            "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
+          cat > .vercel/project.json << 'PROJEOF'
+          {"orgId":"VERCEL_ORG_ID_PLACEHOLDER","projectId":"VERCEL_PROJECT_ID_PLACEHOLDER"}
+          PROJEOF
+          # Replace placeholders with actual secret values
+          sed -i "s/VERCEL_ORG_ID_PLACEHOLDER/${VERCEL_ORG_ID}/g" .vercel/project.json
+          sed -i "s/VERCEL_PROJECT_ID_PLACEHOLDER/${VERCEL_PROJECT_ID}/g" .vercel/project.json
+          echo "project.json contents:"
+          cat .vercel/project.json
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
