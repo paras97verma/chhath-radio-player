@@ -218,7 +218,7 @@ export default function PageClient() {
         </div>
 
         {/* Desktop only: Chat FAB — far right of viewport */}
-        {!isMobile && sessionId && (
+        {false && !isMobile && sessionId && (
           <div
             className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
             style={{ right: "var(--hud-inset)" }}
@@ -233,7 +233,7 @@ export default function PageClient() {
           Hidden when any other modal is open
       ══════════════════════════════════════════════════════════ */}
       {/* Mobile chat FAB — top-left, below the listener count pill, clear of all other elements */}
-      {isMobile && sessionId && !(showPlaylist || showShare || showDonate || showChat) && (
+      {false && isMobile && sessionId && !(showPlaylist || showShare || showDonate || showChat) && (
         <div
           className="fixed z-30 sm:hidden"
           style={{ top: "calc(var(--hud-inset) + 2.6rem)", left: "var(--hud-inset)" }}
@@ -405,7 +405,7 @@ export default function PageClient() {
     )}
 
     {/* Mobile only: LiveChatDrawer bottom-sheet — OUTSIDE <main> to avoid overflow-hidden clipping */}
-    {isMobile && sessionId && (
+    {false && isMobile && sessionId && (
       <LiveChatDrawer
         sessionId={sessionId}
         listenerCount={listenerCount}
