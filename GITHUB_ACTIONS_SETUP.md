@@ -96,16 +96,7 @@ Copy the output — that's your SECRET_KEY.
 Choose an email and a strong password (min 12 chars) for the admin panel at
 `/admin`. These are stored in the database, not in code.
 
-### 1e. VAPID keys (for push notifications)
-
-Run this in your terminal from the project root:
-```bash
-cd frontend && node -e "const wp=require('./node_modules/web-push'); const k=wp.generateVAPIDKeys(); console.log('Public:', k.publicKey); console.log('Private:', k.privateKey);"
-```
-
-If that fails, go to https://vapidkeys.com and click **Generate** — copy both keys.
-
-### 1f. Render (backend hosting)
+### 1e. Render (backend hosting)
 
 **Deploy Hook URL:**
 1. Go to https://dashboard.render.com → open your `chhath-radio-api` service
@@ -172,14 +163,11 @@ Add ALL of these secrets (name must match exactly):
 | `SECRET_KEY` | 64-char hex string | `openssl rand -hex 32` |
 | `ADMIN_EMAIL` | your-admin@email.com | Your choice |
 | `ADMIN_PASSWORD` | your-strong-password | Your choice (min 12 chars) |
-| `VAPID_PUBLIC_KEY` | `BXxx...` (starts with B) | Generated in Step 1e |
-| `VAPID_PRIVATE_KEY` | `xxx...` | Generated in Step 1e |
 | `RENDER_API_KEY` | `rnd_xxx...` | Render → Account Settings → API Keys |
 | `RENDER_SERVICE_ID` | `srv-xxx...` | Render dashboard URL |
 | `RENDER_DEPLOY_HOOK_URL` | `https://api.render.com/deploy/srv-xxx?key=yyy` | Render → Service → Settings → Deploy Hook |
 | `NEXT_PUBLIC_API_URL` | `https://chhath-radio-api.onrender.com` | Your Render service URL |
 | `NEXT_PUBLIC_SITE_URL` | `https://chhathradio.vercel.app` | Your Vercel project URL |
-| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | Same as `VAPID_PUBLIC_KEY` | Same as above |
 | `VERCEL_TOKEN` | `xxx...` | Vercel → Account → Tokens |
 | `VERCEL_ORG_ID` | `team_xxx` or `user_xxx` | `frontend/.vercel/project.json` |
 | `VERCEL_PROJECT_ID` | `prj_xxx` | `frontend/.vercel/project.json` |
@@ -201,8 +189,6 @@ The GitHub Actions pipeline updates Render env vars on every deploy, but for the
 | `SECRET_KEY` | Your generated secret key |
 | `ADMIN_EMAIL` | Your admin email |
 | `ADMIN_PASSWORD` | Your admin password |
-| `VAPID_PUBLIC_KEY` | Your VAPID public key |
-| `VAPID_PRIVATE_KEY` | Your VAPID private key |
 | `ALGORITHM` | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `1440` |
 | `WEB_CONCURRENCY` | `1` |
@@ -301,8 +287,8 @@ fails saying a secret is empty, double-check the secret name matches exactly
 
 - The `NEXT_PUBLIC_*` secrets must be set in GitHub (not Vercel dashboard)
 - GitHub Actions injects them at build time via `vercel build --prod`
-- Check: GitHub → Settings → Secrets → confirm `NEXT_PUBLIC_API_URL`,
-  `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY` are all set
+- Check: GitHub → Settings → Secrets → confirm `NEXT_PUBLIC_API_URL` and
+  `NEXT_PUBLIC_SITE_URL` are both set
 
 ### Frontend shows "Cannot connect to backend"
 

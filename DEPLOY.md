@@ -171,8 +171,6 @@ All secrets are set automatically by `scripts/deploy-setup.sh`. To set them manu
 | `SECRET_KEY` | JWT signing secret (min 32 chars) | `openssl rand -hex 32` |
 | `ADMIN_EMAIL` | Admin account email | Your choice |
 | `ADMIN_PASSWORD` | Admin account password | Your choice |
-| `VAPID_PUBLIC_KEY` | VAPID public key | `npx web-push generate-vapid-keys` |
-| `VAPID_PRIVATE_KEY` | VAPID private key | Same as above |
 | `RENDER_API_KEY` | Render API key | Render → Account Settings → API Keys |
 | `RENDER_SERVICE_ID` | Render service ID | Render dashboard URL: `/web/srv-XXXXXXXX` |
 | `RENDER_DEPLOY_HOOK_URL` | Render deploy hook | Render → Service → Settings → Deploy Hook |
@@ -181,7 +179,6 @@ All secrets are set automatically by `scripts/deploy-setup.sh`. To set them manu
 | `VERCEL_PROJECT_ID` | Vercel project ID | `vercel link` → `.vercel/project.json` |
 | `NEXT_PUBLIC_API_URL` | Backend public URL | Your Render service URL |
 | `NEXT_PUBLIC_SITE_URL` | Frontend public URL | Your Vercel project URL |
-| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | VAPID public key (frontend) | Same as `VAPID_PUBLIC_KEY` |
 
 ---
 
@@ -211,7 +208,6 @@ Copy `frontend/.env.example` → `frontend/.env.local` and fill in values.
 |---|---|
 | `NEXT_PUBLIC_API_URL` | Backend URL (empty = use Next.js rewrites) |
 | `NEXT_PUBLIC_SITE_URL` | Frontend URL (for OG tags, share links) |
-| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | VAPID public key for push notifications |
 
 ---
 

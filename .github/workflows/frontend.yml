@@ -14,7 +14,6 @@
 #   VERCEL_PROJECT_ID         — Vercel project ID (from vercel link)
 #   NEXT_PUBLIC_API_URL       — Backend URL e.g. https://chhath-api.onrender.com
 #   NEXT_PUBLIC_SITE_URL      — Frontend URL e.g. https://chhathradio.vercel.app
-#   NEXT_PUBLIC_VAPID_PUBLIC_KEY — VAPID public key for push notifications
 # =============================================================================
 
 name: Frontend CI/CD
@@ -82,7 +81,6 @@ jobs:
           build-args: |
             NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
             NEXT_PUBLIC_SITE_URL=${{ secrets.NEXT_PUBLIC_SITE_URL }}
-            NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -139,7 +137,6 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
           NEXT_PUBLIC_SITE_URL: ${{ secrets.NEXT_PUBLIC_SITE_URL }}
-          NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
 
       - name: Deploy prebuilt output to Vercel production
         working-directory: frontend

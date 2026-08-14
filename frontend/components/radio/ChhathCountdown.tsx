@@ -67,7 +67,9 @@ export default function ChhathCountdown() {
       };
       setData(refreshed);
       const firstUpcoming = refreshed.days.findIndex((d) => !d.is_past);
-      setActiveDayIndex(firstUpcoming >= 0 ? firstUpcoming : 0);
+      // If all days are past, show the last day (Usha Arghya) as "Completed"
+      // rather than defaulting to index 0 (Nahay Khay) which shows a wrong countdown
+      setActiveDayIndex(firstUpcoming >= 0 ? firstUpcoming : refreshed.days.length - 1);
     }
 
     function cacheValid(json: ChhathDatesResponse): boolean {

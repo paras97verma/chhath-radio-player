@@ -17,8 +17,6 @@
 #   SECRET_KEY              — JWT signing secret (min 32 chars)
 #   ADMIN_EMAIL             — First admin account email
 #   ADMIN_PASSWORD          — First admin account password
-#   VAPID_PUBLIC_KEY        — Web push VAPID public key
-#   VAPID_PRIVATE_KEY       — Web push VAPID private key
 # =============================================================================
 
 name: Backend CI/CD
@@ -120,8 +118,6 @@ jobs:
               {"key":"SECRET_KEY","value":"${{ secrets.SECRET_KEY }}"},
               {"key":"ADMIN_EMAIL","value":"${{ secrets.ADMIN_EMAIL }}"},
               {"key":"ADMIN_PASSWORD","value":"${{ secrets.ADMIN_PASSWORD }}"},
-              {"key":"VAPID_PUBLIC_KEY","value":"${{ secrets.VAPID_PUBLIC_KEY }}"},
-              {"key":"VAPID_PRIVATE_KEY","value":"${{ secrets.VAPID_PRIVATE_KEY }}"},
               {"key":"ALGORITHM","value":"HS256"},
               {"key":"ACCESS_TOKEN_EXPIRE_MINUTES","value":"1440"},
               {"key":"WEB_CONCURRENCY","value":"1"},

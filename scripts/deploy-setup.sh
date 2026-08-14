@@ -83,72 +83,6 @@ gen_secret() {
   fi
 }
 
-# ── Generate VAPID key pair ───────────────────────────────────────────────────
-gen_vapid_keys() {
-  # Strategy 1: use web-push from the frontend's node_modules (already installed)
-  if command -v node >/dev/null 2>&1; then
-    local output
-    output=$(node -e "
-try {
-  const wp = require('$PROJECT_ROOT/frontend/node_modules/web-push');
-  const keys = wp.generateVAPIDKeys();
-  console.log(JSON.stringify(keys));
-} catch(e) { process.exit(1); }
-" 2>/dev/null || echo "")
-    if [ -n "$output" ]; then
-      VAPID_PUBLIC_KEY=$(echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['publicKey'])" 2>/dev/null || echo "")
-      VAPID_PRIVATE_KEY=$(echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['privateKey'])" 2>/dev/null || echo "")
-      if [ -n "$VAPID_PUBLIC_KEY" ] && [ -n "$VAPID_PRIVATE_KEY" ]; then
-        return
-      fi
-    fi
-  fi
-
-  # Strategy 2: install web-push in a temp dir and use it
-  if command -v npm >/dev/null 2>&1; then
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    local output
-    output=$(cd "$tmpdir" && npm install web-push --silent 2>/dev/null \
-      && node -e "const wp=require('web-push');const k=wp.generateVAPIDKeys();console.log(JSON.stringify(k));" 2>/dev/null || echo "")
-    rm -rf "$tmpdir"
-    if [ -n "$output" ]; then
-      VAPID_PUBLIC_KEY=$(echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['publicKey'])" 2>/dev/null || echo "")
-      VAPID_PRIVATE_KEY=$(echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['privateKey'])" 2>/dev/null || echo "")
-      if [ -n "$VAPID_PUBLIC_KEY" ] && [ -n "$VAPID_PRIVATE_KEY" ]; then
-        return
-      fi
-    fi
-  fi
-
-  # Strategy 3: generate using openssl (ECDH P-256 raw key pair → base64url)
-  if command -v openssl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
-    local output
-    output=$(python3 - <<'PYEOF' 2>/dev/null
-import base64, os, struct
-try:
-    from cryptography.hazmat.primitives.asymmetric.ec import generate_private_key, SECP256R1
-    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, PrivateFormat, NoEncryption
-    key = generate_private_key(SECP256R1())
-    pub = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
-    priv = key.private_bytes(Encoding.DER, PrivateFormat.PKCS8, NoEncryption())
-    # Extract raw 32-byte private scalar from DER (last 32 bytes before public key)
-    raw_priv = key.private_numbers().private_value.to_bytes(32, 'big')
-    pub_b64 = base64.urlsafe_b64encode(pub).rstrip(b'=').decode()
-    priv_b64 = base64.urlsafe_b64encode(raw_priv).rstrip(b'=').decode()
-    import json
-    print(json.dumps({"publicKey": pub_b64, "privateKey": priv_b64}))
-except ImportError:
-    pass
-PYEOF
-)
-    if [ -n "$output" ]; then
-      VAPID_PUBLIC_KEY=$(echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['publicKey'])" 2>/dev/null || echo "")
-      VAPID_PRIVATE_KEY=$(echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['privateKey'])" 2>/dev/null || echo "")
-    fi
-  fi
-}
-
 # ── Banner ────────────────────────────────────────────────────────────────────
 print_banner() {
   clear
@@ -219,12 +153,6 @@ check_prerequisites() {
     warn "gh CLI not found — GitHub secrets must be set manually."
     warn "Install from: https://cli.github.com"
     GH_CLI_AVAILABLE=false
-  fi
-
-  if command -v npx >/dev/null 2>&1; then
-    success "npx found (used for VAPID key generation)"
-  else
-    warn "npx not found — VAPID keys must be generated manually"
   fi
 
   if [ "$missing" -eq 1 ]; then
@@ -335,22 +263,6 @@ collect_secrets() {
     warn "Password is short — consider using a longer password in production"
   fi
   success "Admin credentials saved"
-
-  echo ""
-  echo -e "  ${DIM}Generating VAPID keys for push notifications...${NC}"
-  VAPID_PUBLIC_KEY=""
-  VAPID_PRIVATE_KEY=""
-  gen_vapid_keys
-
-  if [ -n "$VAPID_PUBLIC_KEY" ] && [ -n "$VAPID_PRIVATE_KEY" ]; then
-    success "VAPID keys generated"
-  else
-    warn "Could not auto-generate VAPID keys. You can generate them at:"
-    link "https://vapidkeys.com"
-    echo ""
-    prompt VAPID_PUBLIC_KEY "Paste your VAPID Public Key (or press Enter to skip)"
-    prompt VAPID_PRIVATE_KEY "Paste your VAPID Private Key (or press Enter to skip)" "" "true"
-  fi
 }
 
 # =============================================================================
@@ -490,8 +402,6 @@ ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=1440
 ADMIN_EMAIL=${ADMIN_EMAIL}
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
-VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
-VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
 WEB_CONCURRENCY=1
 LOG_LEVEL=info
 EOF
@@ -505,7 +415,6 @@ EOF
 
 NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL}
-NEXT_PUBLIC_VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
 EOF
   success "Written: frontend/.env.local"
 }
@@ -541,11 +450,8 @@ set_github_secrets() {
     set_secret "SECRET_KEY" "$SECRET_KEY"
     set_secret "ADMIN_EMAIL" "$ADMIN_EMAIL"
     set_secret "ADMIN_PASSWORD" "$ADMIN_PASSWORD"
-    set_secret "VAPID_PUBLIC_KEY" "$VAPID_PUBLIC_KEY"
-    set_secret "VAPID_PRIVATE_KEY" "$VAPID_PRIVATE_KEY"
     set_secret "NEXT_PUBLIC_API_URL" "$NEXT_PUBLIC_API_URL"
     set_secret "NEXT_PUBLIC_SITE_URL" "$NEXT_PUBLIC_SITE_URL"
-    set_secret "NEXT_PUBLIC_VAPID_PUBLIC_KEY" "$VAPID_PUBLIC_KEY"
 
     echo ""
     success "All GitHub secrets set"
@@ -566,11 +472,8 @@ set_github_secrets() {
     echo -e "  ${DIM}SECRET_KEY${NC}                 = (your secret key)"
     echo -e "  ${DIM}ADMIN_EMAIL${NC}                = $ADMIN_EMAIL"
     echo -e "  ${DIM}ADMIN_PASSWORD${NC}             = (your admin password)"
-    echo -e "  ${DIM}VAPID_PUBLIC_KEY${NC}           = $VAPID_PUBLIC_KEY"
-    echo -e "  ${DIM}VAPID_PRIVATE_KEY${NC}          = (your VAPID private key)"
     echo -e "  ${DIM}NEXT_PUBLIC_API_URL${NC}        = $NEXT_PUBLIC_API_URL"
     echo -e "  ${DIM}NEXT_PUBLIC_SITE_URL${NC}       = $NEXT_PUBLIC_SITE_URL"
-    echo -e "  ${DIM}NEXT_PUBLIC_VAPID_PUBLIC_KEY${NC} = $VAPID_PUBLIC_KEY"
     echo ""
     read -r -p "  Press Enter once you've set the secrets manually..." _
   fi
@@ -588,7 +491,7 @@ set_render_env_vars() {
     link "https://dashboard.render.com"
     echo ""
     echo -e "  ${DIM}DATABASE_URL, REDIS_URL, SECRET_KEY, ADMIN_EMAIL, ADMIN_PASSWORD${NC}"
-    echo -e "  ${DIM}VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES${NC}"
+    echo -e "  ${DIM}ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, WEB_CONCURRENCY, LOG_LEVEL${NC}"
     return
   fi
 
@@ -605,8 +508,6 @@ set_render_env_vars() {
       {\"key\":\"SECRET_KEY\",\"value\":\"$SECRET_KEY\"},
       {\"key\":\"ADMIN_EMAIL\",\"value\":\"$ADMIN_EMAIL\"},
       {\"key\":\"ADMIN_PASSWORD\",\"value\":\"$ADMIN_PASSWORD\"},
-      {\"key\":\"VAPID_PUBLIC_KEY\",\"value\":\"$VAPID_PUBLIC_KEY\"},
-      {\"key\":\"VAPID_PRIVATE_KEY\",\"value\":\"$VAPID_PRIVATE_KEY\"},
       {\"key\":\"ALGORITHM\",\"value\":\"HS256\"},
       {\"key\":\"ACCESS_TOKEN_EXPIRE_MINUTES\",\"value\":\"1440\"},
       {\"key\":\"WEB_CONCURRENCY\",\"value\":\"1\"},
@@ -656,7 +557,6 @@ set_vercel_env_vars() {
 
   set_vercel_var "NEXT_PUBLIC_API_URL" "$NEXT_PUBLIC_API_URL"
   set_vercel_var "NEXT_PUBLIC_SITE_URL" "$NEXT_PUBLIC_SITE_URL"
-  set_vercel_var "NEXT_PUBLIC_VAPID_PUBLIC_KEY" "$VAPID_PUBLIC_KEY"
   set_vercel_var "BACKEND_URL" "$NEXT_PUBLIC_API_URL"
 
   success "Vercel env vars configured"

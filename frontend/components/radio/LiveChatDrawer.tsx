@@ -97,7 +97,8 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState("");
-  const [myName, setMyName] = useState("");
+  const [myName, setMyName] = useState("");          // committed name (saved)
+  const [nameInput, setNameInput] = useState("");    // draft while typing
   const [isEditingName, setIsEditingName] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -114,7 +115,11 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
   useEffect(() => { isOpenRef.current = isOpen; }, [isOpen]);
 
   // Load name from sessionStorage on mount
-  useEffect(() => { setMyName(getSavedName()); }, []);
+  useEffect(() => {
+    const saved = getSavedName();
+    setMyName(saved);
+    setNameInput(saved);
+  }, []);
 
   // Fix 3: Hydrate messages from sessionStorage instantly, then replace with fresh API data
   useEffect(() => {
@@ -201,6 +206,7 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
       // so all subsequent messages use the same name
       if (!trimmedName && msg.name) {
         setMyName(msg.name);
+        setNameInput(msg.name);
         saveName(msg.name);
       }
 
@@ -228,9 +234,22 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
+  const commitName = () => {
+    const trimmed = nameInput.trim();
+    setMyName(trimmed);
+    saveName(trimmed);
+    setIsEditingName(false);
+    inputRef.current?.focus();
+  };
+
   const handleNameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") { saveName(myName.trim()); setIsEditingName(false); inputRef.current?.focus(); }
-    if (e.key === "Escape") { setIsEditingName(false); inputRef.current?.focus(); }
+    if (e.key === "Enter") { commitName(); }
+    if (e.key === "Escape") {
+      // Revert draft to last committed name
+      setNameInput(myName);
+      setIsEditingName(false);
+      inputRef.current?.focus();
+    }
   };
 
   const canSend = !!inputText.trim() && !isSending && cooldown === 0;
@@ -395,11 +414,11 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
           {/* Fix 2: Name field — always visible, with edit-chip toggle */}
           <div className="px-3.5 pt-2 pb-1" style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
             {myName && !isEditingName ? (
-              /* Chip mode: show name as editable pill */
+              /* Chip mode: show committed name as editable pill */
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] text-white/30">Chatting as</span>
                 <button
-                  onClick={() => setIsEditingName(true)}
+                  onClick={() => { setNameInput(myName); setIsEditingName(true); }}
                   title="Click to change your name"
                   className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold
                              text-orange-400 transition-all hover:bg-orange-500/10"
@@ -416,15 +435,16 @@ export default function LiveChatDrawer({ sessionId, listenerCount: listenerCount
                 </button>
               </div>
             ) : (
-              /* Input mode: editable name field */
+              /* Input mode: draft field — commits only on Enter or blur */
               <input
                 ref={nameInputRef}
                 type="text"
                 placeholder="Your name (optional) — Enter to save, Esc to cancel"
                 maxLength={40}
-                value={myName}
-                onChange={(e) => setMyName(e.target.value)}
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
                 onKeyDown={handleNameKeyDown}
+                onBlur={commitName}
                 className="w-full rounded-lg px-2.5 py-1.5 text-white/70 text-[11px] outline-none border-none"
                 style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_INPUT }}
               />
