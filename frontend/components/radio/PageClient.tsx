@@ -184,7 +184,7 @@ export default function PageClient() {
             className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
             style={{ right: "var(--hud-inset)" }}
           >
-            <LiveChatDrawer sessionId={sessionId} />
+            <LiveChatDrawer sessionId={sessionId} listenerCount={listenerCount} />
           </div>
         )}
       </div>

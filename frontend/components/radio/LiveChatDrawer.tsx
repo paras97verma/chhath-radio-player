@@ -6,26 +6,52 @@
  * - FAB fixed bottom-right (above footer)
  * - Drawer slides in from right
  * - Real-time messages via SSE (chat_message events)
- * - Auto-scroll, anonymous name, rate-limited send (3s cooldown)
+ * - Auto-scroll, optional name (sessionStorage), rate-limited send (3s cooldown)
  * - Neumorphic dark design
+ *
+ * Fixes applied:
+ *   1. Listener count shown on FAB (collapsed state) — left of green dot
+ *   2. Name field always visible in drawer with edit-chip toggle
+ *   3. Messages persisted in sessionStorage (instant hydration on mount)
+ *   4. Own messages added to state immediately (optimistic update) — no SSE wait
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { fetchChatHistory, postChatMessage } from "@/lib/api";
 import type { ChatMessage } from "@/lib/api";
 
-const NAME_KEY = "chhath_chat_name_v1";
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
+const NAME_KEY     = "chhath_chat_name_v1";
+const MESSAGES_KEY = "chhath_chat_messages_v1";
+const API_BASE     = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 const NM_DRAWER = "12px 12px 32px rgba(0,0,0,0.82), -6px -6px 20px rgba(60,30,10,0.28), inset 0 1px 0 rgba(255,255,255,0.04)";
 const NM_FAB    = "5px 5px 14px rgba(0,0,0,0.70), -3px -3px 8px rgba(60,30,10,0.28)";
 const NM_INPUT  = "inset 3px 3px 8px rgba(0,0,0,0.60), inset -1px -1px 4px rgba(60,30,10,0.22)";
 const NM_BTN    = "4px 4px 10px rgba(0,0,0,0.65), -2px -2px 6px rgba(60,30,10,0.28)";
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── sessionStorage helpers ────────────────────────────────────────────────────
 
-function getSavedName(): string { try { return sessionStorage.getItem(NAME_KEY) ?? ""; } catch { return ""; } }
-function saveName(name: string) { try { sessionStorage.setItem(NAME_KEY, name); } catch { /* ignore */ } }
+function getSavedName(): string {
+  try { return sessionStorage.getItem(NAME_KEY) ?? ""; } catch { return ""; }
+}
+function saveName(name: string) {
+  try { sessionStorage.setItem(NAME_KEY, name); } catch { /* ignore */ }
+}
+
+function loadSessionMessages(): ChatMessage[] {
+  try {
+    const raw = sessionStorage.getItem(MESSAGES_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as ChatMessage[];
+  } catch { return []; }
+}
+function saveSessionMessages(msgs: ChatMessage[]) {
+  try {
+    // Keep last 100 messages to avoid bloating sessionStorage
+    sessionStorage.setItem(MESSAGES_KEY, JSON.stringify(msgs.slice(-100)));
+  } catch { /* ignore */ }
+}
+
 function formatTime(ts: number): string {
   return new Date(ts * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 }
@@ -65,54 +91,71 @@ function MessageBubble({ msg, isOwn }: { msg: ChatMessage; isOwn: boolean }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-interface Props { sessionId: string; }
+interface Props { sessionId: string; listenerCount?: number | null; }
 
-export default function LiveChatDrawer({ sessionId }: Props) {
+export default function LiveChatDrawer({ sessionId, listenerCount: listenerCountProp = null }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState("");
   const [myName, setMyName] = useState("");
+  const [isEditingName, setIsEditingName] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [cooldown, setCooldown] = useState(0);
   const [myMessageIds, setMyMessageIds] = useState<Set<string>>(new Set());
-  const [listenerCount, setListenerCount] = useState<number | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isOpenRef = useRef(false);
 
   useEffect(() => { isOpenRef.current = isOpen; }, [isOpen]);
-  useEffect(() => { setMyName(getSavedName()); }, []);
-  useEffect(() => { fetchChatHistory(50).then((msgs) => setMessages(msgs)); }, []);
 
+  // Load name from sessionStorage on mount
+  useEffect(() => { setMyName(getSavedName()); }, []);
+
+  // Fix 3: Hydrate messages from sessionStorage instantly, then replace with fresh API data
+  useEffect(() => {
+    const cached = loadSessionMessages();
+    if (cached.length > 0) setMessages(cached);
+
+    fetchChatHistory(50).then((msgs) => {
+      setMessages(msgs);
+      saveSessionMessages(msgs);
+    });
+  }, []);
+
+  // SSE: real-time chat messages + listener count
   useEffect(() => {
     if (!sessionId) return;
     const es = new EventSource(`${API_BASE}/api/events?session_id=${sessionId}`);
+
     es.addEventListener("chat_message", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data);
         const msg: ChatMessage = { id: data.id, name: data.name, text: data.text, ts: data.ts };
-        setMessages((prev) => { if (prev.some((m) => m.id === msg.id)) return prev; return [...prev, msg]; });
+        setMessages((prev) => {
+          // Deduplication: skip if already added optimistically
+          if (prev.some((m) => m.id === msg.id)) return prev;
+          const next = [...prev, msg];
+          saveSessionMessages(next); // Fix 3: persist on every new message
+          return next;
+        });
         if (!isOpenRef.current) setUnreadCount((n) => n + 1);
       } catch { /* ignore */ }
     });
-    es.addEventListener("listener_count", (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data);
-        const c = typeof data.count === "number" ? data.count : null;
-        if (c !== null) setListenerCount(c);
-      } catch { /* ignore */ }
-    });
+
     return () => es.close();
   }, [sessionId]);
 
+  // Auto-scroll when messages change (only if drawer is open)
   useEffect(() => {
     if (isOpen) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isOpen]);
 
+  // On open: clear unread, focus input, scroll to bottom
   useEffect(() => {
     if (isOpen) {
       setUnreadCount(0);
@@ -120,6 +163,13 @@ export default function LiveChatDrawer({ sessionId }: Props) {
       messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
     }
   }, [isOpen]);
+
+  // Focus name input when entering edit mode
+  useEffect(() => {
+    if (isEditingName) {
+      setTimeout(() => nameInputRef.current?.focus(), 50);
+    }
+  }, [isEditingName]);
 
   const startCooldown = useCallback(() => {
     setCooldown(3);
@@ -139,8 +189,20 @@ export default function LiveChatDrawer({ sessionId }: Props) {
     try {
       const msg = await postChatMessage(name ?? "", text);
       setMyMessageIds((prev) => new Set([...prev, msg.id]));
+
+      // Fix 4: Add own message to state immediately (optimistic update)
+      // SSE deduplication above will skip it when the broadcast arrives
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        const next = [...prev, msg];
+        saveSessionMessages(next); // Fix 3: persist optimistic message too
+        return next;
+      });
+
       setInputText("");
       startCooldown();
+      // Re-focus input so the user can type the next message immediately
+      setTimeout(() => inputRef.current?.focus(), 50);
     } catch (err) {
       setSendError(err instanceof Error ? err.message : "Failed to send");
     } finally {
@@ -152,7 +214,21 @@ export default function LiveChatDrawer({ sessionId }: Props) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
+  const handleNameBlur = () => {
+    saveName(myName.trim());
+    setIsEditingName(false);
+  };
+
+  const handleNameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") { saveName(myName.trim()); setIsEditingName(false); }
+    if (e.key === "Escape") { setIsEditingName(false); }
+  };
+
   const canSend = !!inputText.trim() && !isSending && cooldown === 0;
+
+  const formattedListenerCount = listenerCountProp !== null && listenerCountProp !== undefined
+    ? new Intl.NumberFormat("en-IN").format(listenerCountProp)
+    : null;
 
   return (
     <>
@@ -188,7 +264,7 @@ export default function LiveChatDrawer({ sessionId }: Props) {
             <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
           </svg>
         ) : (
-          /* Open state — waveform icon + label + live dot */
+          /* Open state — waveform icon + label + listener count + live dot */
           <>
             {/* Waveform / chat icon */}
             <span className="relative shrink-0 flex items-center justify-center w-[22px] h-[22px]">
@@ -217,10 +293,20 @@ export default function LiveChatDrawer({ sessionId }: Props) {
               Live Chat
             </span>
 
+            {/* Fix 1: Listener count — shown left of the green dot */}
+            {formattedListenerCount !== null && (
+              <span
+                className="text-[11px] font-bold tabular-nums whitespace-nowrap"
+                style={{ color: "rgba(74,222,128,0.90)" }}
+              >
+                {formattedListenerCount}
+              </span>
+            )}
+
             {/* Live pulse dot */}
             <span className="relative flex shrink-0 w-2 h-2 ml-0.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-60" />
-              <span className="relative inline-flex rounded-full w-2 h-2 bg-orange-400" />
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60" />
+              <span className="relative inline-flex rounded-full w-2 h-2 bg-green-400" />
             </span>
 
             {/* Unread badge */}
@@ -264,17 +350,17 @@ export default function LiveChatDrawer({ sessionId }: Props) {
               <div>
                 <p className="text-orange-400 font-bold text-[13px] m-0">Live Chat</p>
                 <p className="text-white/30 text-[10px] m-0">
-                  {messages.length} messages · Listening together 🪔
+                  {messages.length} messages
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-1.5">
-              {listenerCount !== null && (
+              {listenerCountProp !== null && listenerCountProp !== undefined && (
                 <span
                   className="text-[11px] font-semibold tabular-nums"
                   style={{ color: "rgba(74,222,128,0.90)" }}
                 >
-                  {new Intl.NumberFormat("en-IN").format(listenerCount)}
+                  {new Intl.NumberFormat("en-IN").format(listenerCountProp)}
                 </span>
               )}
               <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"
@@ -297,24 +383,48 @@ export default function LiveChatDrawer({ sessionId }: Props) {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Name input (if not set) */}
-          {!myName && (
-            <div className="px-3.5 pt-2" style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+          {/* Fix 2: Name field — always visible, with edit-chip toggle */}
+          <div className="px-3.5 pt-2 pb-1" style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+            {myName && !isEditingName ? (
+              /* Chip mode: show name as editable pill */
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-white/30">Chatting as</span>
+                <button
+                  onClick={() => setIsEditingName(true)}
+                  title="Click to change your name"
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold
+                             text-orange-400 transition-all hover:bg-orange-500/10"
+                  style={{
+                    background: "rgba(249,115,22,0.08)",
+                    border: "1px solid rgba(249,115,22,0.25)",
+                  }}
+                >
+                  {myName}
+                  {/* Pencil icon */}
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-2.5 h-2.5 opacity-60">
+                    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                  </svg>
+                </button>
+              </div>
+            ) : (
+              /* Input mode: editable name field */
               <input
+                ref={nameInputRef}
                 type="text"
-                placeholder="Your name (optional)"
+                placeholder="Your name (optional) — press Enter to save"
                 maxLength={40}
                 value={myName}
                 onChange={(e) => setMyName(e.target.value)}
-                onBlur={() => { if (myName.trim()) saveName(myName.trim()); }}
-                className="w-full rounded-lg px-2.5 py-1.5 text-white/60 text-[11px] outline-none border-none"
+                onBlur={handleNameBlur}
+                onKeyDown={handleNameKeyDown}
+                className="w-full rounded-lg px-2.5 py-1.5 text-white/70 text-[11px] outline-none border-none"
                 style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_INPUT }}
               />
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Message input */}
-          <div className="px-3.5 pt-2.5 pb-3.5 shrink-0"
+          <div className="px-3.5 pt-2 pb-3.5 shrink-0"
                style={{ borderTop: "1px solid rgba(249,115,22,0.08)" }}>
             {sendError && <p className="text-red-400 text-[11px] mb-1.5">{sendError}</p>}
             <div className="flex gap-2 items-end">
