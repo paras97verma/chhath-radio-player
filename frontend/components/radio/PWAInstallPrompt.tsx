@@ -61,6 +61,11 @@ function isInStandaloneMode(): boolean {
   );
 }
 
+function isDesktop(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.innerWidth >= 1024;
+}
+
 export default function PWAInstallPrompt() {
   const [show, setShow] = useState(false);
   const [isIOSHint, setIsIOSHint] = useState(false);
@@ -68,8 +73,9 @@ export default function PWAInstallPrompt() {
   const deferredPrompt = useRef<BeforeInstallPromptEvent | null>(null);
 
   useEffect(() => {
-    // Don't show if already installed or dismissed
+    // Don't show if already installed, dismissed, or on mobile
     if (isInStandaloneMode()) return;
+    if (!isDesktop()) return;
     if (isDismissed()) return;
 
     const ios = isIOS();

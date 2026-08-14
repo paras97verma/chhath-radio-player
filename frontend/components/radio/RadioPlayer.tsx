@@ -220,27 +220,35 @@ function ProgressBar({
   return (
     <div className="flex items-center gap-2 w-full px-5 pb-2">
       <span className="text-white/50 text-[9px] w-6 text-right shrink-0 tabular-nums">{fmt(currentTime)}</span>
+      {/* Outer container is taller (h-4 = 16px) for a larger touch target on mobile */}
       <div
-        className="relative flex-1 h-1.5 group cursor-pointer rounded-full"
-        style={{ boxShadow: "inset 2px 2px 5px rgba(0,0,0,0.55), inset -1px -1px 3px rgba(60,30,10,0.18)" }}
+        className="relative flex-1 h-4 group cursor-pointer flex items-center"
       >
-        <div className="absolute inset-0 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }} />
+        {/* Visual track — h-1.5, centered inside the taller hit area */}
         <div
-          className="absolute inset-y-0 left-0 rounded-full transition-all"
-          style={{
-            width: `${progress * 100}%`,
-            background: "linear-gradient(90deg, #fb923c, #f97316)",
-            filter: "drop-shadow(0 0 4px rgba(249,115,22,0.6))",
-          }}
-        />
-        {/* Thumb dot — always visible */}
-        <div
-          className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-orange-400 shadow-sm"
-          style={{
-            left: `calc(${progress * 100}% - 6px)`,
-            boxShadow: "0 0 6px rgba(249,115,22,0.7)",
-          }}
-        />
+          className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-1.5 rounded-full"
+          style={{ boxShadow: "inset 2px 2px 5px rgba(0,0,0,0.55), inset -1px -1px 3px rgba(60,30,10,0.18)" }}
+        >
+          <div className="absolute inset-0 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }} />
+          {/* Fill — no transition so it stays in sync with the thumb */}
+          <div
+            className="absolute inset-y-0 left-0 rounded-full"
+            style={{
+              width: `${progress * 100}%`,
+              background: "linear-gradient(90deg, #fb923c, #f97316)",
+              filter: "drop-shadow(0 0 4px rgba(249,115,22,0.6))",
+            }}
+          />
+          {/* Thumb dot — always visible, centered on the progress percentage */}
+          <div
+            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-orange-400 shadow-sm"
+            style={{
+              left: `calc(${progress * 100}% - 6px)`,
+              boxShadow: "0 0 6px rgba(249,115,22,0.7)",
+            }}
+          />
+        </div>
+        {/* Invisible range input covers the full h-4 area for easy touch/click */}
         <input
           type="range"
           min={0}
@@ -337,7 +345,8 @@ function VolumeControl({
       >
         <VolumeIcon />
       </button>
-      <div className="relative w-12 h-1.5 group">
+      {/* Volume slider — hidden on mobile to save space, mute button stays visible */}
+      <div className="relative w-12 h-1.5 group hidden sm:block">
         <div className="absolute inset-0 rounded-full bg-white/10" />
         <div
           className="absolute inset-y-0 left-0 rounded-full"

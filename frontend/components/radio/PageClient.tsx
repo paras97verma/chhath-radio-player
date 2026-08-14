@@ -12,14 +12,20 @@
  *
  *   SIDES:
  *     ShareFloatingButton → fixed left-0 top-1/2 -translate-y-1/2  (z-30)
- *     LiveChatDrawer FAB  → fixed right-3 bottom-24               (z-45)
  *
  *   BOTTOM STACK (from bottom up):
  *     Footer          → fixed bottom-0   h-11 sm:h-12
  *     RadioPlayer     → fixed bottom-12  (above footer)
  *     ChhathFacts     → fixed bottom-28  (above player)
  *     HelpButton "?"  → fixed bottom-14 left-3   (player-left)
- *     ReactionFAB     → fixed bottom-14 right-3  (player-right)
+ *
+ *   MOBILE-ONLY (< 640px):
+ *     ReactionBar     → fixed above player, centered
+ *     LiveChatDrawer  → fixed bottom-right corner
+ *
+ *   DESKTOP-ONLY (≥ 640px):
+ *     ReactionBar     → absolute right of player pill
+ *     LiveChatDrawer  → absolute right of player row
  *
  *   OVERLAY:
  *     TuneInSplash    → fixed inset-0 z-[100]  (until user clicks)
@@ -79,6 +85,7 @@ export default function PageClient() {
   const [listenerCount, setListenerCount] = useState(0);
   const [splashEmoji, setSplashEmoji] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState("");
+  const [isMobile, setIsMobile] = useState(false);
   const audioNodeRef = useRef<AudioNode | null>(null);
 
   // Use the shared localStorage session ID (same as ListenerCount) so that
@@ -88,6 +95,14 @@ export default function PageClient() {
     import("@/lib/session").then(({ getOrCreateSessionId }) => {
       setSessionId(getOrCreateSessionId());
     });
+  }, []);
+
+  // Track mobile breakpoint for layout switching
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 640);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
   }, []);
 
   const handleCountChange = useCallback((c: number) => setListenerCount(c), []);
@@ -159,6 +174,18 @@ export default function PageClient() {
         <ChhathFacts />
       </div>
 
+      {/* ── Mobile: ReactionBar centered above player ── */}
+      {isMobile && (
+        <div
+          className="fixed left-0 right-0 z-20 flex justify-center pointer-events-none"
+          style={{ bottom: "calc(var(--player-bottom) + var(--player-h) + 0.5rem)" }}
+        >
+          <div className="pointer-events-auto">
+            <ReactionBar onReact={handleReact} />
+          </div>
+        </div>
+      )}
+
       {/* Player row — pill truly centered; FABs absolutely positioned relative to this row */}
       <div
         className="fixed left-0 right-0 z-20 flex items-center justify-center px-3 sm:px-4"
@@ -168,18 +195,20 @@ export default function PageClient() {
         <div className="relative min-w-0 max-w-lg w-full">
           <RadioPlayer hasTunedIn={hasTunedIn} />
 
-          {/* Reaction FAB — out of flow, anchored to the right edge of the pill */}
-          <div
-            className="absolute top-1/2 -translate-y-1/2"
-            style={{ left: "calc(100% + 12px)" }}
-          >
-            <ReactionBar onReact={handleReact} />
-          </div>
+          {/* Desktop only: Reaction FAB — out of flow, anchored to the right edge of the pill */}
+          {!isMobile && (
+            <div
+              className="absolute top-1/2 -translate-y-1/2"
+              style={{ left: "calc(100% + 12px)" }}
+            >
+              <ReactionBar onReact={handleReact} />
+            </div>
+          )}
         </div>
 
-        {/* Chat FAB — absolutely positioned to the far right of the viewport,
+        {/* Desktop only: Chat FAB — absolutely positioned to the far right of the viewport,
             vertically centered on the player row (same as ReactionBar) */}
-        {sessionId && (
+        {!isMobile && sessionId && (
           <div
             className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
             style={{ right: "var(--hud-inset)" }}
@@ -188,6 +217,19 @@ export default function PageClient() {
           </div>
         )}
       </div>
+
+      {/* Mobile only: Chat FAB — fixed bottom-right corner above footer */}
+      {isMobile && sessionId && (
+        <div
+          className="fixed z-30 pointer-events-none"
+          style={{
+            bottom: "calc(var(--player-bottom) + var(--player-h) + 0.5rem)",
+            right: "var(--hud-inset)",
+          }}
+        >
+          <LiveChatDrawer sessionId={sessionId} listenerCount={listenerCount} />
+        </div>
+      )}
 
       {/* Keyboard help "?" — fixed bottom-left, above footer */}
       <div

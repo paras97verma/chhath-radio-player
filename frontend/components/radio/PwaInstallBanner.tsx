@@ -32,6 +32,12 @@ function isStandalone(): boolean {
   );
 }
 
+// Only show PWA install prompt on desktop (≥ 1024px)
+function isDesktop(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.innerWidth >= 1024;
+}
+
 export default function PwaInstallBanner() {
   const [mode, setMode] = useState<BannerMode>(null);
   const [visible, setVisible] = useState(false);
@@ -39,8 +45,9 @@ export default function PwaInstallBanner() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
   useEffect(() => {
-    // Don't show if already installed or previously dismissed
+    // Don't show if already installed, previously dismissed, or on mobile
     if (isStandalone()) return;
+    if (!isDesktop()) return;
     try {
       if (localStorage.getItem(STORAGE_KEY)) return;
     } catch { /* ignore */ }
