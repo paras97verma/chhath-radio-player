@@ -5,13 +5,12 @@
  *
  * Replaces the previous Three.js / React Three Fiber 3D scene.
  * Renders a fixed full-viewport layer behind all UI (z-index: 0).
+ *
+ * Performance: `will-change: transform` promotes the element to its own
+ * compositor layer, preventing repaints during the Ken Burns animation.
  */
 
-interface GhatSceneLoaderProps {
-  audioNode?: AudioNode | null;
-}
-
-export default function GhatSceneLoader({ audioNode: _audioNode }: GhatSceneLoaderProps = {}) {
+export default function GhatSceneLoader() {
   return (
     <div
       className="fixed inset-0 z-0"
@@ -21,6 +20,7 @@ export default function GhatSceneLoader({ audioNode: _audioNode }: GhatSceneLoad
         backgroundSize: "cover",
         backgroundPosition: "center",
         animation: "kenBurns 30s ease-in-out infinite alternate",
+        willChange: "transform",
       }}
     >
       <style>{`

@@ -10,7 +10,9 @@ Max 200 messages; messages older than 10 minutes are automatically pruned.
 New messages are broadcast to all active SSE connections via a
 module-level asyncio.Queue registry (imported by events.py).
 
-Rate limiting: 1 message per 3 seconds per IP (in-memory).
+Rate limiting: 1 message per 3 seconds per IP.
+  - Primary: Redis sliding-window (works across multiple Gunicorn workers).
+  - Fallback: in-memory dict (used when Redis is unavailable).
 """
 
 import asyncio
@@ -36,9 +38,28 @@ CHAT_KEY = "chhath:chat:messages"
 MAX_MESSAGES = 200          # hard cap on stored messages
 MESSAGE_TTL_SECONDS = 600   # 10 minutes — messages older than this are pruned
 
-# ─── Rate limiting (in-memory, per IP) ───────────────────────────────────────
+# ─── Rate limiting ────────────────────────────────────────────────────────────
+# Primary: Redis sliding-window (cross-worker safe).
+# Fallback: in-memory dict (used when Redis is unavailable).
 _rate_limit: dict[str, float] = {}
 RATE_LIMIT_SECONDS = 3.0
+RATE_LIMIT_REDIS_KEY_PREFIX = "chhath:chat:rl:"
+
+
+def _is_rate_limited_redis(client_ip: str, now: float) -> bool:
+    """
+    Redis-backed rate limit check using SET NX PX (atomic).
+    Returns True if the client is rate-limited, False if the message is allowed.
+    """
+    r = _get_redis()
+    if r is None:
+        return False  # fall through to in-memory check
+    key = f"{RATE_LIMIT_REDIS_KEY_PREFIX}{client_ip}"
+    ttl_ms = int(RATE_LIMIT_SECONDS * 1000)
+    # SET key 1 NX PX ttl_ms — only sets if key does not exist
+    result = r.set(key, 1, nx=True, px=ttl_ms)
+    # result is True if key was newly set (allowed), None if key already existed (limited)
+    return result is None
 
 # ─── Funny bhakti-style anonymous name pool ───────────────────────────────────
 _NAMES = [
@@ -212,14 +233,21 @@ async def send_message(body: ChatMessageIn, request: Request) -> ChatMessageOut:
     client_ip = request.client.host if request.client else "unknown"
     now = time.time()
 
-    # Rate limit check
-    last = _rate_limit.get(client_ip, 0)
-    if now - last < RATE_LIMIT_SECONDS:
+    # Rate limit check — try Redis first, fall back to in-memory
+    if _is_rate_limited_redis(client_ip, now):
         raise HTTPException(
             status_code=429,
             detail=f"Please wait {RATE_LIMIT_SECONDS:.0f} seconds between messages.",
         )
-    _rate_limit[client_ip] = now
+    else:
+        # In-memory fallback (also guards when Redis is unavailable)
+        last = _rate_limit.get(client_ip, 0)
+        if now - last < RATE_LIMIT_SECONDS:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Please wait {RATE_LIMIT_SECONDS:.0f} seconds between messages.",
+            )
+        _rate_limit[client_ip] = now
 
     # Clean up old rate limit entries (keep dict small)
     if len(_rate_limit) > 10_000:

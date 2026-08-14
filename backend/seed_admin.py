@@ -3,11 +3,11 @@ Admin user seeding script.
 Run this once after migrations to create the first admin account.
 
 Usage (inside the container or with venv active):
-    python seed_admin.py
+    ADMIN_EMAIL=admin@example.com ADMIN_PASSWORD=mysecret python seed_admin.py
 
-Environment variables (read from .env or shell):
-    ADMIN_EMAIL    — email for the admin account (default: admin@chhathradio.com)
-    ADMIN_PASSWORD — password for the admin account (REQUIRED)
+Environment variables (both REQUIRED — no defaults):
+    ADMIN_EMAIL    — email for the admin account
+    ADMIN_PASSWORD — password for the admin account (min 12 chars recommended)
 """
 import os
 import sys
@@ -23,12 +23,17 @@ from sqlalchemy import select
 
 
 def seed_admin() -> None:
-    email = os.environ.get("ADMIN_EMAIL", "admin@chhathradio.com")
+    email = os.environ.get("ADMIN_EMAIL", "")
     password = os.environ.get("ADMIN_PASSWORD", "")
+
+    if not email:
+        print("ERROR: ADMIN_EMAIL environment variable is required.")
+        print("  Example: ADMIN_EMAIL=admin@example.com ADMIN_PASSWORD=mysecret python seed_admin.py")
+        sys.exit(1)
 
     if not password:
         print("ERROR: ADMIN_PASSWORD environment variable is required.")
-        print("  Example: ADMIN_PASSWORD=mysecret python seed_admin.py")
+        print("  Example: ADMIN_EMAIL=admin@example.com ADMIN_PASSWORD=mysecret python seed_admin.py")
         sys.exit(1)
 
     db = SessionLocal()

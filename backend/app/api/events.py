@@ -26,17 +26,23 @@ Usage (frontend):
 
 import asyncio
 import json
+import re
 import time
 import logging
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Request, Query
+from fastapi import APIRouter, HTTPException, Request, Query
 from fastapi.responses import StreamingResponse
 
 from app.services.presence_service import (
     record_heartbeat,
     get_listener_count,
     remove_session,
+)
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    re.IGNORECASE,
 )
 
 logger = logging.getLogger(__name__)
@@ -138,8 +144,10 @@ async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, 
 )
 async def sse_events(
     request: Request,
-    session_id: str = Query(..., description="Unique anonymous session ID (UUID)"),
+    session_id: str = Query(..., min_length=36, max_length=36, description="Unique anonymous session ID (UUID v4)"),
 ) -> StreamingResponse:
+    if not _UUID_RE.match(session_id):
+        raise HTTPException(status_code=422, detail="session_id must be a valid UUID")
     return StreamingResponse(
         _sse_stream(request, session_id),
         media_type="text/event-stream",

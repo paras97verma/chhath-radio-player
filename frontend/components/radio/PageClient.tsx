@@ -99,7 +99,7 @@ export default function PageClient() {
     <main className="fixed inset-0 overflow-hidden bg-[#0a0402]">
 
       {/* ── Layer 0: 3D Chhath Ghat scene ── */}
-      <GhatSceneLoader audioNode={audioNodeRef.current} />
+      <GhatSceneLoader />
 
       {/* ── Layer 1: Full-canvas dark overlay for wallpaper depth ── */}
       <div

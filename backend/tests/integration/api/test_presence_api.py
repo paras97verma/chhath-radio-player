@@ -21,13 +21,21 @@ def client():
 
 class TestHeartbeatEndpoint:
     def test_valid_session_id_returns_204(self, client):
-        """POST /api/presence/heartbeat with valid session_id returns 204 No Content."""
+        """POST /api/presence/heartbeat with valid UUID session_id returns 204 No Content."""
         with patch("app.services.presence_service._get_client", return_value=None):
             resp = client.post(
                 "/api/presence/heartbeat",
-                json={"session_id": "test-session-abc-123"},
+                json={"session_id": "550e8400-e29b-41d4-a716-446655440000"},
             )
         assert resp.status_code == 204
+
+    def test_invalid_session_id_format_returns_422(self, client):
+        """POST with non-UUID session_id returns 422 Unprocessable Entity."""
+        resp = client.post(
+            "/api/presence/heartbeat",
+            json={"session_id": "not-a-valid-uuid"},
+        )
+        assert resp.status_code == 422
 
     def test_missing_session_id_returns_422(self, client):
         """POST without session_id returns 422 Unprocessable Entity."""
