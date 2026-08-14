@@ -337,7 +337,7 @@ export default function PageClient() {
         style={{
           position: "fixed",
           right: "8px",
-          top: "50%",
+          top: "38%",
           transform: "translateY(-50%)",
           zIndex: 30,
         }}

@@ -22,8 +22,8 @@ export default function ShareFloatingButton({ onOpenChange }: { onOpenChange?: (
   return (
     <>
       <div
-        className="fixed left-0 top-1/2 -translate-y-1/2 z-30"
-        style={{ perspective: "600px" }}
+        className="fixed left-0 z-30"
+        style={{ top: "38%", transform: "translateY(-50%)", perspective: "600px" }}
       >
         <button
           onClick={handleOpen}
