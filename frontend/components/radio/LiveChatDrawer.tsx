@@ -29,6 +29,59 @@ const MY_IDS_KEY      = "chhath_chat_my_ids_v1";
 const PING_INTERVAL   = 20_000;   // 20 s — keeps Render free-tier WS alive
 const MAX_RECONNECT   = 30_000;   // 30 s max back-off
 
+// ─── Bhakti name pool — assigned on the frontend when user skips the name field ─
+// Names are fun, festival-themed, and can be duplicated across users.
+const BHAKTI_NAMES = [
+  "🌸 Mahua_Ke_Phool",
+  "🎵 Chhath_Geet_Lover",
+  "🌊 Ghat_Pe_Khada_Bhakt",
+  "🪔 Mitti_Ka_Diya",
+  "🙏 Jai_Chhathi_Maiya",
+  "☀️ Surya_Namaskar_Wala",
+  "🌸 Kaddu_Bhaat_Fan",
+  "🎵 Radio_Sunne_Wala",
+  "🌊 Patna_Ka_Bhakt",
+  "🪔 Varanasi_Wala",
+  "🙏 Muzaffarpur_Bhakt",
+  "☀️ Bhagalpur_Ka_Fan",
+  "🌸 Darbhanga_Wali",
+  "🎵 Ara_Ka_Bhakt",
+  "🌊 Chapra_Wala",
+  "🪔 Sitamarhi_Bhakt",
+  "🙏 Delhi_Wala_Bhakt",
+  "☀️ Mumbai_Ka_Chhath_Fan",
+  "🌸 Kolkata_Wali_Maiya",
+  "🌊 Geet_Sunne_Wala",
+  "🪔 Usha_Arghya_Wala",
+  "🙏 Sandhya_Arghya_Fan",
+  "☀️ Chhath_Ke_Bhakt",
+  // 20 new fun names
+  "🌺 Thekua_Khane_Wala",
+  "🎶 Parampara_Ka_Bhakt",
+  "🌅 Suraj_Ke_Deewane",
+  "🪷 Kamal_Ke_Phool_Fan",
+  "🎊 Chhath_Mahotsav_Wala",
+  "🌾 Khet_Ka_Bhakt",
+  "🏞️ Ganga_Kinare_Wala",
+  "🌙 Raat_Ke_Jaagran_Fan",
+  "🎤 Chhath_Geet_Gaane_Wala",
+  "🌻 Surya_Dev_Ka_Sevak",
+  "🪅 Puja_Ke_Rang_Wala",
+  "🌈 Chhath_Ki_Khushi_Fan",
+  "🏔️ Pahad_Ka_Bhakt",
+  "🌊 Sone_Ki_Naiya_Wala",
+  "🎵 Dholak_Bajane_Wala",
+  "🪔 Deep_Jalane_Wali",
+  "🌸 Arghya_Dene_Wali",
+  "☀️ Bhor_Ka_Suraj_Fan",
+  "🙏 Chhathi_Maiya_Sevak",
+  "🌺 Prasad_Banane_Wali",
+];
+
+function pickRandomBhaktiName(): string {
+  return BHAKTI_NAMES[Math.floor(Math.random() * BHAKTI_NAMES.length)];
+}
+
 const NM_DRAWER = "12px 12px 32px rgba(0,0,0,0.82), -6px -6px 20px rgba(60,30,10,0.28), inset 0 1px 0 rgba(255,255,255,0.04)";
 const NM_FAB    = "5px 5px 14px rgba(0,0,0,0.70), -3px -3px 8px rgba(60,30,10,0.28)";
 const NM_INPUT  = "inset 3px 3px 8px rgba(0,0,0,0.60), inset -1px -1px 4px rgba(60,30,10,0.22)";
@@ -342,10 +395,18 @@ export default function LiveChatDrawer({
       return;
     }
 
-    const trimmedName = myName.trim();
-    if (trimmedName) saveName(trimmedName);
+    // Always send a name — if somehow empty (edge case), pick from pool and persist.
+    let trimmedName = myName.trim();
+    if (!trimmedName) {
+      trimmedName = pickRandomBhaktiName();
+      setMyName(trimmedName);
+      setNameInput(trimmedName);
+    }
+    saveName(trimmedName);
 
-    // Generate a nonce to identify our own echo
+    // Generate a nonce to identify our own echo.
+    // Needed because names can be duplicated — nonce is the only reliable way
+    // to identify which broadcast belongs to this sender.
     const nonce = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     pendingNonces.current.set(nonce, Date.now());
 
@@ -369,8 +430,13 @@ export default function LiveChatDrawer({
 
   const commitName = () => {
     const trimmed = nameInput.trim();
-    setMyName(trimmed);
-    saveName(trimmed);
+    // Only persist if the user actually typed a name.
+    // If blank and we already have a name (e.g. server-assigned random name),
+    // keep the existing name so it doesn't vanish on blur.
+    if (trimmed) {
+      setMyName(trimmed);
+      saveName(trimmed);
+    }
     setIsEditingName(false);
     inputRef.current?.focus();
   };
@@ -401,7 +467,7 @@ export default function LiveChatDrawer({
         <button
           onClick={() => setIsOpen((v) => !v)}
           aria-label={effectiveOpen ? "Close live chat" : "Open live chat"}
-          title={effectiveOpen ? "Close chat" : "Live Chat"}
+          title={effectiveOpen ? "Close chat" : "Community Chat"}
           className="fixed z-[45] flex items-center cursor-pointer select-none pointer-events-auto"
           style={{
             bottom: "var(--chat-fab-bottom)",
@@ -491,7 +557,7 @@ export default function LiveChatDrawer({
       {effectiveOpen && (
         <div
           role="dialog"
-          aria-label="Live Chat"
+          aria-label="Community Chat"
           className={`fixed z-[49] flex flex-col overflow-hidden pointer-events-auto ${
             isMobileControlled
               ? "left-0 right-0 bottom-0 rounded-t-[24px]"
@@ -532,9 +598,9 @@ export default function LiveChatDrawer({
             style={{ borderBottom: "1px solid rgba(249,115,22,0.10)" }}
           >
             <div className="flex items-center gap-2">
-              <span className="text-base">💬</span>
+              {/* <span className="text-base">💬</span> */}
               <div>
-                <p className="text-orange-400 font-bold text-[13px] m-0">Live Chat</p>
+                <p className="text-orange-400 font-bold text-[13px] m-0">👥💬 Community Chat</p>
                 <p className="text-white/30 text-[10px] m-0">
                   {wsConnected ? `${messages.length} messages` : "Connecting…"}
                 </p>
