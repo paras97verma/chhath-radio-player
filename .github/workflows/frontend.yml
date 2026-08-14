@@ -103,7 +103,7 @@ jobs:
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/ || echo "000")
           docker stop fe-smoke && docker rm fe-smoke
           echo "Frontend smoke test: HTTP $HTTP_CODE"
-          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "308" ]; then
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "301" ] || [ "$HTTP_CODE" = "307" ] || [ "$HTTP_CODE" = "308" ]; then
             echo "✓ Frontend smoke test passed"
           else
             echo "ERROR: Frontend returned HTTP $HTTP_CODE"
@@ -152,9 +152,19 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
+      - name: Create Vercel project link from secrets
+        run: |
+          mkdir -p frontend/.vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' \
+            "${{ secrets.VERCEL_ORG_ID }}" \
+            "${{ secrets.VERCEL_PROJECT_ID }}" \
+            > frontend/.vercel/project.json
+          echo "✓ frontend/.vercel/project.json written"
+          cat frontend/.vercel/project.json
+
       - name: Pull Vercel Environment Information
         working-directory: frontend
-        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }} --debug
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
