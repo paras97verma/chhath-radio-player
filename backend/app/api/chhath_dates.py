@@ -181,6 +181,34 @@ def _build_days_local(year: int) -> list[ChhathDayOut]:
 
 CHHATH_KEYWORDS = {"chhath", "chhat", "surya shashthi", "shashthi"}
 
+# Keywords that identify which specific Chhath day Calendarific returned.
+# Calendarific may return any of the 4 days; we normalise to Sandhya Arghya
+# (Day 3) as the anchor and compute the other 3 relative to it.
+_DAY_OFFSETS: list[tuple[set[str], int]] = [
+    # (keywords_in_name, offset_to_sandhya_arghya)
+    ({"nahay", "naha"},          +2),   # Day 1 → Sandhya Arghya is 2 days later
+    ({"kharna"},                  +1),   # Day 2 → Sandhya Arghya is 1 day later
+    ({"usha", "ushya", "arghya"}, -1),   # Day 4 → Sandhya Arghya is 1 day earlier
+    # Day 3 / generic "Chhath Puja" → offset 0 (default)
+]
+
+
+def _sandhya_arghya_date(matched_name: str, matched_date: datetime.date) -> datetime.date:
+    """Given the holiday name and date returned by Calendarific, return the
+    date of Sandhya Arghya (Day 3), which is the anchor for all 4 days."""
+    name_lower = matched_name.lower()
+    for keywords, offset in _DAY_OFFSETS:
+        if any(kw in name_lower for kw in keywords):
+            logger.info(
+                "Calendarific: matched '%s' as day-offset %+d → Sandhya Arghya = %s",
+                matched_name, offset, matched_date + datetime.timedelta(days=offset),
+            )
+            return matched_date + datetime.timedelta(days=offset)
+    # Default: assume the matched entry IS Sandhya Arghya (Day 3)
+    logger.info("Calendarific: matched '%s' as Day 3 (Sandhya Arghya) = %s", matched_name, matched_date)
+    return matched_date
+
+
 async def _fetch_calendarific(year: int) -> list[ChhathDayOut] | None:
     api_key = os.getenv("CALENDARIFIC_API_KEY", "")
     if not api_key:
@@ -201,15 +229,27 @@ async def _fetch_calendarific(year: int) -> list[ChhathDayOut] | None:
         return None
 
     holidays = data.get("response", {}).get("holidays", [])
-    # Find Chhath Puja entry
+    logger.info("Calendarific: received %d holidays for year %d", len(holidays), year)
+
+    # Find Chhath Puja entry — collect ALL matching entries and pick the best
+    matched_name: str = ""
     chhath_date: datetime.date | None = None
     for h in holidays:
         name_lower = h.get("name", "").lower()
         if any(kw in name_lower for kw in CHHATH_KEYWORDS):
             try:
                 iso = h["date"]["iso"]
-                chhath_date = datetime.date.fromisoformat(iso[:10])
-                break
+                candidate = datetime.date.fromisoformat(iso[:10])
+                logger.info("Calendarific: candidate holiday '%s' on %s", h.get("name"), candidate)
+                # Prefer entries explicitly named "Chhath Puja" (Day 3) over
+                # sub-day entries; but accept the first match as fallback.
+                if chhath_date is None:
+                    chhath_date = candidate
+                    matched_name = h.get("name", "")
+                if "chhath puja" in name_lower or "surya shashthi" in name_lower:
+                    chhath_date = candidate
+                    matched_name = h.get("name", "")
+                    break
             except Exception:
                 continue
 
@@ -217,8 +257,10 @@ async def _fetch_calendarific(year: int) -> list[ChhathDayOut] | None:
         logger.warning("Calendarific: Chhath Puja not found in %d response", year)
         return None
 
-    # Calendarific returns Sandhya Arghya (Day 3) as "Chhath Puja"
-    # Build all 4 days relative to it
+    # Normalise to Sandhya Arghya (Day 3) regardless of which day was returned
+    sandhya_date = _sandhya_arghya_date(matched_name, chhath_date)
+
+    # Build all 4 days relative to Sandhya Arghya
     months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
     now = datetime.datetime.now(tz=IST)
 
@@ -231,10 +273,10 @@ async def _fetch_calendarific(year: int) -> list[ChhathDayOut] | None:
         return f"{dt.day} {months[dt.month - 1]}, {h12}:{dt.minute:02d} {ampm}"
 
     specs = [
-        (1, "Nahay Khay",     "नहाय खाय",     "🛁", chhath_date - datetime.timedelta(days=2), 6,  0),
-        (2, "Kharna",         "खरना",          "🌙", chhath_date - datetime.timedelta(days=1), 18, 0),
-        (3, "Sandhya Arghya", "संध्या अर्घ्य", "🌇", chhath_date,                              17, 45),
-        (4, "Usha Arghya",    "उषा अर्घ्य",   "🌅", chhath_date + datetime.timedelta(days=1), 6,  15),
+        (1, "Nahay Khay",     "नहाय खाय",     "🛁", sandhya_date - datetime.timedelta(days=2), 6,  0),
+        (2, "Kharna",         "खरना",          "🌙", sandhya_date - datetime.timedelta(days=1), 18, 0),
+        (3, "Sandhya Arghya", "संध्या अर्घ्य", "🌇", sandhya_date,                              17, 45),
+        (4, "Usha Arghya",    "उषा अर्घ्य",   "🌅", sandhya_date + datetime.timedelta(days=1), 6,  15),
     ]
 
     return [

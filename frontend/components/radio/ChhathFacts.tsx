@@ -1,13 +1,15 @@
 "use client";
 
 /**
- * ChhathFacts — Rotates Chhath Puja facts with:
- *   - Instant display on load (built-in fallback facts, no API wait)
- *   - Typewriter animation on entry (18ms/char)
- *   - Fact shown for 10 seconds total, then instant swap
- *   - Single-line display — long facts scroll via marquee
- *   - Fully transparent background — gradient text with glow only
- *   - Rotating Chhath-themed emoji per fact
+ * ChhathFacts — Rotates Chhath Puja facts with typewriter animation.
+ *
+ * - Instant display on load (built-in fallback facts, no API wait)
+ * - Typewriter animation on entry (18ms/char)
+ * - Fact shown for 10 seconds total, then instant swap
+ * - Transparent background — gradient text with glow only
+ * - Rotating Chhath-themed emoji per fact
+ *
+ * CSS classes defined in globals.css: .fact-gradient-text, .fact-cursor
  */
 
 import { useEffect, useState, useRef } from "react";
@@ -16,13 +18,11 @@ import { fetchFacts } from "@/lib/api";
 const CHAR_SPEED_MS = 18;
 const HOLD_TOTAL_MS = 10_000;
 
-// Chhath-themed emojis that rotate with each fact
 const CHHATH_EMOJIS = [
   "🪔", "🌅", "🌊", "🙏", "🌸", "☀️", "🌙", "🪷", "🌺", "🎋",
   "🌾", "🍚", "🥭", "🍌", "🌿", "🔔", "🪘", "🌄", "🕯️", "🌻",
 ];
 
-// Built-in fallback facts — shown instantly, replaced by API facts when loaded
 const FALLBACK_FACTS = [
   "Chhath Puja is one of the oldest Vedic festivals, dedicated to Surya Dev and Chhathi Maiya.",
   "Devotees fast for 36 hours without water during Chhath — one of the most rigorous fasts in Hinduism.",
@@ -48,9 +48,7 @@ function useTypewriter(text: string, key: number): string {
     function type() {
       i++;
       setDisplayed(text.slice(0, i));
-      if (i < text.length) {
-        timerRef.current = setTimeout(type, CHAR_SPEED_MS);
-      }
+      if (i < text.length) timerRef.current = setTimeout(type, CHAR_SPEED_MS);
     }
     timerRef.current = setTimeout(type, CHAR_SPEED_MS);
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
@@ -63,7 +61,6 @@ function useTypewriter(text: string, key: number): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ChhathFacts() {
-  // Start with fallback facts immediately — no loading delay
   const [facts, setFacts] = useState<string[]>(
     [...FALLBACK_FACTS].sort(() => Math.random() - 0.5)
   );
@@ -73,7 +70,6 @@ export default function ChhathFacts() {
   const displayed = useTypewriter(currentFact, index);
   const isTyping = displayed.length < currentFact.length;
 
-  // Fetch API facts in background — swap in when ready
   useEffect(() => {
     fetchFacts()
       .then((data) => {
@@ -82,105 +78,39 @@ export default function ChhathFacts() {
           setIndex(0);
         }
       })
-      .catch(() => {}); // keep fallback facts on error
+      .catch(() => {});
   }, []);
 
-  // Advance to next fact every HOLD_TOTAL_MS
   useEffect(() => {
     if (facts.length === 0) return;
-    const t = setInterval(() => {
-      setIndex((i) => (i + 1) % facts.length);
-    }, HOLD_TOTAL_MS);
+    const t = setInterval(() => setIndex((i) => (i + 1) % facts.length), HOLD_TOTAL_MS);
     return () => clearInterval(t);
   }, [facts.length]);
 
   const emoji = CHHATH_EMOJIS[index % CHHATH_EMOJIS.length];
 
   return (
-    <>
-      <style>{`
-        @keyframes factCursorBlink {
-          0%, 100% { opacity: 1; }
-          50%       { opacity: 0; }
-        }
-        @keyframes factGlow {
-          0%, 100% { filter: drop-shadow(0 0 4px rgba(251,146,60,0.45)); }
-          50%       { filter: drop-shadow(0 0 10px rgba(251,146,60,0.75)); }
-        }
-        .fact-gradient-text {
-          background: linear-gradient(
-            90deg,
-            #fff7ed 0%,
-            #fdba74 25%,
-            #fb923c 55%,
-            #fde68a 85%,
-            #fff7ed 100%
-          );
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          background-clip: text;
-          animation: factGlow 3s ease-in-out infinite;
-        }
-      `}</style>
-
-      <div
-        style={{
-          maxWidth: "min(92vw, 672px)",  /* matches player max-w-2xl */
-          width: "100%",
-          padding: "6px 14px 7px",
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          overflow: "hidden",
-          /* No background — fully transparent, just the glowing text */
-        }}
-        aria-live="polite"
-        aria-label="Chhath Puja fact"
+    <div
+      className="w-full max-w-[min(92vw,520px)] px-3.5 py-1.5
+                 flex items-baseline justify-center gap-1.5
+                 overflow-hidden text-center"
+      aria-live="polite"
+      aria-label="Chhath Puja fact"
+    >
+      {/* Rotating emoji */}
+      <span
+        className="text-[13px] shrink-0 leading-[1.55]"
+        style={{ filter: "drop-shadow(0 0 5px rgba(251,146,60,0.7))" }}
+        aria-hidden="true"
       >
-        {/* Rotating Chhath emoji */}
-        <span
-          style={{
-            fontSize: "0.85rem",
-            flexShrink: 0,
-            filter: "drop-shadow(0 0 5px rgba(251,146,60,0.7))",
-            alignSelf: "flex-start",
-            paddingTop: "1px",
-          }}
-          aria-hidden="true"
-        >
-          {emoji}
-        </span>
+        {emoji}
+      </span>
 
-        {/* Text — wraps freely, no truncation */}
-        <span
-          className="fact-gradient-text"
-          style={{
-            fontSize: "0.8rem",
-            fontWeight: 700,
-            letterSpacing: "0.01em",
-            lineHeight: 1.55,
-            whiteSpace: "normal",
-            wordBreak: "break-word",
-            flex: 1,
-          }}
-        >
-          {displayed}
-          {isTyping && (
-            <span
-              style={{
-                display: "inline-block",
-                width: "2px",
-                height: "0.85em",
-                background: "rgba(251,146,60,0.9)",
-                marginLeft: "2px",
-                verticalAlign: "text-bottom",
-                animation: "factCursorBlink 0.6s step-end infinite",
-              }}
-              aria-hidden="true"
-            />
-          )}
-        </span>
-      </div>
-    </>
+      {/* Typewriter text */}
+      <span className="fact-gradient-text text-[13px] sm:text-sm font-bold tracking-[0.01em] leading-[1.55] whitespace-normal break-words">
+        {displayed}
+        {isTyping && <span className="fact-cursor" aria-hidden="true" />}
+      </span>
+    </div>
   );
 }

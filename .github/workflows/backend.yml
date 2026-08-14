@@ -1,0 +1,165 @@
+# =============================================================================
+# Chhath Radio — Backend CI/CD
+#
+# Triggers on push to main (backend/** changes) or any PR touching backend.
+# Pipeline:
+#   1. Run pytest with real PostgreSQL + Redis services
+#   2. On pass + main branch: update Render env vars + trigger deploy
+#   3. Poll backend health endpoint until healthy
+#
+# Required GitHub Secrets (set via scripts/deploy-setup.sh):
+#   RENDER_API_KEY          — Render account API key
+#   RENDER_SERVICE_ID       — Render web service ID (srv-xxxxxxxx)
+#   RENDER_DEPLOY_HOOK_URL  — Render deploy hook URL
+#   NEXT_PUBLIC_API_URL     — Backend public URL (used for health check)
+#   DATABASE_URL            — Supabase PostgreSQL connection string
+#   REDIS_URL               — Upstash Redis URL
+#   SECRET_KEY              — JWT signing secret (min 32 chars)
+#   ADMIN_EMAIL             — First admin account email
+#   ADMIN_PASSWORD          — First admin account password
+#   VAPID_PUBLIC_KEY        — Web push VAPID public key
+#   VAPID_PRIVATE_KEY       — Web push VAPID private key
+# =============================================================================
+
+name: Backend CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend.yml'
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  # ── Job 1: Run all backend tests ──────────────────────────────────────────
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: chhath_test
+          POSTGRES_USER: chhath
+          POSTGRES_PASSWORD: chhath
+        ports:
+          - '5432:5432'
+        options: >-
+          --health-cmd "pg_isready -U chhath -d chhath_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - '6379:6379'
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://chhath:chhath@localhost:5432/chhath_test
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY: ci-test-secret-key-minimum-32-characters-long
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 1440
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Run Alembic migrations on test DB
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Run pytest
+        working-directory: backend
+        run: pytest -x -q --tb=short
+
+  # ── Job 2: Deploy to Render (main branch only, after tests pass) ──────────
+  deploy:
+    name: Deploy to Render
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Update env vars on Render
+        run: |
+          echo "Updating environment variables on Render service ${{ secrets.RENDER_SERVICE_ID }}..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PUT \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/env-vars" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '[
+              {"key":"DATABASE_URL","value":"${{ secrets.DATABASE_URL }}"},
+              {"key":"REDIS_URL","value":"${{ secrets.REDIS_URL }}"},
+              {"key":"SECRET_KEY","value":"${{ secrets.SECRET_KEY }}"},
+              {"key":"ADMIN_EMAIL","value":"${{ secrets.ADMIN_EMAIL }}"},
+              {"key":"ADMIN_PASSWORD","value":"${{ secrets.ADMIN_PASSWORD }}"},
+              {"key":"VAPID_PUBLIC_KEY","value":"${{ secrets.VAPID_PUBLIC_KEY }}"},
+              {"key":"VAPID_PRIVATE_KEY","value":"${{ secrets.VAPID_PRIVATE_KEY }}"},
+              {"key":"ALGORITHM","value":"HS256"},
+              {"key":"ACCESS_TOKEN_EXPIRE_MINUTES","value":"1440"},
+              {"key":"WEB_CONCURRENCY","value":"1"},
+              {"key":"LOG_LEVEL","value":"info"}
+            ]')
+          echo "Render env-vars update: HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "WARNING: Render env-vars update returned HTTP $HTTP_CODE (may still deploy with existing vars)"
+          fi
+
+      - name: Trigger Render deploy
+        run: |
+          echo "Triggering Render deploy..."
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+          echo "Render deploy hook: HTTP $HTTP_STATUS"
+          if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "201" ]; then
+            echo "ERROR: Render deploy hook returned HTTP $HTTP_STATUS"
+            exit 1
+          fi
+          echo "✓ Render deploy triggered"
+
+      - name: Wait for backend health check
+        run: |
+          HEALTH_URL="${{ secrets.NEXT_PUBLIC_API_URL }}/api/health"
+          echo "Polling $HEALTH_URL (Render may take 2-5 min on first deploy)..."
+          MAX_ATTEMPTS=20
+          ATTEMPT=0
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || echo "000")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✓ Backend is healthy!"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "WARNING: Health check timed out — deploy may still be in progress on Render"
+          exit 0

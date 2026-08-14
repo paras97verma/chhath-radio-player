@@ -1,5 +1,18 @@
 import { defineConfig, devices } from "@playwright/test";
 
+/**
+ * Run E2E tests in headed (visible browser) or headless mode.
+ *
+ * Headless (default):
+ *   npx playwright test
+ *   make test SUITE=e2e
+ *
+ * Headed (visible browser window — useful for debugging):
+ *   HEADED=1 npx playwright test
+ *   HEADED=1 make test SUITE=e2e
+ */
+const headed = !!process.env.HEADED;
+
 export default defineConfig({
   testDir: "./__tests__/e2e",
   fullyParallel: true,
@@ -10,6 +23,9 @@ export default defineConfig({
   use: {
     baseURL: "http://localhost:3000",
     trace: "on-first-retry",
+    headless: !headed,
+    // Slow down actions in headed mode so you can follow along
+    launchOptions: headed ? { slowMo: 300 } : {},
   },
   projects: [
     {

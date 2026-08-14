@@ -22,6 +22,7 @@ set -euo pipefail
 # ── Resolve project root (one level up from local/) ──────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Default compose file — overridden by mode selection in cmd_start
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.local.yml"
 BACKEND_ENV="$PROJECT_ROOT/backend/.env"
 BACKEND_ENV_EXAMPLE="$PROJECT_ROOT/backend/.env.example"
@@ -215,9 +216,41 @@ kill_blockers() {
   success "Stale containers cleared."
 }
 
+# ── Mode selection ────────────────────────────────────────────────────────────
+select_mode() {
+  echo ""
+  echo -e "  ${BOLD}Select run mode:${NC}"
+  echo ""
+  echo -e "  ${CYAN}1)${NC} ${BOLD}Hot-reload dev${NC}   — source code mounted, instant file changes"
+  echo -e "     ${DIM}Uses local/docker-compose.local.yml (uvicorn --reload + Next.js dev server)${NC}"
+  echo ""
+  echo -e "  ${CYAN}2)${NC} ${BOLD}Production mimic${NC} — built Docker images, identical to Render/Vercel"
+  echo -e "     ${DIM}Uses docker-compose.yml (Gunicorn + Next.js standalone — no hot reload)${NC}"
+  echo ""
+  read -r -p "  Enter choice [1-2, default=1]: " mode_choice
+  echo ""
+
+  case "${mode_choice:-1}" in
+    1)
+      COMPOSE_FILE="$SCRIPT_DIR/docker-compose.local.yml"
+      info "Mode: ${BOLD}Hot-reload dev${NC} (local/docker-compose.local.yml)"
+      ;;
+    2)
+      COMPOSE_FILE="$PROJECT_ROOT/docker-compose.yml"
+      info "Mode: ${BOLD}Production mimic${NC} (docker-compose.yml)"
+      warn "NEXT_PUBLIC_* vars are baked in at build time. Edit docker-compose.yml build args if needed."
+      ;;
+    *)
+      warn "Invalid choice — defaulting to hot-reload dev."
+      COMPOSE_FILE="$SCRIPT_DIR/docker-compose.local.yml"
+      ;;
+  esac
+}
+
 cmd_start() {
   print_banner
   check_deps
+  select_mode
   setup_env
   kill_blockers
 

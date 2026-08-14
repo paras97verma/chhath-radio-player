@@ -1,22 +1,24 @@
-
-
-# ============================================================
-# Chhath Radio — Unified Docker Compose
+# =============================================================================
+# Chhath Radio — Production-Parity Docker Compose
 #
-# This single file works for BOTH local development and production.
-# Local:      docker compose up
-# Production: docker compose --env-file backend/.env.production up -d
+# This compose file builds and runs the SAME Docker images as production.
+# Use it to verify the production build locally before deploying.
+#
+# Modes (via local/run-local.sh):
+#   Production mimic  → docker compose up --build
+#   Hot-reload dev    → docker compose -f local/docker-compose.local.yml up
 #
 # Services:
-#   db       — PostgreSQL 16 (local dev; use managed DB in prod)
-#   redis    — Redis 7 (presence counter + queue cache)
-#   backend  — FastAPI via Gunicorn + Uvicorn workers
-#   frontend — Next.js (optional; can be deployed to Vercel separately)
+#   db       — PostgreSQL 16 (mirrors Supabase schema)
+#   redis    — Redis 7 (mirrors Upstash)
+#   backend  — FastAPI via Gunicorn + Uvicorn (production image)
+#   frontend — Next.js standalone (production image)
 #
 # Environment:
 #   Copy backend/.env.example → backend/.env and fill in values.
-#   In production, set DATABASE_URL to your managed PostgreSQL URL.
-# ============================================================
+#   Copy frontend/.env.example → frontend/.env.local and fill in values.
+#   NEXT_PUBLIC_* vars are passed as build args at build time.
+# =============================================================================
 
 services:
 
@@ -39,7 +41,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    # Expose only in local dev; remove port mapping in production
     ports:
       - "5432:5432"
 
@@ -63,11 +64,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    # Expose only in local dev
     ports:
       - "6379:6379"
 
-  # ── Backend (FastAPI via Gunicorn + Uvicorn) ────────────────────────────────
+  # ── Backend (FastAPI — production image, same as Render) ────────────────────
   backend:
     build:
       context: ./backend
@@ -77,11 +77,10 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      # Internal service URLs — always use Docker service names
+      # Internal Docker network URLs — override .env values for container-to-container
       DATABASE_URL: postgresql://${POSTGRES_USER:-chhath}:${POSTGRES_PASSWORD:-chhath_secret}@db:5432/${POSTGRES_DB:-chhath_radio}
       REDIS_URL: redis://redis:6379/0
-      # Gunicorn: 1 worker in local dev (set higher in prod via .env)
-      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "8000:8000"
@@ -93,29 +92,30 @@ services:
     networks:
       - chhath_net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')\""]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
-    volumes:
-      # Hot-reload in local dev: mount source code
-      # Comment this out in production for immutable image
-      - ./backend:/app:ro
 
-  # ── Frontend (Next.js) ──────────────────────────────────────────────────────
-  # Optional: deploy to Vercel instead for global CDN.
-  # To run locally: docker compose --profile frontend up
+  # ── Frontend (Next.js — production image, same as Vercel build) ─────────────
   frontend:
-    profiles: ["frontend"]
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* vars baked in at build time.
+        # For local production-mimic, these point to the local backend.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY:-}
     container_name: chhath_frontend
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_BASE: http://localhost:8000
-      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      # Runtime env vars for Next.js server (not baked in — server-side only)
+      BACKEND_URL: http://chhath_backend:8000
+      PORT: 3000
+      HOSTNAME: "0.0.0.0"
     ports:
       - "3000:3000"
     depends_on:
@@ -123,6 +123,12 @@ services:
         condition: service_healthy
     networks:
       - chhath_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 networks:
   chhath_net:

@@ -44,6 +44,13 @@ export interface ChhathFact {
   status: string;
 }
 
+export interface ChatMessage {
+  id: string;
+  name: string;
+  text: string;
+  ts: number;
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export async function fetchRadioQueue(): Promise<Song[]> {
@@ -89,6 +96,31 @@ export async function sendHeartbeat(sessionId: string): Promise<void> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId }),
   });
+}
+
+// ─── Chat API ─────────────────────────────────────────────────────────────────
+
+export async function fetchChatHistory(limit = 50): Promise<ChatMessage[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/chat/messages?limit=${limit}`, { cache: "no-store" });
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
+  }
+}
+
+export async function postChatMessage(name: string, text: string): Promise<ChatMessage> {
+  const res = await fetch(`${API_BASE}/api/chat/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, text }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to send message");
+  }
+  return res.json();
 }
 
 // ─── Admin API ────────────────────────────────────────────────────────────────

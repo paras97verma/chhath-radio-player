@@ -26,27 +26,36 @@ Usage (frontend):
 
 import asyncio
 import json
+import re
 import time
 import logging
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Request, Query
+from fastapi import APIRouter, HTTPException, Request, Query
 from fastapi.responses import StreamingResponse
 
 from app.services.presence_service import (
     record_heartbeat,
     get_listener_count,
-    remove_session,
+)
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    re.IGNORECASE,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["events"])
 
-# How often to push a listener count update (seconds)
-PUSH_INTERVAL = 5
+# How often to push a listener count update (seconds) — near-realtime.
+# Lower = faster drop detection when a listener leaves.
+PUSH_INTERVAL = 1
 
 # How often to send a keepalive heartbeat even if count hasn't changed (seconds)
-HEARTBEAT_INTERVAL = 30
+HEARTBEAT_INTERVAL = 15
+
+# Chat message queue size per connection
+CHAT_QUEUE_SIZE = 50
 
 
 async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, None]:
@@ -56,12 +65,19 @@ async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, 
     Lifecycle:
       1. Record initial heartbeat (increments listener count).
       2. Push current listener count immediately.
-      3. Loop: push count every PUSH_INTERVAL seconds.
+      3. Loop: push count every PUSH_INTERVAL seconds + relay chat messages.
       4. On disconnect (client closes tab / navigates away), remove session.
     """
+    # Import here to avoid circular import (chat.py imports from events.py indirectly)
+    from app.api.chat import register_chat_queue, unregister_chat_queue
+
     # Register this session
     record_heartbeat(session_id)
     logger.info("SSE connect: session=%s", session_id)
+
+    # Register a chat queue for this connection
+    chat_q: asyncio.Queue = asyncio.Queue(maxsize=CHAT_QUEUE_SIZE)
+    register_chat_queue(chat_q)
 
     last_count = -1
     last_heartbeat = time.time()
@@ -71,6 +87,25 @@ async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, 
             # Check if client disconnected
             if await request.is_disconnected():
                 break
+
+            # Wait for a chat message OR timeout (whichever comes first).
+            # This makes chat delivery instant: as soon as a message is put
+            # into the queue, wait_for returns immediately instead of sleeping
+            # for the full PUSH_INTERVAL.
+            try:
+                msg = await asyncio.wait_for(chat_q.get(), timeout=PUSH_INTERVAL)
+                payload = json.dumps({"type": "chat_message", **msg})
+                yield f"event: chat_message\ndata: {payload}\n\n"
+                # Drain any additional messages that arrived while we were yielding
+                while not chat_q.empty():
+                    try:
+                        extra = chat_q.get_nowait()
+                        payload = json.dumps({"type": "chat_message", **extra})
+                        yield f"event: chat_message\ndata: {payload}\n\n"
+                    except asyncio.QueueEmpty:
+                        break
+            except asyncio.TimeoutError:
+                pass  # No chat message arrived — fall through to count/heartbeat
 
             now = time.time()
 
@@ -83,22 +118,19 @@ async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, 
             # Push count if changed or on heartbeat interval
             if count != last_count or (now - last_heartbeat) >= HEARTBEAT_INTERVAL:
                 payload = json.dumps({"type": "listeners", "count": count})
-                # Named event so frontend EventSource.addEventListener("listener_count", ...)
-                # can distinguish it from other event types.
                 yield f"event: listener_count\ndata: {payload}\n\n"
                 last_count = count
                 last_heartbeat = now
-
-            # Wait before next check
-            await asyncio.sleep(PUSH_INTERVAL)
 
     except asyncio.CancelledError:
         pass
     except Exception as exc:
         logger.error("SSE stream error for session=%s: %s", session_id, exc)
     finally:
-        # Clean up: decrement listener count
-        remove_session(session_id)
+        # Do NOT call remove_session here — the same session_id may be open in
+        # another tab. Let the TTL (SESSION_TTL_SECONDS) handle natural expiry.
+        # The session will expire within SESSION_TTL_SECONDS of the last heartbeat.
+        unregister_chat_queue(chat_q)
         logger.info("SSE disconnect: session=%s", session_id)
 
 
@@ -113,8 +145,10 @@ async def _sse_stream(request: Request, session_id: str) -> AsyncGenerator[str, 
 )
 async def sse_events(
     request: Request,
-    session_id: str = Query(..., description="Unique anonymous session ID (UUID)"),
+    session_id: str = Query(..., min_length=36, max_length=36, description="Unique anonymous session ID (UUID v4)"),
 ) -> StreamingResponse:
+    if not _UUID_RE.match(session_id):
+        raise HTTPException(status_code=422, detail="session_id must be a valid UUID")
     return StreamingResponse(
         _sse_stream(request, session_id),
         media_type="text/event-stream",

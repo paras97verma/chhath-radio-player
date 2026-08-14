@@ -290,3 +290,93 @@ class TestGetRadioQueue:
         result = SongService.get_radio_queue(db)
 
         assert result == songs
+
+    def test_cache_hit_returns_cached_data_without_db_query(self):
+        """When _cache_get returns data, DB is not queried."""
+        db = make_mock_db()
+        cached_data = [
+            {"id": str(uuid.uuid4()), "title": "Cached Song", "artist": "Artist",
+             "youtube_video_id": "abc123", "youtube_url": None, "category": None,
+             "sort_order": 0, "enabled": True},
+        ]
+
+        with patch("app.services.song_service._cache_get", return_value=cached_data):
+            result = SongService.get_radio_queue(db)
+
+        assert result == cached_data
+        db.scalars.assert_not_called()
+
+    def test_cache_miss_queries_db_and_populates_cache(self):
+        """When _cache_get returns None, DB is queried and _cache_set is called."""
+        db = make_mock_db()
+        songs = [make_song_model("Song A"), make_song_model("Song B")]
+        db.scalars.return_value.all.return_value = songs
+
+        with patch("app.services.song_service._cache_get", return_value=None), \
+             patch("app.services.song_service._cache_set") as mock_cache_set:
+            result = SongService.get_radio_queue(db)
+
+        assert result == songs
+        mock_cache_set.assert_called_once()
+        # Verify the cache key and TTL
+        from app.services.song_service import QUEUE_CACHE_KEY, QUEUE_CACHE_TTL
+        call_args = mock_cache_set.call_args[0]
+        assert call_args[0] == QUEUE_CACHE_KEY
+        assert call_args[2] == QUEUE_CACHE_TTL
+
+    def test_cache_unavailable_falls_through_to_db(self):
+        """When Redis is None, _cache_get returns None and DB is used transparently."""
+        db = make_mock_db()
+        songs = [make_song_model("Song A")]
+        db.scalars.return_value.all.return_value = songs
+
+        # _cache_get returns None when Redis is unavailable
+        with patch("app.services.song_service._cache_get", return_value=None), \
+             patch("app.services.song_service._cache_set"):
+            result = SongService.get_radio_queue(db)
+
+        assert result == songs
+        db.scalars.assert_called_once()
+
+
+# ─── Cache invalidation ───────────────────────────────────────────────────────
+
+class TestCacheInvalidation:
+    def test_create_invalidates_cache(self):
+        """Cache is invalidated after song creation."""
+        db = make_mock_db()
+        data = SongCreate(
+            title="New Song",
+            artist="Artist",
+            youtube_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            sort_order=1,
+        )
+
+        with patch("app.services.song_service._cache_delete") as mock_delete:
+            SongService.create(db, data)
+
+        from app.services.song_service import QUEUE_CACHE_KEY
+        mock_delete.assert_called_once_with(QUEUE_CACHE_KEY)
+
+    def test_update_invalidates_cache(self):
+        """Cache is invalidated after song update."""
+        db = make_mock_db()
+        song = make_song_model()
+        update_data = SongUpdate(title="Updated Title")
+
+        with patch("app.services.song_service._cache_delete") as mock_delete:
+            SongService.update(db, song, update_data)
+
+        from app.services.song_service import QUEUE_CACHE_KEY
+        mock_delete.assert_called_once_with(QUEUE_CACHE_KEY)
+
+    def test_delete_invalidates_cache(self):
+        """Cache is invalidated after song deletion."""
+        db = make_mock_db()
+        song = make_song_model()
+
+        with patch("app.services.song_service._cache_delete") as mock_delete:
+            SongService.delete(db, song)
+
+        from app.services.song_service import QUEUE_CACHE_KEY
+        mock_delete.assert_called_once_with(QUEUE_CACHE_KEY)

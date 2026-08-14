@@ -1,258 +1,465 @@
-# CHHATH RADIO — Comprehensive Implementation & Engineering Plan
+# Chhath Radio — Test Suite Rewrite & Runner Plan
 
-This document is the definitive, step-by-step blueprint for building **CHHATH RADIO**. It is designed to be extremely verbose, precise, and beginner-friendly, ensuring that any developer—regardless of experience—can follow it to create a bug-free, production-grade application.
+## Overview
 
-**Every rule in this document must be treated as a strict technical requirement.**
-
----
-
-## 1. Product Vision & Strict Constraints
-
-**CHHATH RADIO** (छठ के गीत, बिना रुके) is a premium, immersive web experience for continuously listening to a curated collection of Chhath songs. It feels like standing on a digital Chhath ghat where the music never stops.
-
-### 🚫 The Absolute Golden Rules
-1. **Official YouTube Embed ONLY**: The music is played through the official YouTube IFrame Player API.
-2. **NO Audio Downloading**: Do not use `yt-dlp`, scraping, proxying, or any method to download or extract the raw audio/video files.
-3. **NO Ad-Blocking**: The app must not attempt to block, hide, or circumvent YouTube advertisements. If YouTube serves an ad, it plays normally.
-4. **NO Fake Players**: The YouTube player must remain a genuine, visible embedded player. Do not cover it with opaque overlays or build custom buttons that pretend to be the actual YouTube controls.
-5. **Single Player Rule**: There is only ever **one** YouTube iframe on the page. You do not create a new iframe for every song; you instruct the existing iframe to load a new video ID.
-6. **No Public Login**: Regular visitors do not need accounts. The only login system is for the site administrator.
+The existing tests are **stale and broken** — they reference APIs that no longer exist in the current codebase (e.g. `PRESENCE_KEY_PREFIX`, `get_redis_client`, `scan`-based patterns in `presence_service`). This plan covers a complete rewrite of all test suites to match the current app, plus a unified test runner script and Makefile updates.
 
 ---
 
-## 2. Technical Architecture & Tech Stack
+## What's Broken Today
 
-The application uses a modern, modular, full-stack architecture.
-
-### Frontend
-*   **Framework**: Next.js (React) using the App Router.
-*   **Language**: Strict TypeScript.
-*   **Styling**: Tailwind CSS.
-*   **3D Engine**: Three.js integrated via React Three Fiber (R3F) and Drei.
-*   **Animation**: Framer Motion (for UI transitions).
-
-### Backend
-*   **Framework**: FastAPI (Python).
-*   **Validation**: Pydantic v2.
-*   **Database ORM**: SQLAlchemy 2.x.
-*   **Migrations**: Alembic.
-*   **Database**: PostgreSQL (Source of truth).
-*   **Realtime/Cache**: Redis (for tracking active listeners).
-
-### Testing
-*   **Frontend**: Vitest, React Testing Library.
-*   **E2E (Browser)**: Playwright (Chromium, Firefox, WebKit).
-*   **Backend**: Pytest with an isolated PostgreSQL test database.
+| File | Problem |
+|---|---|
+| `backend/tests/unit/test_presence_service.py` | Imports `PRESENCE_KEY_PREFIX` and `get_redis_client` — neither exists. Uses `scan`-based mock; current service uses `zadd`/`zcount` on a sorted set. |
+| `backend/tests/unit/test_song_service.py` | `TestGetRadioQueue` doesn't account for Redis cache layer (`_cache_get`/`_cache_set`). |
+| `backend/tests/unit/test_schemas_song.py` | Needs verification against current `SongCreate`/`SongUpdate` schemas. |
+| `backend/tests/unit/test_security.py` | Needs verification against current `auth/security.py`. |
+| `backend/tests/integration/api/test_songs_queue.py` | References `/api/songs` — need to confirm this route still exists (it's in `songs.py`). |
+| `frontend/__tests__/` | No tests for `radio-store`, `api.ts`, or `user-store`. Playwright E2E tests need updating for current UI. |
+| `qa-tests/app/backend/unit/test_presence_service.py` | Same stale imports as above. |
 
 ---
 
-## Phase 1: Project Initialization & Directory Structure
+## Architecture of the New Test Suite
 
-**Goal:** Set up the foundational skeleton for the frontend and backend.
+```mermaid
+graph TD
+    A[make test SUITE=backend] --> B[Backend Unit Tests]
+    A2[make test SUITE=frontend] --> C[Frontend Unit Tests]
+    A2 --> D[Frontend E2E - Playwright]
+    A3[make test] --> B
+    A3 --> C
+    A3 --> D
 
-### 1.1 Backend Setup (`/backend`)
-1.  Initialize a Python virtual environment.
-2.  Install dependencies: `fastapi`, `uvicorn`, `sqlalchemy`, `alembic`, `psycopg2-binary`, `pydantic`, `pytest`, `pyjwt`, `passlib`.
-3.  Create the following folder structure:
-    *   `app/api/`: Route handlers (Controllers).
-    *   `app/models/`: SQLAlchemy database models.
-    *   `app/schemas/`: Pydantic validation schemas.
-    *   `app/services/`: Business logic.
-    *   `app/core/`: Settings and configuration.
-    *   `app/db/`: Database connection and session management.
-4.  Configure Alembic (`alembic init alembic`) to point to the `app.models` metadata.
+    B --> B1[test_presence_service.py - zadd/zcount mocks]
+    B --> B2[test_song_service.py - cache-aware]
+    B --> B3[test_chat_api.py - NEW]
+    B --> B4[test_admin_auth.py - integration]
+    B --> B5[test_songs_queue.py - integration]
+    B --> B6[test_health.py - NEW]
 
-### 1.2 Frontend Setup (`/frontend` or root)
-1.  Run `npx create-next-app@latest` (select TypeScript, Tailwind, App Router).
-2.  Create the following structure:
-    *   `src/app/`: Next.js pages and layouts.
-    *   `src/components/radio/`: UI specific to the radio (Player, Queue).
-    *   `src/components/ghat/`: 3D React Three Fiber components.
-    *   `src/components/ui/`: Reusable Tailwind components (Buttons, Panels).
-    *   `src/lib/`: API clients, utility functions, Time-of-Day engine logic.
+    C --> C1[radio-store.test.ts - rewritten]
+    C --> C2[youtube-adapter.test.ts - existing, verify]
+    C --> C3[api.test.ts - NEW]
+    C --> C4[time-of-day.test.ts - existing, verify]
 
-### 1.3 Local Development Docker
-1.  Create a `docker-compose.yml` at the project root.
-2.  Define a `postgres` service (image: `postgres:15-alpine`).
-3.  Define a `redis` service (image: `redis:alpine`).
-4.  *For Newbies:* This means developers only need to run `docker compose up -d` to have a fully working database and cache on their laptop.
-
----
-
-## Phase 2: Database Schema & Core API
-
-**Goal:** Build the authoritative PostgreSQL database and the REST APIs to manage and retrieve data.
-
-### 2.1 Database Models (SQLAlchemy)
-Create these exact tables:
-*   **songs**: `id` (UUID), `title` (String), `artist` (String), `youtube_video_id` (String, required), `youtube_url` (Text), `category` (String), `enabled` (Boolean, default True), `sort_order` (Integer).
-*   **channels**: `id` (UUID), `name` (String), `slug` (String, unique), `enabled` (Boolean).
-*   **channel_songs**: A many-to-many relationship table linking `channels.id` and `songs.id` with a `sort_order`.
-*   **festival_days**: `id` (UUID), `date` (Date), `state` (String e.g., 'SANDHYA_ARGHYA'), `title` (String).
-*   **site_settings**: Key-value pairs for global config.
-*   **admins**: `id` (UUID), `email` (String), `password_hash` (String).
-
-### 2.2 Public REST API (FastAPI)
-These endpoints do not require authentication:
-*   `GET /api/songs`: Returns a list of *only enabled* songs.
-*   `GET /api/channels/{slug}`: Returns channel metadata and its curated list of enabled songs.
-*   `GET /api/radio/queue`: Returns the deterministic queue of songs for the default radio.
-*   `GET /api/festival/current`: Checks today's date against `festival_days` and returns the active festival state (if any).
-
-### 2.3 Secure Admin REST API
-These endpoints require a JWT token in the `Authorization: Bearer <token>` header:
-*   `POST /api/admin/login`: Accepts email/password, returns JWT.
-*   `POST /api/admin/songs`: Creates a new song. **Logic Rule:** It must parse the provided YouTube URL to extract just the 11-character `youtube_video_id`.
-*   `PATCH /api/admin/songs/{id}` & `DELETE /api/admin/songs/{id}`.
-*   *Validation Rule:* Never trust frontend input. Validate URLs, ensure IDs are UUIDs, and sanitize text using Pydantic.
-
----
-
-## Phase 3: The YouTube Player Adapter (The Engine)
-
-**Goal:** Create a clean, decoupled bridge between our React app and the official YouTube IFrame API.
-
-### 3.1 The Adapter Interface
-To make our code testable, we don't hardcode YouTube logic directly into UI components. We define a TypeScript interface:
-```typescript
-interface YouTubePlayerAdapter {
-  initialize(container: HTMLElement): Promise<void>;
-  loadVideo(videoId: string): Promise<void>;
-  play(): Promise<void>;
-  pause(): Promise<void>;
-  getState(): string; // e.g., 'PLAYING', 'ENDED'
-  onStateChange(callback: (state: string) => void): () => void;
-  destroy(): void;
-}
+    D --> D1[radio-page.spec.ts - player loads]
+    D --> D2[chat.spec.ts - NEW send/receive]
+    D --> D3[presence.spec.ts - NEW listener count]
+    D --> D4[admin.spec.ts - NEW login flow]
 ```
 
-### 3.2 Production Implementation (`YouTubeIFramePlayerAdapter`)
-1. Dynamically injects the `https://www.youtube.com/iframe_api` script.
-2. Creates a `new window.YT.Player`.
-3. Maps YouTube's obscure state numbers (e.g., `0` for Ended, `1` for Playing, `3` for Buffering) into readable strings (`ENDED`, `PLAYING`, `BUFFERING`).
-4. **Crucial Rule:** The `destroy()` method must remove event listeners to prevent memory leaks in React.
+---
 
-### 3.3 Test Implementation (`MockYouTubePlayerAdapter`)
-1. A fake class used *only* during automated testing.
-2. It allows our tests to say `mockAdapter.simulateSongEnd()` without actually connecting to YouTube.
+## 1. Backend Tests (Python / pytest)
+
+### 1.1 Rewritten: `test_presence_service.py`
+
+**Location:** `backend/tests/unit/test_presence_service.py`
+
+The current `presence_service.py` uses:
+- `COUNTER_KEY = "chhath:listeners:count"` (integer counter)
+- `SESSIONS_KEY = "chhath:listeners:sessions"` (sorted set, score = expiry timestamp)
+- `zadd(SESSIONS_KEY, {session_id: expiry}, nx=True)` — returns 1 for new, 0 for existing
+- `zcount(SESSIONS_KEY, now, "+inf")` — for `get_listener_count()`
+- `zrem(SESSIONS_KEY, session_id)` — for `remove_session()`
+- `zremrangebyscore(SESSIONS_KEY, "-inf", now)` — for `_prune_expired()`
+- In-memory fallback via `_mem_sessions` dict
+
+**Test cases to write:**
+
+```
+TestRecordHeartbeat
+  - new session: zadd returns 1 → incr is called
+  - existing session: zadd returns 0 → incr NOT called, zadd called again to refresh score
+  - redis error: falls back to _mem_heartbeat (session added to _mem_sessions)
+  - redis unavailable (client=None): uses _mem_heartbeat
+
+TestGetListenerCount
+  - redis available: calls zcount(SESSIONS_KEY, now, "+inf") and returns result
+  - redis unavailable: falls back to _mem_count (filters expired sessions)
+  - redis error: falls back to _mem_count
+
+TestRemoveSession
+  - session exists: zrem returns 1 → decr called
+  - counter goes negative: set(COUNTER_KEY, 0) called
+  - session not found: zrem returns 0 → decr NOT called
+  - redis unavailable: pops from _mem_sessions
+
+TestPruneExpired
+  - removes expired sessions and decrements counter by count removed
+  - counter goes negative: clamped to 0
+
+TestMemoryFallback
+  - _mem_count prunes expired sessions automatically
+  - _mem_heartbeat sets correct expiry (time.time() + SESSION_TTL_SECONDS)
+```
+
+### 1.2 Rewritten: `test_song_service.py`
+
+**Location:** `backend/tests/unit/test_song_service.py`
+
+The current `song_service.py` has a Redis cache layer (`_cache_get`/`_cache_set`/`_cache_delete`). The existing test for `get_radio_queue` doesn't mock the cache.
+
+**New/updated test cases:**
+
+```
+TestGetRadioQueue (updated)
+  - cache miss: _cache_get returns None → DB queried → _cache_set called
+  - cache hit: _cache_get returns list → DB NOT queried → cached dicts returned
+  - cache unavailable (redis None): falls through to DB transparently
+
+TestCreate (existing tests are good, add:)
+  - cache is invalidated after create (_cache_delete called with QUEUE_CACHE_KEY)
+
+TestUpdate (existing tests are good, add:)
+  - cache is invalidated after update
+
+TestDelete (existing tests are good, add:)
+  - cache is invalidated after delete
+```
+
+### 1.3 New: `test_chat_api.py`
+
+**Location:** `backend/tests/unit/test_chat_api.py`
+
+Tests for `app/api/chat.py`:
+
+```
+TestStoreMessage
+  - stores to Redis sorted set with correct score (unix timestamp)
+  - prunes messages older than MESSAGE_TTL_SECONDS
+  - enforces MAX_MESSAGES cap via zremrangebyrank
+  - falls back to _memory_messages when Redis unavailable
+
+TestLoadMessages
+  - loads from Redis zrangebyscore with cutoff = now - TTL
+  - returns oldest-first, limited to `limit` param
+  - falls back to _memory_messages when Redis unavailable
+
+TestRateLimit
+  - first message from IP: allowed
+  - second message within 3s: 429 returned
+  - message after 3s: allowed
+  - rate limit dict cleanup when > 10,000 entries
+
+TestSendMessageEndpoint (integration via TestClient)
+  - POST /api/chat/messages with valid body → 201, returns ChatMessageOut
+  - empty name → random bhakti name assigned
+  - provided name → used as-is
+  - text too long (>200 chars) → 422
+  - rate limited → 429
+
+TestGetMessagesEndpoint (integration via TestClient)
+  - GET /api/chat/messages → 200, list of ChatMessageOut
+  - limit param respected (max capped at MAX_MESSAGES)
+
+TestBroadcast
+  - broadcast_message pushes to all registered queues
+  - full queue is removed from registry (dead queue cleanup)
+```
+
+### 1.4 New: `test_health.py`
+
+**Location:** `backend/tests/integration/api/test_health.py`
+
+```
+- GET /api/health → 200, {"status": "ok", "service": "chhath-radio-api"}
+```
+
+### 1.5 New: `test_presence_api.py`
+
+**Location:** `backend/tests/integration/api/test_presence_api.py`
+
+```
+TestHeartbeatEndpoint
+  - POST /api/presence/heartbeat with valid session_id → 204
+  - missing session_id → 422
+
+TestListenersEndpoint
+  - GET /api/presence/listeners → 200, {"count": <int>}
+  - count is non-negative integer
+```
+
+### 1.6 Existing (verify & keep): `test_admin_auth.py`, `test_songs_queue.py`
+
+These integration tests are well-written and match the current API. Keep them as-is but move them into the canonical `backend/tests/` tree (they currently also exist in `qa-tests/app/backend/`).
 
 ---
 
-## Phase 4: The Radio Queue Controller
+## 2. Frontend Tests (TypeScript / Vitest)
 
-**Goal:** Manage the queue of songs and handle automatic progression.
+### 2.1 Rewritten: `radio-store.test.ts`
 
-### 4.1 State Management (React Context / Zustand)
-We need a central `RadioController` that tracks:
-*   `queue`: Array of song objects.
-*   `currentIndex`: Number.
-*   `playState`: 'IDLE' | 'PLAYING' | 'PAUSED' | 'BUFFERING' | 'ERROR'.
+**Location:** `frontend/__tests__/unit/radio-store.test.ts`
 
-### 4.2 The Queue Algorithm
-When the `YouTubePlayerAdapter` emits an `ENDED` event:
-1.  Check if `currentIndex + 1` exists in the queue.
-2.  If it exists, update `currentIndex`.
-3.  Tell the adapter to `loadVideo(queue[currentIndex].youtube_video_id)`.
-4.  Update the "Now Playing" UI metadata.
+Uses `MockYouTubePlayerAdapter` from `youtube-adapter.ts`.
 
-### 4.3 Error Recovery
-If a YouTube video is private, deleted, or blocks embedding, YouTube emits an `ERROR` event.
-*   **Rule:** The app must NOT crash.
-*   **Action:** Log the error, mark the song as 'skipped', immediately advance `currentIndex`, and attempt to load the next song.
+```
+TestLoadQueue
+  - sets queue, currentIndex=0, playState=IDLE
+  - generates new radioSessionId on each load
+  - subscribes to adapter state changes
 
-### 4.4 Session Guard (Race Condition Prevention)
-When a user clicks "Next" rapidly, or switches channels, we must generate a random `radioSessionId`. Old YouTube events tied to a previous session must be ignored so they don't accidentally skip songs in the new queue.
+TestCurrentSong
+  - returns queue[currentIndex]
+  - returns null when queue is empty
 
----
+TestUpNextSongs
+  - returns next N songs after currentIndex
+  - returns empty array at end of queue
 
-## Phase 5: The 3D Ghat Environment & Time-of-Day
+TestStartPlayback
+  - when adapter state is PAUSED: calls adapter.play(), does NOT reload video
+  - when adapter state is CUED: calls adapter.play()
+  - otherwise: calls adapter.loadVideo(currentSong.youtube_video_id), sets BUFFERING
+  - no-op when queue is empty
 
-**Goal:** Build the immersive visual identity that makes Chhath Radio unique.
+TestPausePlayback
+  - calls adapter.pause(), sets playState=PAUSED
 
-### 5.1 The `TimeOfDayEngine` (TypeScript Utility)
-A function that takes the user's local browser time and returns a state:
-*   `04:30–06:30` -> `DAWN` (Usha Arghya mood: dark blue, orange horizon).
-*   `06:30–11:00` -> `MORNING` (Fresh, bright golden sun).
-*   `11:00–16:30` -> `AFTERNOON` (Clear sky, bright river).
-*   `16:30–19:00` -> `SUNSET` (Sandhya Arghya mood: deep orange, long reflections).
-*   `19:00–04:30` -> `NIGHT` (Deep navy, moon, glowing diyas).
+TestNextSong
+  - advances currentIndex, calls adapter.loadVideo(nextSong.youtube_video_id)
+  - at end of queue: wraps to index 0, sets playState=IDLE
 
-### 5.2 React Three Fiber (`GhatScene`)
-1.  **River:** A wide plane geometry with a custom shader (or Drei's `Water` component) to simulate slow, calming ripples.
-2.  **Sun/Moon:** A glowing sphere positioned on the horizon based on the time of day.
-3.  **Diyas:** 3 to 10 small floating objects emitting warm point lights.
-4.  **Ghat Silhouette:** A minimal, low-poly stepped geometry in the background. Do not use high-res realistic architectural models.
+TestHandleAdapterStateChange
+  - PLAYING → playState=PLAYING
+  - PAUSED → playState=PAUSED
+  - BUFFERING → playState=BUFFERING
+  - ENDED → auto-advances to next song (calls loadVideo)
+  - ENDED at last song → wraps to index 0, playState=IDLE
+  - ERROR → skips broken song, loads next
+  - ERROR at last song → playState=ERROR
+  - stale session ID → event ignored (session guard)
+```
 
-### 5.3 Interpolation & Performance
-*   Colors and fog density must transition *smoothly* using `THREE.MathUtils.lerp()`. Do not snap abruptly from Day to Night.
-*   **Accessibility Rule:** If `window.matchMedia('(prefers-reduced-motion: reduce)')` is true, disable camera parallax and slow down river waves.
+### 2.2 New: `api.test.ts`
 
----
+**Location:** `frontend/__tests__/unit/api.test.ts`
 
-## Phase 6: Public Presence (Real-time Listener Count)
+Uses `vi.stubGlobal('fetch', ...)` to mock fetch.
 
-**Goal:** Show a live count of how many people are listening right now, without requiring login.
+```
+TestFetchRadioQueue
+  - successful fetch → returns Song[]
+  - non-ok response → throws Error
 
-### 6.1 The Logic
-1.  When a user opens the site, generate a random UUID (`anonymous_session_id`) in `localStorage`.
-2.  Every 15 seconds, the frontend sends a `POST /api/presence/heartbeat` request containing this ID.
-3.  The FastAPI backend stores this ID in **Redis** with a Time-To-Live (TTL) of 45 seconds.
-4.  If the user closes the tab, the heartbeat stops, and Redis automatically deletes the ID after 45 seconds.
+TestFetchListenerCount
+  - successful fetch → returns count number
+  - non-ok response → returns 0
 
-### 6.2 The Display
-*   The frontend polls `GET /api/presence/listeners` (or uses a WebSocket) to get the total count of keys in Redis.
-*   Displays: `● 1,284 listening now` in the UI.
+TestSendHeartbeat
+  - calls POST /api/presence/heartbeat with correct body
 
----
+TestFetchChatHistory
+  - successful fetch → returns ChatMessage[]
+  - non-ok response → returns []
+  - network error → returns []
 
-## Phase 7: UI Assembly & Polish
+TestPostChatMessage
+  - successful POST → returns ChatMessage
+  - non-ok response → throws Error with detail from response
 
-**Goal:** Construct the HTML/Tailwind interface that sits on top of the 3D scene.
+TestAdminLogin
+  - successful POST → returns {access_token, token_type}
+  - non-ok response → throws "Invalid credentials"
+```
 
-### 7.1 Visual Hierarchy
-*   **Z-Index 0:** The 3D Canvas (Background).
-*   **Z-Index 10:** Translucent UI panels (Smoked glass effect: low opacity background, subtle backdrop blur, thin 1px border).
-*   **Z-Index 20:** The YouTube Player.
+### 2.3 Existing (verify & keep): `youtube-adapter.test.ts`, `time-of-day.test.ts`, `time-of-day-lerp.test.ts`
 
-### 7.2 Core Components
-*   **Now Playing Panel:** Displays song title and artist. Must fade smoothly when songs change.
-*   **Up Next Panel:** Shows the next 3 songs in the queue.
-*   **Play/Pause Controls:** A prominent "PLAY RADIO" button. *Note on Mobile Autoplay:* Mobile browsers prevent audio from auto-starting without a physical screen tap. The user MUST tap this button to start the experience.
-*   **Ghat Mode:** A button that fades out all UI elements except the YouTube player and the Now Playing text, intended for viewing on a TV.
-*   **Chhath Facts:** A side panel toggled by pressing the `F` key, displaying curated cultural facts.
-
----
-
-## Phase 8: Admin Dashboard UI
-
-**Goal:** A protected web interface for the owner to manage the radio.
-
-1.  Create a route at `/admin`.
-2.  Implement a login screen that stores the JWT in an `HttpOnly` cookie or secure storage.
-3.  **Song Catalog UI:** A data table listing all songs.
-4.  **Add Song Form:** 
-    *   Input: "Paste YouTube URL".
-    *   Action: Frontend validates the URL, extracts the ID, and fetches the thumbnail for preview.
-5.  **Toggles:** A simple switch to quickly mark a song as "Enabled" or "Disabled" (instantly removing it from the public queue if a video breaks).
+These test pure logic and should still pass. Verify they run cleanly.
 
 ---
 
-## Phase 9: Quality Assurance & E2E Testing
+## 3. Frontend E2E Tests (Playwright)
 
-**Goal:** Ensure the app never breaks in production.
+**Location:** `frontend/__tests__/e2e/`
 
-### 9.1 Backend Testing (Pytest)
-*   Write tests to ensure `/api/admin/*` endpoints reject requests without a valid token (401 Unauthorized).
-*   Write tests to ensure the queue logic returns songs in the correct `sort_order`.
+Playwright is already configured in [`playwright.config.ts`](frontend/playwright.config.ts) pointing at `http://localhost:3000`. The existing `radio.spec.ts` needs updating and new specs need to be added.
 
-### 9.2 Frontend & E2E Testing (Playwright)
-*   Write a script that boots the app, clicks "Play", uses the `MockYouTubePlayerAdapter` to emit an `ENDED` event, and verifies that the UI updates to the next song automatically.
-*   Test the app at different viewport sizes (Mobile `390x844`, Desktop `1440x900`).
-*   Test that clicking the "Channel" button resets the queue correctly.
+### 3.1 Rewritten: `radio.spec.ts`
 
-### 9.3 Accessibility (Axe-core)
-*   Ensure all buttons have `aria-labels`.
-*   Ensure the "Now Playing" area has an `aria-live` region so screen readers announce song changes.
+```
+- page loads without JS errors
+- page title contains "Chhath Radio" or equivalent
+- play button is visible
+- clicking play button changes UI state (buffering/playing indicator)
+- song title is displayed after playback starts
+- listener count element is visible on page
+```
+
+### 3.2 New: `chat.spec.ts`
+
+```
+- chat FAB button is visible
+- clicking FAB opens the chat drawer
+- chat drawer has a text input and send button
+- typing a message and clicking send shows the message in the chat list
+- sending a second message within 3 seconds shows rate limit feedback
+- closing the drawer hides it
+```
+
+### 3.3 New: `presence.spec.ts`
+
+```
+- listener count is displayed (number >= 1 after page load)
+- listener count updates after heartbeat interval (mock or wait)
+```
+
+### 3.4 New: `admin.spec.ts`
+
+```
+- GET /admin redirects to login if not authenticated
+- login form accepts email + password
+- valid credentials → redirected to admin dashboard
+- invalid credentials → error message shown
+- admin dashboard lists songs
+- admin can toggle a song's enabled state
+```
 
 ---
-*End of Plan. Execution should strictly follow these phases, completing tests for each before moving to the next.*
+
+## 4. Unified Test Runner Script
+
+**Location:** `scripts/test.sh` (new file, replaces the role of `qa-tests/run.sh` for the canonical test suites)
+
+The script accepts an optional `SUITE` parameter:
+
+```bash
+# Run all tests (default when no param)
+bash scripts/test.sh
+
+# Run only backend tests
+bash scripts/test.sh backend
+
+# Run only frontend tests (unit + E2E)
+bash scripts/test.sh frontend
+
+# Run only frontend unit tests
+bash scripts/test.sh frontend-unit
+
+# Run only E2E tests
+bash scripts/test.sh e2e
+```
+
+**Script logic:**
+
+```
+parse $1 (optional):
+  ""            → run_backend && run_frontend_unit && run_e2e
+  "backend"     → run_backend
+  "frontend"    → run_frontend_unit && run_e2e
+  "frontend-unit" → run_frontend_unit
+  "e2e"         → run_e2e
+  *             → print usage, exit 1
+
+run_backend():
+  cd backend
+  python -m pytest tests/ -v --tb=short --color=yes
+  return exit code
+
+run_frontend_unit():
+  cd frontend
+  npx vitest run --reporter=verbose
+  return exit code
+
+run_e2e():
+  cd frontend
+  npx playwright test --reporter=list
+  return exit code
+
+print summary of pass/fail per suite
+exit 1 if any suite failed
+```
+
+---
+
+## 5. Makefile Updates
+
+The Makefile already has `test-backend`, `test-frontend`, `test-e2e` targets but they all delegate to `qa-tests/run.sh`. We'll add a new canonical `test` target that uses `scripts/test.sh` with the `SUITE` parameter:
+
+```makefile
+# New canonical test target
+# Usage:
+#   make test              → runs all suites (backend + frontend unit + E2E)
+#   make test SUITE=backend
+#   make test SUITE=frontend
+#   make test SUITE=frontend-unit
+#   make test SUITE=e2e
+test:
+	@bash scripts/test.sh $(SUITE)
+```
+
+The existing `test-backend`, `test-frontend-unit`, `test-e2e` targets become thin wrappers:
+
+```makefile
+test-backend:
+	@bash scripts/test.sh backend
+
+test-frontend-unit:
+	@bash scripts/test.sh frontend-unit
+
+test-e2e:
+	@bash scripts/test.sh e2e
+```
+
+---
+
+## 6. File Change Summary
+
+### New files to create
+
+| File | Purpose |
+|---|---|
+| `backend/tests/unit/test_chat_api.py` | Unit + integration tests for chat API |
+| `backend/tests/unit/test_presence_api.py` | Integration tests for presence endpoints |
+| `backend/tests/integration/api/test_health.py` | Health endpoint test |
+| `frontend/__tests__/unit/api.test.ts` | Unit tests for `lib/api.ts` |
+| `frontend/__tests__/e2e/chat.spec.ts` | E2E tests for live chat |
+| `frontend/__tests__/e2e/presence.spec.ts` | E2E tests for listener count |
+| `frontend/__tests__/e2e/admin.spec.ts` | E2E tests for admin panel |
+| `scripts/test.sh` | Unified test runner |
+
+### Files to rewrite
+
+| File | Reason |
+|---|---|
+| `backend/tests/unit/test_presence_service.py` | Stale API (PRESENCE_KEY_PREFIX, scan, get_redis_client) |
+| `backend/tests/unit/test_song_service.py` | Missing cache layer tests |
+| `frontend/__tests__/e2e/radio.spec.ts` | Needs updating for current UI |
+| `frontend/__tests__/unit/radio-store.test.ts` | Needs full coverage of current store |
+
+### Files to update
+
+| File | Change |
+|---|---|
+| `Makefile` | Add `SUITE` param to `test` target; update `test-backend`, `test-frontend-unit`, `test-e2e` |
+| `frontend/package.json` | Add `"test:e2e": "playwright test"` script |
+
+### Files to keep as-is (already correct)
+
+- `backend/tests/conftest.py`
+- `backend/tests/integration/api/test_admin_auth.py`
+- `backend/tests/integration/api/test_songs_queue.py`
+- `backend/tests/unit/test_schemas_song.py` (verify first)
+- `backend/tests/unit/test_security.py` (verify first)
+- `frontend/__tests__/unit/youtube-adapter.test.ts`
+- `frontend/__tests__/unit/time-of-day.test.ts`
+- `frontend/__tests__/unit/time-of-day-lerp.test.ts`
+
+---
+
+## 7. Implementation Order
+
+1. Rewrite `backend/tests/unit/test_presence_service.py` (highest priority — currently broken)
+2. Update `backend/tests/unit/test_song_service.py` (add cache tests)
+3. Create `backend/tests/unit/test_chat_api.py`
+4. Create `backend/tests/integration/api/test_health.py`
+5. Create `backend/tests/integration/api/test_presence_api.py`
+6. Rewrite `frontend/__tests__/unit/radio-store.test.ts`
+7. Create `frontend/__tests__/unit/api.test.ts`
+8. Rewrite `frontend/__tests__/e2e/radio.spec.ts`
+9. Create `frontend/__tests__/e2e/chat.spec.ts`
+10. Create `frontend/__tests__/e2e/admin.spec.ts`
+11. Create `scripts/test.sh`
+12. Update `Makefile`

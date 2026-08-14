@@ -5,6 +5,9 @@
  *
  * All styles are inline so html-to-image captures them faithfully.
  * Reads current song + listener count from the radio store.
+ *
+ * Design: glassmorphism Now Playing card, large album art, waveform bars,
+ * rich layered background, dark QR pill, social proof strip.
  */
 
 import React from "react";
@@ -21,6 +24,19 @@ export interface ShareCardProps {
 const CARD_W = 540;
 const CARD_H = 960;
 
+// Waveform bar heights (px) — animated in live preview, static in image export
+const WAVEFORM_BARS = [14, 22, 36, 28, 44, 32, 18, 40, 26, 48, 34, 20, 42, 30, 16, 38, 24, 46, 28, 36, 20, 44, 32, 18, 40];
+
+// CSS keyframes for animated waveform bars (injected via <style> tag)
+const WAVEFORM_KEYFRAMES = WAVEFORM_BARS.map(
+  (h, i) => `
+@keyframes waveBar${i} {
+  0%   { height: ${Math.max(6, h * 0.35)}px; }
+  50%  { height: ${h}px; }
+  100% { height: ${Math.max(6, h * 0.35)}px; }
+}`
+).join("\n");
+
 export const ShareCard = React.forwardRef<HTMLDivElement, ShareCardProps>(
   function ShareCard({ songTitle, songArtist, albumArtUrl, listenerCount, siteUrl }, ref) {
     const formattedCount = new Intl.NumberFormat("en-IN").format(listenerCount);
@@ -34,27 +50,56 @@ export const ShareCard = React.forwardRef<HTMLDivElement, ShareCardProps>(
           position: "relative",
           overflow: "hidden",
           fontFamily: "'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
-          background: "radial-gradient(ellipse at 30% 20%, #2a0a00 0%, #120300 45%, #050101 100%)",
+          // Rich layered background: deep crimson-black with warm undertones
+          background: "radial-gradient(ellipse at 25% 15%, #2d0d00 0%, #160400 40%, #080101 100%)",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           boxSizing: "border-box",
         }}
       >
-        {/* ── Decorative diagonal streak top-right ── */}
+        {/* Inject waveform animation keyframes */}
+        <style>{WAVEFORM_KEYFRAMES}</style>
+        {/* ── Layer 1: Top-right radial glow ── */}
         <div
           style={{
             position: "absolute",
-            top: -80,
-            right: -80,
-            width: 320,
-            height: 320,
+            top: -120,
+            right: -120,
+            width: 420,
+            height: 420,
             borderRadius: "50%",
-            background: "radial-gradient(circle, rgba(249,115,22,0.22) 0%, transparent 70%)",
+            background: "radial-gradient(circle, rgba(249,115,22,0.28) 0%, rgba(234,88,12,0.08) 50%, transparent 70%)",
             pointerEvents: "none",
           }}
         />
-        {/* ── Diagonal orange slash ── */}
+
+        {/* ── Layer 2: Bottom-left secondary glow ── */}
+        <div
+          style={{
+            position: "absolute",
+            bottom: -80,
+            left: -80,
+            width: 360,
+            height: 360,
+            borderRadius: "50%",
+            background: "radial-gradient(circle, rgba(180,40,0,0.22) 0%, transparent 65%)",
+            pointerEvents: "none",
+          }}
+        />
+
+        {/* ── Layer 3: Dot-grid texture ── */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            backgroundImage: "radial-gradient(circle, rgba(249,115,22,0.07) 1px, transparent 1px)",
+            backgroundSize: "24px 24px",
+            pointerEvents: "none",
+          }}
+        />
+
+        {/* ── Layer 4: Top diagonal corner accent ── */}
         <div
           style={{
             position: "absolute",
@@ -63,34 +108,21 @@ export const ShareCard = React.forwardRef<HTMLDivElement, ShareCardProps>(
             width: 0,
             height: 0,
             borderStyle: "solid",
-            borderWidth: "0 200px 200px 0",
-            borderColor: "transparent rgba(249,115,22,0.12) transparent transparent",
+            borderWidth: "0 180px 180px 0",
+            borderColor: "transparent rgba(249,115,22,0.09) transparent transparent",
             pointerEvents: "none",
           }}
         />
 
-        {/* ── Dot-grid overlay ── */}
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            backgroundImage:
-              "radial-gradient(circle, rgba(249,115,22,0.08) 1px, transparent 1px)",
-            backgroundSize: "28px 28px",
-            pointerEvents: "none",
-          }}
-        />
-
-        {/* ── Bottom glow ── */}
+        {/* ── Layer 5: Bottom fade vignette ── */}
         <div
           style={{
             position: "absolute",
             bottom: 0,
             left: 0,
             right: 0,
-            height: 280,
-            background:
-              "linear-gradient(to top, rgba(249,115,22,0.10) 0%, transparent 100%)",
+            height: 320,
+            background: "linear-gradient(to top, rgba(8,1,1,0.85) 0%, transparent 100%)",
             pointerEvents: "none",
           }}
         />
@@ -105,102 +137,158 @@ export const ShareCard = React.forwardRef<HTMLDivElement, ShareCardProps>(
             alignItems: "center",
             width: "100%",
             height: "100%",
-            padding: "56px 40px 48px",
+            padding: "52px 36px 44px",
             boxSizing: "border-box",
           }}
         >
-          {/* Diya + glow */}
-          <div style={{ position: "relative", marginBottom: 8 }}>
+          {/* ── Brand header ── */}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 0 }}>
+            {/* Diya with layered glow */}
+            <div style={{ position: "relative", marginBottom: 10 }}>
+              <div
+                style={{
+                  position: "absolute",
+                  inset: -32,
+                  borderRadius: "50%",
+                  background: "radial-gradient(circle, rgba(249,115,22,0.40) 0%, rgba(249,115,22,0.10) 50%, transparent 70%)",
+                }}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  inset: -16,
+                  borderRadius: "50%",
+                  background: "radial-gradient(circle, rgba(251,146,60,0.25) 0%, transparent 70%)",
+                }}
+              />
+              <span style={{ fontSize: 68, lineHeight: 1, position: "relative", display: "block" }}>🪔</span>
+            </div>
+
+            {/* Brand name with gradient text */}
             <div
               style={{
-                position: "absolute",
-                inset: -24,
-                borderRadius: "50%",
-                background: "radial-gradient(circle, rgba(249,115,22,0.35) 0%, transparent 70%)",
+                fontSize: 40,
+                fontWeight: 900,
+                letterSpacing: "0.05em",
+                textTransform: "uppercase",
+                background: "linear-gradient(135deg, #fb923c 0%, #f97316 45%, #ea580c 100%)",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+                backgroundClip: "text",
+                lineHeight: 1.1,
+                marginTop: 4,
               }}
-            />
-            <span style={{ fontSize: 72, lineHeight: 1, position: "relative" }}>🪔</span>
+            >
+              CHHATH RADIO
+            </div>
+
+            {/* Hindi tagline */}
+            <div
+              style={{
+                fontSize: 14,
+                color: "rgba(251,146,60,0.60)",
+                marginTop: 7,
+                fontWeight: 500,
+                letterSpacing: "0.08em",
+              }}
+            >
+              छठ के गीत, बिना रुके
+            </div>
           </div>
 
-          {/* Brand name */}
+          {/* ── Divider ── */}
           <div
             style={{
-              fontSize: 42,
-              fontWeight: 900,
-              letterSpacing: "0.04em",
-              textTransform: "uppercase",
-              background: "linear-gradient(135deg, #fb923c 0%, #f97316 50%, #ea580c 100%)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              backgroundClip: "text",
-              marginTop: 16,
-              lineHeight: 1.1,
-            }}
-          >
-            CHHATH RADIO
-          </div>
-
-          {/* Hindi tagline */}
-          <div
-            style={{
-              fontSize: 16,
-              color: "rgba(249,115,22,0.65)",
-              marginTop: 8,
-              fontWeight: 500,
-              letterSpacing: "0.06em",
-            }}
-          >
-            छठ के गीत, बिना रुके
-          </div>
-
-          {/* Divider */}
-          <div
-            style={{
-              width: 60,
-              height: 2,
-              background: "linear-gradient(90deg, transparent, #f97316, transparent)",
-              margin: "28px 0",
-              borderRadius: 1,
+              width: 80,
+              height: 1,
+              background: "linear-gradient(90deg, transparent, rgba(249,115,22,0.6), transparent)",
+              margin: "24px 0",
             }}
           />
 
-          {/* Now Playing card */}
+          {/* ── Now Playing glassmorphism card ── */}
           <div
             style={{
               width: "100%",
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(249,115,22,0.28)",
-              borderRadius: 20,
-              padding: "20px 24px",
+              position: "relative",
+              // True frosted glass: semi-transparent tinted background with visible layering
+              background: "linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(249,115,22,0.07) 50%, rgba(234,88,12,0.04) 100%)",
+              border: "1px solid rgba(249,115,22,0.40)",
+              borderRadius: 24,
+              padding: "22px 22px 18px",
               boxSizing: "border-box",
-              backdropFilter: "blur(12px)",
+              backdropFilter: "blur(24px) saturate(1.4)",
+              WebkitBackdropFilter: "blur(24px) saturate(1.4)",
+              // Layered shadows: outer depth + inner top highlight + orange glow
+              boxShadow: [
+                "0 8px 40px rgba(0,0,0,0.55)",
+                "0 2px 12px rgba(249,115,22,0.12)",
+                "inset 0 1px 0 rgba(255,255,255,0.12)",
+                "inset 0 -1px 0 rgba(249,115,22,0.08)",
+              ].join(", "),
             }}
           >
-            {/* Label */}
+            {/* Inner geometric accent — top-right corner triangle */}
             <div
               style={{
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: "0.14em",
-                color: "rgba(249,115,22,0.55)",
-                textTransform: "uppercase",
-                marginBottom: 14,
+                position: "absolute",
+                top: 0,
+                right: 0,
+                width: 0,
+                height: 0,
+                borderStyle: "solid",
+                borderWidth: "0 60px 60px 0",
+                borderColor: "transparent rgba(249,115,22,0.08) transparent transparent",
+                borderRadius: "0 24px 0 0",
+                pointerEvents: "none",
+              }}
+            />
+            {/* NOW PLAYING label */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginBottom: 16,
               }}
             >
-              🎵 NOW PLAYING
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-              {/* Album art */}
+              {/* Pulsing dot (static for image export) */}
               <div
                 style={{
-                  width: 72,
-                  height: 72,
-                  borderRadius: 12,
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  background: "#f97316",
+                  boxShadow: "0 0 6px rgba(249,115,22,0.8)",
+                  flexShrink: 0,
+                }}
+              />
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 800,
+                  letterSpacing: "0.18em",
+                  color: "rgba(249,115,22,0.65)",
+                  textTransform: "uppercase",
+                }}
+              >
+                NOW PLAYING
+              </span>
+            </div>
+
+            {/* Album art + song info row */}
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 18 }}>
+              {/* Large album art */}
+              <div
+                style={{
+                  width: 110,
+                  height: 110,
+                  borderRadius: 16,
                   overflow: "hidden",
                   flexShrink: 0,
-                  background: "#1a0500",
-                  border: "1px solid rgba(249,115,22,0.2)",
+                  background: "linear-gradient(135deg, #1a0500, #2d0a00)",
+                  border: "1px solid rgba(249,115,22,0.25)",
+                  boxShadow: "0 4px 20px rgba(0,0,0,0.5), 0 0 0 1px rgba(249,115,22,0.08)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -215,21 +303,24 @@ export const ShareCard = React.forwardRef<HTMLDivElement, ShareCardProps>(
                     crossOrigin="anonymous"
                   />
                 ) : (
-                  <span style={{ fontSize: 32 }}>🪔</span>
+                  <span style={{ fontSize: 40 }}>🪔</span>
                 )}
               </div>
 
               {/* Song info */}
-              <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ minWidth: 0, flex: 1, paddingTop: 4 }}>
                 <div
                   style={{
-                    fontSize: 18,
-                    fontWeight: 700,
-                    color: "#fff",
-                    whiteSpace: "nowrap",
+                    fontSize: 19,
+                    fontWeight: 800,
+                    color: "#ffffff",
+                    lineHeight: 1.25,
+                    marginBottom: 6,
+                    // Clamp to 2 lines
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
                     overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    lineHeight: 1.3,
                   }}
                 >
                   {songTitle || "Chhath Geet"}
@@ -237,8 +328,8 @@ export const ShareCard = React.forwardRef<HTMLDivElement, ShareCardProps>(
                 <div
                   style={{
                     fontSize: 13,
-                    color: "rgba(249,115,22,0.6)",
-                    marginTop: 4,
+                    color: "rgba(249,115,22,0.65)",
+                    fontWeight: 500,
                     whiteSpace: "nowrap",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -248,31 +339,86 @@ export const ShareCard = React.forwardRef<HTMLDivElement, ShareCardProps>(
                 </div>
               </div>
             </div>
+
+            {/* ── Waveform bars (animated in live preview) ── */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-end",
+                gap: 3,
+                marginTop: 18,
+                height: 52,
+                paddingBottom: 2,
+                position: "relative",
+              }}
+            >
+              {/* Baseline glow line */}
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: 2,
+                  left: 0,
+                  right: 0,
+                  height: 1,
+                  background: "linear-gradient(90deg, transparent, rgba(249,115,22,0.4) 20%, rgba(251,146,60,0.7) 50%, rgba(249,115,22,0.4) 80%, transparent)",
+                  pointerEvents: "none",
+                }}
+              />
+              {WAVEFORM_BARS.map((h, i) => {
+                const center = WAVEFORM_BARS.length / 2;
+                const dist = Math.abs(i - center) / center;
+                const opacity = 0.45 + (1 - dist) * 0.50;
+                const duration = 0.5 + (i % 5) * 0.12;
+                const delay = (i % 7) * 0.08;
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      flex: 1,
+                      height: h,
+                      borderRadius: 3,
+                      background: `linear-gradient(to top, #ea580c, #f97316 60%, #fb923c)`,
+                      opacity,
+                      boxShadow: `0 0 4px rgba(249,115,22,${opacity * 0.5})`,
+                      animationName: `waveBar${i}`,
+                      animationDuration: `${duration}s`,
+                      animationDelay: `${delay}s`,
+                      animationTimingFunction: "ease-in-out",
+                      animationIterationCount: "infinite",
+                    }}
+                  />
+                );
+              })}
+            </div>
           </div>
 
-          {/* Listener count */}
+          {/* ── Listener count strip ── */}
           <div
             style={{
               display: "flex",
               alignItems: "center",
               gap: 10,
-              marginTop: 32,
+              marginTop: 24,
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid rgba(255,255,255,0.07)",
+              borderRadius: 100,
+              padding: "10px 20px",
             }}
           >
-            {/* Green dot */}
+            {/* Live green dot */}
             <div
               style={{
-                width: 10,
-                height: 10,
+                width: 9,
+                height: 9,
                 borderRadius: "50%",
                 background: "#4ade80",
-                boxShadow: "0 0 8px rgba(74,222,128,0.7)",
+                boxShadow: "0 0 10px rgba(74,222,128,0.75)",
                 flexShrink: 0,
               }}
             />
             <span
               style={{
-                fontSize: 22,
+                fontSize: 20,
                 fontWeight: 800,
                 background: "linear-gradient(135deg, #fb923c, #f97316)",
                 WebkitBackgroundClip: "text",
@@ -284,26 +430,26 @@ export const ShareCard = React.forwardRef<HTMLDivElement, ShareCardProps>(
             </span>
             <span
               style={{
-                fontSize: 15,
-                color: "rgba(255,255,255,0.55)",
+                fontSize: 13,
+                color: "rgba(255,255,255,0.50)",
                 fontWeight: 500,
               }}
             >
-              people listening right now
+              listening live right now
             </span>
           </div>
 
-          {/* URL pill */}
+          {/* ── URL pill ── */}
           <div
             style={{
-              marginTop: 28,
+              marginTop: 16,
               display: "flex",
               alignItems: "center",
               gap: 10,
-              background: "rgba(249,115,22,0.10)",
-              border: "1px solid rgba(249,115,22,0.25)",
+              background: "rgba(249,115,22,0.12)",
+              border: "1px solid rgba(249,115,22,0.30)",
               borderRadius: 100,
-              padding: "10px 22px",
+              padding: "9px 20px",
             }}
           >
             {/* Play triangle */}
@@ -312,16 +458,16 @@ export const ShareCard = React.forwardRef<HTMLDivElement, ShareCardProps>(
                 width: 0,
                 height: 0,
                 borderStyle: "solid",
-                borderWidth: "6px 0 6px 10px",
+                borderWidth: "5px 0 5px 9px",
                 borderColor: "transparent transparent transparent #f97316",
                 flexShrink: 0,
               }}
             />
             <span
               style={{
-                fontSize: 15,
-                fontWeight: 600,
-                color: "rgba(249,115,22,0.85)",
+                fontSize: 14,
+                fontWeight: 700,
+                color: "rgba(249,115,22,0.90)",
                 letterSpacing: "0.02em",
               }}
             >
@@ -329,59 +475,87 @@ export const ShareCard = React.forwardRef<HTMLDivElement, ShareCardProps>(
             </span>
           </div>
 
-          {/* Spacer */}
+          {/* ── Spacer ── */}
           <div style={{ flex: 1 }} />
 
-          {/* QR code section */}
+          {/* ── QR code section ── */}
           <div
             style={{
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
-              gap: 12,
+              gap: 14,
             }}
           >
             <div
               style={{
-                fontSize: 12,
-                color: "rgba(255,255,255,0.35)",
-                letterSpacing: "0.08em",
+                fontSize: 11,
+                color: "rgba(255,255,255,0.30)",
+                letterSpacing: "0.12em",
                 textTransform: "uppercase",
-                fontWeight: 600,
+                fontWeight: 700,
               }}
             >
               Scan to listen live
             </div>
+
+            {/* Dark pill QR container */}
             <div
               style={{
-                background: "#fff",
-                borderRadius: 12,
-                padding: 10,
+                background: "rgba(255,255,255,0.96)",
+                borderRadius: 16,
+                padding: "12px 12px 10px",
                 display: "inline-flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 8,
+                boxShadow: "0 4px 24px rgba(0,0,0,0.5), 0 0 0 1px rgba(249,115,22,0.15)",
               }}
             >
               <QRCodeSVG
                 value={siteUrl}
-                size={96}
-                bgColor="#ffffff"
+                size={100}
+                bgColor="#f5f5f5"
                 fgColor="#0d0505"
                 level="M"
               />
             </div>
           </div>
 
-          {/* Bottom brand strip */}
+          {/* ── Bottom brand strip ── */}
           <div
             style={{
-              marginTop: 24,
-              fontSize: 11,
-              color: "rgba(249,115,22,0.35)",
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
-              fontWeight: 600,
+              marginTop: 20,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
             }}
           >
-            chhathradio.com · Made with 🪔
+            <div
+              style={{
+                width: 28,
+                height: 1,
+                background: "rgba(249,115,22,0.25)",
+              }}
+            />
+            <span
+              style={{
+                fontSize: 10,
+                color: "rgba(249,115,22,0.35)",
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                fontWeight: 700,
+              }}
+            >
+              chhathradio.com · Made with 🪔
+            </span>
+            <div
+              style={{
+                width: 28,
+                height: 1,
+                background: "rgba(249,115,22,0.25)",
+              }}
+            />
           </div>
         </div>
       </div>
