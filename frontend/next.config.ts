@@ -39,13 +39,13 @@ const nextConfig: NextConfig = {
               "default-src 'self'",
               "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://www.youtube.com https://s.ytimg.com",
               "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
-              // blob: required for Three.js GLTFLoader embedded textures
+              // blob: and data: required for canvas-generated images (share card, QR)
               "img-src 'self' data: blob: https://i.ytimg.com https://img.youtube.com https://api.qrserver.com",
               // Allow API calls from the browser to the backend (both localhost and Docker hostname)
               "connect-src 'self' blob: http://localhost:8000 http://chhath_backend:8000",
               "media-src 'self' blob:",
               "style-src 'self' 'unsafe-inline'",
-              "worker-src blob:",
+              "worker-src 'self' blob:",
             ].join("; "),
           },
         ],

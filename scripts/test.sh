@@ -75,6 +75,15 @@ run_frontend_unit() {
 run_e2e() {
   info "Running E2E tests (Playwright)…"
   cd "${REPO_ROOT}/frontend"
+
+  # Ensure Playwright browsers are installed before running tests.
+  # This is a no-op if browsers are already present (fast check).
+  info "Checking Playwright browser installation…"
+  if ! npx playwright install chromium --with-deps 2>&1 | grep -q "already installed\|Skipping"; then
+    # install ran (or failed silently) — proceed regardless
+    :
+  fi
+
   if npx playwright test --reporter=list; then
     pass "E2E tests passed"
     return 0

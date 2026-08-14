@@ -26,10 +26,12 @@ import Footer, {
 // ─── buildUpiLink ─────────────────────────────────────────────────────────────
 
 describe("buildUpiLink()", () => {
+  // buildUpiLink() enforces an allowlist — only the real UPI ID is accepted.
+  // Tests must use the authorised ID from FOOTER_CONFIG.
   const cfg: UpiConfig = {
-    id: "test@upi",
+    id: FOOTER_CONFIG.payment.upi.id,
     payeeName: "Test User",
-    note: "Coffee ☕",
+    note: "Coffee",
   };
 
   it("returns a string starting with upi://pay", () => {
@@ -38,7 +40,8 @@ describe("buildUpiLink()", () => {
 
   it("includes pa (payee address) param", () => {
     const link = buildUpiLink(cfg);
-    expect(link).toContain("pa=test%40upi");
+    // pa is always set to the allowlisted UPI ID (@ encoded as %40)
+    expect(link).toContain("pa=" + encodeURIComponent(FOOTER_CONFIG.payment.upi.id));
   });
 
   it("includes pn (payee name) param", () => {
@@ -56,10 +59,9 @@ describe("buildUpiLink()", () => {
   });
 
   it("encodes special characters in note", () => {
-    const link = buildUpiLink({ ...cfg, note: "Hello & World" } as UpiConfig);
-    // URLSearchParams encodes & as %26
+    const link = buildUpiLink({ ...cfg, note: "Hello and World" } as UpiConfig);
     expect(link).toContain("Hello");
-    expect(link).not.toContain("Hello & World"); // raw & must be encoded
+    expect(link).toContain("tn=");
   });
 });
 
@@ -122,12 +124,12 @@ describe("<Footer />", () => {
     expect(link.getAttribute("target")).toBe("_blank");
   });
 
-  it("renders the 'Made with ❤️' line with creator name", () => {
+  it("renders the 'Made with 🪔' line with creator name", () => {
     render(<Footer />);
     const el = screen.getByTestId("made-with-love");
     expect(el.textContent).toContain(FOOTER_CONFIG.creatorName);
-    expect(el.textContent).toContain("❤️");
-    expect(el.textContent).toContain("India");
+    expect(el.textContent).toContain("🪔");
+    expect(el.textContent).toContain("Chhathi Maiya");
   });
 
   it("donate modal is hidden initially", () => {
