@@ -2,6 +2,8 @@
 Chhath Radio — FastAPI Application Entry Point.
 Registers all routers and configures CORS.
 """
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -22,13 +24,21 @@ app = FastAPI(
 )
 
 # ---------------------------------------------------------------------------
-# CORS — allow the Next.js frontend to call the API
-# In production, replace "*" with the actual frontend domain.
+# CORS — allow the Next.js frontend to call the API.
+# Reads CORS_ORIGINS env var (comma-separated list).
+# Local dev default: localhost:3000
+# Production: set CORS_ORIGINS=https://chhathradio.vercel.app in Render env vars.
 # ---------------------------------------------------------------------------
+_raw_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000")
+_allow_origins: list[str] = (
+    ["*"] if _raw_origins.strip() == "*"
+    else [o.strip() for o in _raw_origins.split(",") if o.strip()]
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://chhathradio.com"],
-    allow_credentials=True,
+    allow_origins=_allow_origins,
+    allow_credentials=_raw_origins.strip() != "*",  # credentials not allowed with wildcard
     allow_methods=["*"],
     allow_headers=["*"],
 )

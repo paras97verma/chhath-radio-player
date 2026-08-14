@@ -163,14 +163,21 @@ Add ALL of these secrets (name must match exactly):
 | `SECRET_KEY` | 64-char hex string | `openssl rand -hex 32` |
 | `ADMIN_EMAIL` | your-admin@email.com | Your choice |
 | `ADMIN_PASSWORD` | your-strong-password | Your choice (min 12 chars) |
+| `CALENDARIFIC_API_KEY` | `p3QeCCICWhjf2SZ3WbiMUKLyQs5coaYa` | https://calendarific.com/account |
+| `CORS_ORIGINS` | `https://chhathradio.vercel.app,https://chhathradio.com` | Your frontend URLs (comma-separated) |
 | `RENDER_API_KEY` | `rnd_xxx...` | Render → Account Settings → API Keys |
 | `RENDER_SERVICE_ID` | `srv-xxx...` | Render dashboard URL |
 | `RENDER_DEPLOY_HOOK_URL` | `https://api.render.com/deploy/srv-xxx?key=yyy` | Render → Service → Settings → Deploy Hook |
 | `NEXT_PUBLIC_API_URL` | `https://chhath-radio-api.onrender.com` | Your Render service URL |
 | `NEXT_PUBLIC_SITE_URL` | `https://chhathradio.vercel.app` | Your Vercel project URL |
 | `VERCEL_TOKEN` | `xxx...` | Vercel → Account → Tokens |
-| `VERCEL_ORG_ID` | `team_xxx` or `user_xxx` | `frontend/.vercel/project.json` |
-| `VERCEL_PROJECT_ID` | `prj_xxx` | `frontend/.vercel/project.json` |
+| `VERCEL_ORG_ID` | `team_AuhpknoTCLb6DXlcGwyHnDQ` | Decoded from `frontend/.env.local` VERCEL_OIDC_TOKEN |
+| `VERCEL_PROJECT_ID` | `prj_FYjmWULkhHQY6IX6hgvB7IVNqCmU` | Decoded from `frontend/.env.local` VERCEL_OIDC_TOKEN |
+
+> **CORS note**: `CORS_ORIGINS` must include every domain your frontend is served from.
+> For Vercel: add both your `.vercel.app` URL and your custom domain (if any).
+> Example: `https://chhathradio.vercel.app,https://chhathradio.com`
+> If you add a new domain later, update this secret and redeploy the backend.
 
 ---
 
@@ -182,17 +189,22 @@ The GitHub Actions pipeline updates Render env vars on every deploy, but for the
 1. Go to your Render service → **Environment** tab
 2. Add these key-value pairs:
 
-| Key | Value |
-|---|---|
-| `DATABASE_URL` | Your Supabase URL |
-| `REDIS_URL` | Your Upstash URL |
-| `SECRET_KEY` | Your generated secret key |
-| `ADMIN_EMAIL` | Your admin email |
-| `ADMIN_PASSWORD` | Your admin password |
-| `ALGORITHM` | `HS256` |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `1440` |
-| `WEB_CONCURRENCY` | `1` |
-| `LOG_LEVEL` | `info` |
+| Key | Value | Notes |
+|---|---|---|
+| `DATABASE_URL` | Your Supabase URL | From Supabase → Settings → Database → Connection Pooling |
+| `REDIS_URL` | Your Upstash URL | From Upstash → Database → Details → Connect |
+| `SECRET_KEY` | Your generated secret key | `openssl rand -hex 32` |
+| `ADMIN_EMAIL` | Your admin email | Used to create the admin account |
+| `ADMIN_PASSWORD` | Your admin password | Min 12 chars |
+| `CALENDARIFIC_API_KEY` | `p3QeCCICWhjf2SZ3WbiMUKLyQs5coaYa` | For Chhath Puja dates API |
+| `CORS_ORIGINS` | `https://chhathradio.vercel.app,https://chhathradio.com` | Comma-separated list of your frontend URLs |
+| `ALGORITHM` | `HS256` | JWT algorithm — do not change |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `1440` | 24 hours |
+| `WEB_CONCURRENCY` | `1` | 1 for Render free tier (512MB RAM) |
+| `LOG_LEVEL` | `info` | `debug` for troubleshooting |
+
+> **CORS**: Add every domain your frontend is served from. If you add a custom domain
+> later, update `CORS_ORIGINS` and redeploy the backend.
 
 3. Click **Save Changes** → Render will redeploy automatically
 

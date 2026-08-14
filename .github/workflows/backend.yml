@@ -128,7 +128,8 @@ jobs:
               {"key":"ACCESS_TOKEN_EXPIRE_MINUTES","value":"1440"},
               {"key":"WEB_CONCURRENCY","value":"1"},
               {"key":"LOG_LEVEL","value":"info"},
-              {"key":"CALENDARIFIC_API_KEY","value":"${{ secrets.CALENDARIFIC_API_KEY }}"}
+              {"key":"CALENDARIFIC_API_KEY","value":"${{ secrets.CALENDARIFIC_API_KEY }}"},
+              {"key":"CORS_ORIGINS","value":"${{ secrets.CORS_ORIGINS }}"}
             ]')
           echo "Render env-vars update: HTTP $HTTP_CODE"
           if [ "$HTTP_CODE" != "200" ]; then
