@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const SITE_URL = "https://chhathradio.com";
+const SITE_URL = "https://chhath-radio-ten.vercel.app";
 
 // themeColor must be in viewport export (not metadata) in Next.js App Router
 export const viewport: Viewport = {
@@ -40,7 +40,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Chhath Radio 🪔 — छठ के गीत, बिना रुके",
-    description: "Listen to Chhath Puja geet live, 24/7. Dedicated to Chhathi Maiya.",
+    description: "Listen to Chhath Puja geet live, 24/7. Dedicated to Chhathi Maiya. Live Chhath songs radio experience.",
     url: SITE_URL,
     siteName: "Chhath Radio",
     images: [
@@ -57,7 +57,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Chhath Radio 🪔 — छठ के गीत, बिना रुके",
-    description: "Listen to Chhath Puja geet live, 24/7. Dedicated to Chhathi Maiya.",
+    description: "Listen to Chhath Puja geet live, 24/7. Dedicated to Chhathi Maiya. Live Chhath songs radio experience.",
     images: ["/og-image.png"],
   },
   manifest: "/manifest.json",
@@ -68,10 +68,13 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
+      { url: "/favicon.ico", sizes: "32x32", type: "image/x-icon" },
+      { url: "/icons/icon-32x32.png", sizes: "32x32", type: "image/png" },
       { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
       { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
     ],
-    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180" }],
+    shortcut: "/favicon.ico",
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
 };
 

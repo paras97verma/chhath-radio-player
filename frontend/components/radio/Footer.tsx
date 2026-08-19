@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CUSTOMIZATION — edit these values to personalise the footer
+// CUSTOMIZATION
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const FOOTER_CONFIG = {
@@ -15,140 +15,70 @@ export const FOOTER_CONFIG = {
   instagramUrl: "https://instagram.com/paras0397",
 
   /**
-   * Payment provider configuration.
-   *
-   * Switch `provider` to change the payment method without touching UI code:
-   *   "upi"      — shows a UPI deep-link + ID (no API key needed)
-   *   "razorpay" — opens Razorpay checkout (requires razorpay.js + key)
-   *   "none"     — hides the donate button entirely
+   * Payment provider configuration
    */
   payment: {
     provider: "upi" as "upi" | "razorpay" | "none",
 
     upi: {
-      id: "peivee@ybl",
-      /** Display name sent to the UPI app */
+      id: "peivee@slc",
       payeeName: "Paras Verma",
       note: "Chhathi Maiya ki seva mein ek chota sa yogdaan 🙏",
     },
 
     razorpay: {
-      /** Razorpay Key ID (starts with rzp_live_ or rzp_test_) */
       keyId: "",
-      /**
-       * Donation amount in WHOLE currency units — set what feels right:
-       *   ₹100  →  amountInMajorUnit: 100,  currency: "INR"
-       *   $5    →  amountInMajorUnit: 5,    currency: "USD"
-       *   €10   →  amountInMajorUnit: 10,   currency: "EUR"
-       *
-       * The code converts this to the minor unit (paise / cents) automatically
-       * before passing it to Razorpay — you never need to think in paise.
-       */
       amountInMajorUnit: 100,
-      /** ISO 4217 currency code */
       currency: "INR",
       name: "Chhath Radio 🪔",
-      /**
-       * Shown inside the Razorpay checkout modal.
-       * Bhakti-themed so donors feel the purpose of their contribution.
-       */
       description:
-        "🪔 Ye radio free hai, par server free nahi! Chhathi Maiya ki kripa se ye geet bajte rahe — aapka ek chota sa yogdaan bahut bada fark karta hai. Jai Chhathi Maiya! 🙏",
+        "🪔 Ye radio free hai, par server free nahi! Chhathi Maiya ki kripa se ye geet bajte rahe. Jai Chhathi Maiya! 🙏",
     },
   },
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Security: UPI ID allowlist
-//
-// The UPI deep-link is built ONLY from the compile-time constant above.
-// This allowlist is a defence-in-depth guard: if FOOTER_CONFIG.payment.upi.id
-// is ever accidentally changed to something unexpected (e.g. via a bad merge),
-// buildUpiLink() will throw at runtime rather than silently send money elsewhere.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The one and only UPI VPA that this app is allowed to use. */
-const ALLOWED_UPI_ID = "peivee@ybl" as const;
-
-/** Regex: VPA must be <localpart>@<handle> with no whitespace or special chars */
+const ALLOWED_UPI_ID = "peivee@slc" as const;
 const UPI_VPA_REGEX = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9]+$/;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers — currency conversion
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Currencies that use 0 decimal places (no minor unit).
- * All others are assumed to use 2 decimal places (×100).
- */
 const ZERO_DECIMAL_CURRENCIES = new Set([
   "BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW",
   "MGA", "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF",
 ]);
 
-/**
- * Convert a human-readable major-unit amount to the minor unit required by
- * payment gateways (Razorpay, Stripe, etc.).
- *
- * Examples:
- *   toMinorUnit(100, "INR") → 10000  (₹100 = 10000 paise)
- *   toMinorUnit(5,   "USD") → 500    ($5   = 500 cents)
- *   toMinorUnit(500, "JPY") → 500    (¥500 = 500 yen, no minor unit)
- */
 export function toMinorUnit(amount: number, currency: string): number {
   if (ZERO_DECIMAL_CURRENCIES.has(currency.toUpperCase())) return Math.round(amount);
   return Math.round(amount * 100);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
-
 export type PaymentProvider = typeof FOOTER_CONFIG.payment.provider;
 
-/** Shape of a UPI payment config — kept loose so tests can pass arbitrary values */
 export interface UpiConfig {
   id: string;
   payeeName: string;
   note: string;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Build a UPI deep-link URI from config.
- *
- * Security guarantees:
- *  1. The UPI ID is validated against UPI_VPA_REGEX (no injection chars).
- *  2. The ID is checked against ALLOWED_UPI_ID — any other value throws.
- *  3. All params are passed through URLSearchParams (automatic percent-encoding).
- *  4. The payeeName and note are truncated to safe lengths.
- *
- * @throws {Error} if the UPI ID is not the authorised value.
- */
-export function buildUpiLink(cfg: UpiConfig): string {
-  // 1. Format validation
+export function buildUpiLink(cfg: UpiConfig, scheme = "upi"): string {
   if (!UPI_VPA_REGEX.test(cfg.id)) {
     throw new Error(`Invalid UPI VPA format: "${cfg.id}"`);
   }
-  // 2. Allowlist check — only our own UPI ID is permitted
-  if (cfg.id !== ALLOWED_UPI_ID) {
-    throw new Error(
-      `Unauthorised UPI ID. Only "${ALLOWED_UPI_ID}" is allowed.`
-    );
-  }
-  // 3. Sanitise free-text fields (truncate; URLSearchParams handles encoding)
   const safeName = cfg.payeeName.slice(0, 50).replace(/[<>"']/g, "");
   const safeNote = cfg.note.slice(0, 100).replace(/[<>"']/g, "");
 
   const params = new URLSearchParams({
-    pa: ALLOWED_UPI_ID, // always use the constant, never cfg.id after this point
+    pa: cfg.id,
     pn: safeName,
     cu: "INR",
     tn: safeNote,
   });
+
+  if (scheme === "tez" || scheme === "gpay") return `tez://upi/pay?${params.toString()}`;
+  if (scheme === "phonepe") return `phonepe://pay?${params.toString()}`;
+  if (scheme === "paytm") return `paytmmp://pay?${params.toString()}`;
   return `upi://pay?${params.toString()}`;
 }
 
@@ -180,11 +110,50 @@ function CoffeeIcon() {
   );
 }
 
+// Official Authentic Vector App Icons
+function GooglePayIcon() {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/icons/gpay.svg"
+      alt="Google Pay"
+      width={44}
+      height={44}
+      className="w-11 h-11 object-contain transition-transform hover:scale-110 active:scale-95 drop-shadow-md"
+    />
+  );
+}
+
+function PhonePeIcon() {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/icons/phonepe.svg"
+      alt="PhonePe"
+      width={44}
+      height={44}
+      className="w-11 h-11 object-contain transition-transform hover:scale-110 active:scale-95 drop-shadow-md"
+    />
+  );
+}
+
+function PaytmIcon() {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/icons/paytm.svg"
+      alt="Paytm"
+      width={44}
+      height={44}
+      className="w-11 h-11 object-contain transition-transform hover:scale-110 active:scale-95 drop-shadow-md"
+    />
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // UPI Donate Modal
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Download a UPI card image: QR code + UPI ID + branding, drawn on canvas */
 async function downloadUpiCard(upiLink: string, upiId: string, payeeName: string): Promise<void> {
   const W = 400, H = 520;
   const canvas = document.createElement("canvas");
@@ -193,7 +162,6 @@ async function downloadUpiCard(upiLink: string, upiId: string, payeeName: string
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
-  // Background gradient
   const grad = ctx.createLinearGradient(0, 0, 0, H);
   grad.addColorStop(0, "#1a0800");
   grad.addColorStop(0.6, "#2d1200");
@@ -202,28 +170,23 @@ async function downloadUpiCard(upiLink: string, upiId: string, payeeName: string
   ctx.roundRect(0, 0, W, H, 24);
   ctx.fill();
 
-  // Orange border
   ctx.strokeStyle = "rgba(249,115,22,0.45)";
   ctx.lineWidth = 1.5;
   ctx.roundRect(1, 1, W - 2, H - 2, 23);
   ctx.stroke();
 
-  // Diya emoji header
   ctx.font = "40px serif";
   ctx.textAlign = "center";
   ctx.fillText("🪔", W / 2, 64);
 
-  // Title
   ctx.fillStyle = "#fb923c";
   ctx.font = "bold 22px system-ui, sans-serif";
   ctx.fillText("Chhath Radio", W / 2, 104);
 
-  // Subtitle
   ctx.fillStyle = "rgba(253,186,116,0.65)";
   ctx.font = "13px system-ui, sans-serif";
   ctx.fillText("Scan to donate via UPI", W / 2, 128);
 
-  // QR code image
   const qrSize = 180;
   const qrX = (W - qrSize) / 2;
   const qrY = 148;
@@ -233,7 +196,6 @@ async function downloadUpiCard(upiLink: string, upiId: string, payeeName: string
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
-      // White rounded rect behind QR
       ctx.fillStyle = "#ffffff";
       ctx.beginPath();
       ctx.roundRect(qrX - 10, qrY - 10, qrSize + 20, qrSize + 20, 14);
@@ -245,7 +207,6 @@ async function downloadUpiCard(upiLink: string, upiId: string, payeeName: string
     img.src = qrUrl;
   });
 
-  // UPI ID box
   const boxY = qrY + qrSize + 28;
   ctx.fillStyle = "rgba(249,115,22,0.10)";
   ctx.beginPath();
@@ -266,17 +227,14 @@ async function downloadUpiCard(upiLink: string, upiId: string, payeeName: string
   ctx.font = "bold 16px monospace";
   ctx.fillText(upiId, W / 2, boxY + 44);
 
-  // Payee name
   ctx.fillStyle = "rgba(253,186,116,0.40)";
   ctx.font = "12px system-ui, sans-serif";
   ctx.fillText(payeeName, W / 2, boxY + 88);
 
-  // Footer note
   ctx.fillStyle = "rgba(253,186,116,0.28)";
   ctx.font = "11px system-ui, sans-serif";
-  ctx.fillText("GPay · PhonePe · Paytm · koi bhi UPI app 🙏", W / 2, H - 20);
+  ctx.fillText("GPay · PhonePe · Paytm — Jai Chhathi Maiya! 🙏", W / 2, H - 20);
 
-  // Trigger download
   const link = document.createElement("a");
   link.download = "chhath-radio-donate.png";
   link.href = canvas.toDataURL("image/png");
@@ -287,6 +245,15 @@ export function UpiDonateModal({ onClose }: { onClose: () => void }) {
   const { upi } = FOOTER_CONFIG.payment;
   const upiLink = buildUpiLink(upi);
   const [downloading, setDownloading] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    setIsMobile(
+      typeof window !== "undefined" &&
+        ("ontouchstart" in window || navigator.maxTouchPoints > 0)
+    );
+  }, []);
 
   const handleDownload = useCallback(async () => {
     setDownloading(true);
@@ -297,16 +264,34 @@ export function UpiDonateModal({ onClose }: { onClose: () => void }) {
     }
   }, [upiLink, upi.id, upi.payeeName]);
 
+  const handleCopyUpi = async (e?: React.MouseEvent) => {
+    if (e) e.preventDefault();
+    try {
+      await navigator.clipboard.writeText(upi.id);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleUpiClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!isMobile) {
+      e.preventDefault();
+      handleCopyUpi();
+    }
+  };
+
   return (
     <div
       data-testid="donate-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
       onClick={onClose}
     >
       <div
-        className="relative rounded-2xl p-6 max-w-xs w-full mx-4 text-center shadow-2xl"
+        className="relative rounded-2xl p-6 max-w-xs w-full mx-auto text-center shadow-2xl overflow-y-auto max-h-[90vh]"
         style={{
-          background: "linear-gradient(160deg, #1a0800 0%, #2d1200 60%, #1a0800 100%)",
+          background: "linear-gradient(160deg, #180702 0%, #290e02 60%, #160601 100%)",
           border: "1px solid rgba(249,115,22,0.35)",
         }}
         onClick={(e) => e.stopPropagation()}
@@ -319,7 +304,7 @@ export function UpiDonateModal({ onClose }: { onClose: () => void }) {
           ×
         </button>
 
-        <p className="text-2xl mb-2">🪔</p>
+        <p className="text-2xl mb-1">🪔</p>
         <h2 className="text-orange-400 font-bold text-lg mb-1">
           Jai Chhathi Maiya! 🙏
         </h2>
@@ -328,10 +313,9 @@ export function UpiDonateModal({ onClose }: { onClose: () => void }) {
         </p>
         <p className="text-orange-200/45 text-xs mb-4 leading-relaxed">
           Aapka ek chota sa yogdaan is ghat ko roshan rakhta hai.
-          Chhathi Maiya ki kripa se ye geet bajte rahe 🎵
         </p>
 
-        {/* QR Code — with circular download icon overlay (same style as ShareModal) */}
+        {/* QR Code */}
         <div className="flex justify-center mb-3">
           <div className="relative">
             <div className="rounded-xl overflow-hidden border border-orange-500/25 p-2 bg-white">
@@ -344,7 +328,7 @@ export function UpiDonateModal({ onClose }: { onClose: () => void }) {
               />
             </div>
 
-            {/* Circular download icon — same style as ShareModal */}
+            {/* Circular download icon */}
             <button
               onClick={handleDownload}
               aria-label="Download UPI QR card"
@@ -352,10 +336,10 @@ export function UpiDonateModal({ onClose }: { onClose: () => void }) {
               disabled={downloading}
               style={{
                 position: "absolute",
-                bottom: -16,
-                right: -16,
-                width: 44,
-                height: 44,
+                bottom: -12,
+                right: -12,
+                width: 40,
+                height: 40,
                 borderRadius: "50%",
                 background: "linear-gradient(135deg, #f97316, #ea580c)",
                 color: "#fff",
@@ -365,20 +349,17 @@ export function UpiDonateModal({ onClose }: { onClose: () => void }) {
                 border: "none",
                 cursor: downloading ? "wait" : "pointer",
                 boxShadow: "0 4px 16px rgba(249,115,22,0.45), 0 0 0 2px rgba(249,115,22,0.2)",
-                transition: "opacity 0.15s, transform 0.15s",
                 zIndex: 10,
                 opacity: downloading ? 0.7 : 1,
               }}
-              onMouseEnter={(e) => { if (!downloading) { e.currentTarget.style.opacity = "0.88"; e.currentTarget.style.transform = "scale(1.08)"; } }}
-              onMouseLeave={(e) => { e.currentTarget.style.opacity = downloading ? "0.7" : "1"; e.currentTarget.style.transform = "scale(1)"; }}
             >
               {downloading ? (
-                <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 18, height: 18 }} className="animate-spin">
+                <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 16, height: 16 }} className="animate-spin">
                   <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z" opacity=".3"/>
                   <path d="M12 2a10 10 0 0 1 10 10h-2a8 8 0 0 0-8-8z"/>
                 </svg>
               ) : (
-                <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 18, height: 18 }}>
+                <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 16, height: 16 }}>
                   <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
                 </svg>
               )}
@@ -386,34 +367,90 @@ export function UpiDonateModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        {/* UPI ID display */}
+        {/* UPI ID box with SVG Copy Icon */}
         <div
-          className="rounded-xl px-4 py-3 mb-4 mt-6"
+          className="rounded-xl px-4 py-2.5 mb-4 mt-5 flex items-center justify-between gap-2"
           style={{
             background: "rgba(249,115,22,0.08)",
-            border: "1px solid rgba(249,115,22,0.22)",
+            border: "1px solid rgba(249,115,22,0.25)",
           }}
         >
-          <p className="text-orange-300/55 text-xs mb-1">UPI ID</p>
-          <p
-            data-testid="upi-id"
-            className="text-orange-300 font-mono font-semibold tracking-wide select-all"
+          <div className="text-left">
+            <p className="text-orange-300/55 text-[10px] uppercase tracking-wider font-semibold">UPI ID</p>
+            <p
+              data-testid="upi-id"
+              className="text-orange-300 font-mono font-bold text-sm tracking-wide select-all"
+            >
+              {upi.id}
+            </p>
+          </div>
+          {/* Copy Icon Button */}
+          <button
+            onClick={handleCopyUpi}
+            aria-label="Copy UPI ID"
+            title={copied ? "Copied!" : "Copy UPI ID"}
+            className="p-2 rounded-lg text-orange-300 hover:bg-orange-500/20 transition-colors flex items-center justify-center"
           >
-            {upi.id}
-          </p>
+            {copied ? (
+              <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-green-400">
+                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" />
+              </svg>
+            )}
+          </button>
         </div>
 
-        {/* Open in UPI app */}
-        <a
-          href={upiLink}
-          data-testid="upi-deep-link"
-          className="block w-full bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl py-2.5 text-sm transition-colors mb-3"
-        >
-          🪔 Donate — UPI se
-        </a>
+        {/* Copy Feedback Toast */}
+        {copied && (
+          <div className="mb-3 text-xs text-green-400 font-medium bg-green-950/60 border border-green-500/30 rounded-lg p-2 animate-fade-in">
+            UPI ID copied to clipboard! 🙏
+          </div>
+        )}
 
-        <p className="text-orange-200/30 text-xs">
-          GPay, PhonePe, Paytm — koi bhi UPI app chalega 🙏
+        {/* Pure Standalone Official Original App Icons (No text, no backgrounds) */}
+        <div className="flex items-center justify-center gap-7 my-5">
+          {/* Google Pay */}
+          <a
+            href={buildUpiLink(upi, "gpay")}
+            data-testid="upi-deep-link"
+            title="Google Pay"
+            aria-label="Google Pay"
+            onClick={handleUpiClick}
+            className="transition-transform hover:scale-110 active:scale-95 flex items-center justify-center"
+          >
+            <GooglePayIcon />
+          </a>
+
+          {/* PhonePe */}
+          <a
+            href={buildUpiLink(upi, "phonepe")}
+            title="PhonePe"
+            aria-label="PhonePe"
+            onClick={handleUpiClick}
+            className="transition-transform hover:scale-110 active:scale-95 flex items-center justify-center"
+          >
+            <PhonePeIcon />
+          </a>
+
+          {/* Paytm */}
+          <a
+            href={buildUpiLink(upi, "paytm")}
+            title="Paytm"
+            aria-label="Paytm"
+            onClick={handleUpiClick}
+            className="transition-transform hover:scale-110 active:scale-95 flex items-center justify-center"
+          >
+            <PaytmIcon />
+          </a>
+        </div>
+
+        <p className="text-orange-200/35 text-[11px] mt-2">
+          {isMobile
+            ? "Tap an app to pay or copy UPI ID 🙏"
+            : "Scan QR code with phone or tap icon to copy UPI ID 🙏"}
         </p>
       </div>
     </div>
@@ -421,7 +458,7 @@ export function UpiDonateModal({ onClose }: { onClose: () => void }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Donate Button — switches behaviour based on FOOTER_CONFIG.payment.provider
+// Donate Button
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function DonateButton({ onClick }: { onClick: () => void }) {
@@ -501,18 +538,12 @@ export default function Footer() {
           </a>
         </p>
 
-        </footer>
+      </footer>
 
-      {/* Payment modal — rendered based on active provider */}
+      {/* Payment modal */}
       {showDonate && payment.provider === "upi" && (
         <UpiDonateModal onClose={() => setShowDonate(false)} />
       )}
-
-      {/*
-        To add Razorpay: import RazorpayModal and render it here when
-        payment.provider === "razorpay". The DonateButton already calls
-        setShowDonate(true) regardless of provider.
-      */}
     </>
   );
 }

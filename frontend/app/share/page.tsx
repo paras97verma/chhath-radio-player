@@ -32,7 +32,7 @@ export async function generateMetadata(
     openGraph: {
       title: `🪔 ${title}`,
       description: `${artist} — Chhath Radio | छठ के गीत, बिना रुके`,
-      url: "https://chhathradio.com",
+      url: "https://chhath-radio-ten.vercel.app",
       siteName: "Chhath Radio",
       images: [
         {
@@ -57,7 +57,7 @@ export default async function SharePage({ searchParams }: SharePageProps) {
   const title = params.title ?? "Chhath Radio";
   const artist = params.artist ?? "छठ के गीत, बिना रुके";
 
-  const homeUrl = "https://chhathradio.com";
+  const homeUrl = "https://chhath-radio-ten.vercel.app";
 
   return (
     <main className="min-h-screen w-full bg-[#0a0a2e] flex items-center justify-center p-4">

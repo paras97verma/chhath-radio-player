@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
       // Forward a browser-like UA so YouTube doesn't block the request
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (compatible; ChhathRadio/1.0; +https://chhathradio.com)",
+          "Mozilla/5.0 (compatible; ChhathRadio/1.0; +https://chhath-radio-ten.vercel.app)",
         Accept: "image/webp,image/jpeg,image/*,*/*;q=0.8",
       },
       // Don't cache the upstream fetch — Next.js will handle caching via headers

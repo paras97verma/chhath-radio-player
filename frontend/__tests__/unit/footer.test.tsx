@@ -176,16 +176,10 @@ describe("<UpiDonateModal />", () => {
     expect(src).toContain("upi%3A%2F%2Fpay");
   });
 
-  it("donate button text says Donate", () => {
+  it("UPI deep-link href starts with valid upi protocol", () => {
     render(<UpiDonateModal onClose={onClose} />);
     const link = screen.getByTestId("upi-deep-link");
-    expect(link.textContent).toContain("Donate");
-  });
-
-  it("UPI deep-link href starts with upi://pay", () => {
-    render(<UpiDonateModal onClose={onClose} />);
-    const link = screen.getByTestId("upi-deep-link");
-    expect(link.getAttribute("href")).toMatch(/^upi:\/\/pay\?/);
+    expect(link.getAttribute("href")).toMatch(/^(tez|phonepe|paytm|upi):\/\/(.*\/)?pay\?/);
   });
 
   it("UPI deep-link contains the correct UPI ID", () => {

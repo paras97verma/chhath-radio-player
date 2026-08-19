@@ -1,11 +1,10 @@
 "use client";
 
 /**
- * ShareModal — Full-screen modal that:
- *  1. Renders <ShareCard> off-screen (for html-to-image capture)
- *  2. Captures it as a PNG via toPng()
- *  3. Shows the captured image as a preview
- *  4. Provides Download / Web Share / WhatsApp / Telegram / Twitter / Copy Link actions
+ * ShareModal — Minimal & instant share modal:
+ *  1. Displays the <ShareCard> live & instantly on the first open (no 1st-try canvas failure or delays).
+ *  2. Download button captures high-res PNG on demand.
+ *  3. Social Share buttons for WhatsApp, Telegram, Twitter/X, and Copy Link.
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -19,10 +18,9 @@ interface ShareModalProps {
 }
 
 const SITE_URL =
-  typeof window !== "undefined" ? window.location.href : "https://chhathradio.com";
+  typeof window !== "undefined" ? window.location.origin : "https://chhath-radio-ten.vercel.app";
 
 function getShareTargets(url: string, text: string) {
-  const encoded = encodeURIComponent(url);
   const encodedText = encodeURIComponent(text + " " + url);
   return [
     {
@@ -39,7 +37,7 @@ function getShareTargets(url: string, text: string) {
     {
       id: "telegram",
       label: "Telegram",
-      href: `https://t.me/share/url?url=${encoded}&text=${encodeURIComponent("🪔 Chhath Radio — छठ के गीत, बिना रुके")}`,
+      href: `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent("🪔 Chhath Radio — छठ के गीत, बिना रुके")}`,
       color: "#2AABEE",
       icon: (
         <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 18, height: 18 }}>
@@ -65,70 +63,22 @@ export default function ShareModal({ onClose }: ShareModalProps) {
   const currentSong = useRadioStore((s) => s.currentSong());
   const cardRef = useRef<HTMLDivElement>(null);
 
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
-  const [generating, setGenerating] = useState(true);
-  const [error, setError] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [listenerCount, setListenerCount] = useState(0);
 
   const siteUrl = SITE_URL;
   const songTitle = currentSong?.title ?? "Chhath Geet";
   const songArtist = currentSong?.artist ?? "Various Artists";
-  // Use the /yt-thumb proxy so the image is served from the same origin.
-  // This prevents CORS canvas taint when html-to-image captures the ShareCard.
   const albumArtUrl = currentSong?.youtube_video_id
     ? `/yt-thumb?v=${currentSong.youtube_video_id}`
     : null;
 
-  // Fetch listener count once on open
   useEffect(() => {
     fetchListenerCount()
       .then(setListenerCount)
       .catch(() => setListenerCount(0));
   }, []);
-
-  // Capture the card after it's mounted and listener count is ready
-  const capture = useCallback(async () => {
-    if (!cardRef.current) return;
-    setGenerating(true);
-    setError(false);
-    try {
-      // Wait for all images inside the card to finish loading before capturing.
-      // Without this, the album art <img> may still be in-flight when toPng runs,
-      // producing a blank image on the first open.
-      const images = Array.from(cardRef.current.querySelectorAll("img"));
-      await Promise.all(
-        images.map(
-          (img) =>
-            img.complete
-              ? Promise.resolve()
-              : new Promise<void>((resolve) => {
-                  img.onload = () => resolve();
-                  img.onerror = () => resolve(); // resolve even on error so capture still runs
-                })
-        )
-      );
-      // Small extra tick to let the browser paint the loaded images into layout
-      await new Promise((r) => setTimeout(r, 80));
-      const png = await toPng(cardRef.current, {
-        pixelRatio: 2,
-        cacheBust: true,
-        // Ensure same-origin images are included; cross-origin ones are already
-        // proxied through /yt-thumb so this is just a safety net
-        includeQueryParams: true,
-      });
-      setDataUrl(png);
-    } catch (e) {
-      console.error("[ShareModal] toPng failed:", e);
-      setError(true);
-    } finally {
-      setGenerating(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    capture();
-  }, [capture]);
 
   // Close on Escape
   useEffect(() => {
@@ -149,30 +99,38 @@ export default function ShareModal({ onClose }: ShareModalProps) {
     }
   };
 
-  const handleNativeShare = async () => {
-    if (!dataUrl) return;
+  const handleDownload = async () => {
+    if (!cardRef.current || downloading) return;
+    setDownloading(true);
     try {
-      // Convert dataUrl to Blob → File for Web Share API
-      const res = await fetch(dataUrl);
-      const blob = await res.blob();
-      const file = new File([blob], "chhath-radio.png", { type: "image/png" });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({
-          title: "Chhath Radio — छठ के गीत, बिना रुके",
-          text: "🪔 Listen live:",
-          url: siteUrl,
-          files: [file],
-        });
-        return;
-      }
-      // Fallback: share without file
-      await navigator.share({
-        title: "Chhath Radio — छठ के गीत, बिना रुके",
-        text: "🪔 Chhath Radio — छठ के गीत, बिना रुके. Listen live: " + siteUrl,
-        url: siteUrl,
+      // Ensure inner images are complete
+      const images = Array.from(cardRef.current.querySelectorAll("img"));
+      await Promise.all(
+        images.map(
+          (img) =>
+            img.complete
+              ? Promise.resolve()
+              : new Promise<void>((resolve) => {
+                  img.onload = () => resolve();
+                  img.onerror = () => resolve();
+                })
+        )
+      );
+      await new Promise((r) => setTimeout(r, 60));
+
+      const dataUrl = await toPng(cardRef.current, {
+        pixelRatio: 2,
+        cacheBust: true,
       });
-    } catch {
-      // User cancelled or not supported — do nothing
+
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = "chhath-radio-share.png";
+      a.click();
+    } catch (e) {
+      console.error("[ShareModal] download failed:", e);
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -183,27 +141,6 @@ export default function ShareModal({ onClose }: ShareModalProps) {
 
   return (
     <>
-      {/* ── Hidden off-screen ShareCard for capture ── */}
-      <div
-        aria-hidden="true"
-        style={{
-          position: "fixed",
-          left: -9999,
-          top: -9999,
-          pointerEvents: "none",
-          zIndex: -1,
-        }}
-      >
-        <ShareCard
-          ref={cardRef}
-          songTitle={songTitle}
-          songArtist={songArtist}
-          albumArtUrl={albumArtUrl}
-          listenerCount={listenerCount}
-          siteUrl={siteUrl}
-        />
-      </div>
-
       {/* ── Backdrop ── */}
       <div
         onClick={onClose}
@@ -232,7 +169,7 @@ export default function ShareModal({ onClose }: ShareModalProps) {
             maxWidth: 380,
             maxHeight: "90vh",
             overflowY: "auto",
-            boxShadow: "0 24px 64px rgba(0,0,0,0.7), 0 0 0 1px rgba(249,115,22,0.08)",
+            boxShadow: "0 24px 64px rgba(0,0,0,0.8), 0 0 0 1px rgba(249,115,22,0.08)",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
@@ -261,14 +198,6 @@ export default function ShareModal({ onClose }: ShareModalProps) {
               lineHeight: 1,
               transition: "all 0.15s",
             }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "rgba(249,115,22,0.15)";
-              e.currentTarget.style.color = "#f97316";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "rgba(255,255,255,0.06)";
-              e.currentTarget.style.color = "rgba(255,255,255,0.5)";
-            }}
           >
             ×
           </button>
@@ -281,155 +210,81 @@ export default function ShareModal({ onClose }: ShareModalProps) {
                 fontWeight: 700,
                 letterSpacing: "0.12em",
                 textTransform: "uppercase",
-                color: "rgba(249,115,22,0.6)",
-                marginBottom: 4,
+                color: "rgba(249,115,22,0.7)",
+                marginBottom: 2,
               }}
             >
               Share Chhath Radio
             </div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>
-              Share the vibe with your people 🪔
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>
+              Share the devotional vibe 🪔
             </div>
           </div>
 
-          {/* Card preview area — fixed height container, image scales to fit */}
+          {/* Live minimal card render box */}
           <div
             style={{
               width: "100%",
-              height: 420,
-              borderRadius: 16,
-              overflow: "visible",
-              border: "1px solid rgba(249,115,22,0.15)",
-              background: "rgba(255,255,255,0.03)",
               display: "flex",
-              alignItems: "center",
               justifyContent: "center",
-              position: "relative",
+              alignItems: "center",
+              transform: "scale(0.72)",
+              transformOrigin: "top center",
+              marginBottom: -160, // compensate for scale transformation
             }}
           >
-            {generating && (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: 32,
-                }}
-              >
-                {/* Spinner */}
-                <div
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: "50%",
-                    border: "3px solid rgba(249,115,22,0.15)",
-                    borderTopColor: "#f97316",
-                    animation: "spin 0.8s linear infinite",
-                  }}
-                />
-                <span style={{ fontSize: 12, color: "rgba(249,115,22,0.5)" }}>
-                  Generating card…
-                </span>
-                <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-              </div>
-            )}
-
-            {error && !generating && (
-              <div
-                style={{
-                  padding: 24,
-                  textAlign: "center",
-                  color: "rgba(255,255,255,0.4)",
-                  fontSize: 13,
-                }}
-              >
-                <div style={{ fontSize: 28, marginBottom: 8 }}>⚠️</div>
-                Could not generate card.
-                <br />
-                <button
-                  onClick={capture}
-                  style={{
-                    marginTop: 10,
-                    padding: "6px 16px",
-                    borderRadius: 8,
-                    background: "rgba(249,115,22,0.15)",
-                    border: "1px solid rgba(249,115,22,0.3)",
-                    color: "#f97316",
-                    fontSize: 12,
-                    cursor: "pointer",
-                  }}
-                >
-                  Retry
-                </button>
-              </div>
-            )}
-
-            {dataUrl && !generating && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={dataUrl}
-                alt="Share card preview"
-                style={{
-                  maxWidth: "100%",
-                  maxHeight: "100%",
-                  width: "auto",
-                  height: "100%",
-                  objectFit: "contain",
-                  display: "block",
-                  borderRadius: 12,
-                }}
-              />
-            )}
-
-            {/* Circular download icon — bottom-right edge of preview */}
-            {dataUrl && (
-              <a
-                href={dataUrl}
-                download="chhath-radio-share.png"
-                aria-label="Download share card"
-                title="Download"
-                style={{
-                  position: "absolute",
-                  bottom: -16,
-                  right: -16,
-                  width: 44,
-                  height: 44,
-                  borderRadius: "50%",
-                  background: "linear-gradient(135deg, #f97316, #ea580c)",
-                  color: "#fff",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  textDecoration: "none",
-                  boxShadow: "0 4px 16px rgba(249,115,22,0.45), 0 0 0 2px rgba(249,115,22,0.2)",
-                  transition: "opacity 0.15s, transform 0.15s",
-                  zIndex: 10,
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.88"; e.currentTarget.style.transform = "scale(1.08)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.transform = "scale(1)"; }}
-              >
-                <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 18, height: 18 }}>
-                  <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
-                </svg>
-              </a>
-            )}
+            <ShareCard
+              ref={cardRef}
+              songTitle={songTitle}
+              songArtist={songArtist}
+              albumArtUrl={albumArtUrl}
+              listenerCount={listenerCount}
+              siteUrl={siteUrl}
+            />
           </div>
 
           {/* Action buttons */}
-          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
+            {/* Download Button */}
+            <button
+              onClick={handleDownload}
+              disabled={downloading}
+              style={{
+                width: "100%",
+                padding: "12px 0",
+                borderRadius: 14,
+                background: "linear-gradient(135deg, #f97316, #ea580c)",
+                border: "none",
+                color: "#ffffff",
+                fontWeight: 700,
+                fontSize: 13,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                cursor: downloading ? "wait" : "pointer",
+                boxShadow: "0 4px 16px rgba(249,115,22,0.35)",
+                opacity: downloading ? 0.75 : 1,
+              }}
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 18, height: 18 }}>
+                <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+              </svg>
+              {downloading ? "Downloading Card…" : "Download Card Image"}
+            </button>
+
             {/* Divider */}
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 10,
-                color: "rgba(255,255,255,0.2)",
+                color: "rgba(255,255,255,0.25)",
                 fontSize: 11,
               }}
             >
               <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.08)" }} />
-              or share via
+              or share directly
               <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.08)" }} />
             </div>
 
@@ -454,14 +309,6 @@ export default function ShareModal({ onClose }: ShareModalProps) {
                     color: t.color,
                     textDecoration: "none",
                     transition: "all 0.15s",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = t.color + "30";
-                    e.currentTarget.style.borderColor = t.color + "66";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = t.color + "18";
-                    e.currentTarget.style.borderColor = t.color + "33";
                   }}
                 >
                   {t.icon}
