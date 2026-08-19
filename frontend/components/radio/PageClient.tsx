@@ -292,10 +292,13 @@ export default function PageClient() {
 
       {/* Footer bar — always visible */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-20 h-11 sm:h-12"
+        className="fixed bottom-0 left-0 right-0 z-20 h-11 sm:h-12 border-t"
         style={{
-          background: "rgba(8, 3, 1, 0.97)",
-          boxShadow: "0 -4px 16px rgba(0,0,0,0.65), 0 -1px 0 rgba(249,115,22,0.18)",
+          background: "rgba(10, 5, 2, 0.90)",
+          borderColor: "rgba(251, 146, 60, 0.14)",
+          boxShadow: "0 -4px 20px rgba(0,0,0,0.60)",
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
         }}
       >
         <div className="flex items-center justify-between h-full px-4 sm:px-5 gap-3">

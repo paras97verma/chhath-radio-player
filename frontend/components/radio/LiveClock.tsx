@@ -66,13 +66,13 @@ export default function LiveClock() {
   return (
     <div
       data-testid="live-clock"
-      className="text-center tabular-nums select-none rounded-2xl px-3.5 py-2 sm:px-4 sm:py-2.5 border"
+      className="text-center tabular-nums select-none rounded-xl px-3 py-1.5 sm:px-4 sm:py-2 border"
       style={{
-        background: "rgba(18,8,5,0.90)",
-        borderColor: "rgba(251,146,60,0.22)",
-        boxShadow: NM_CARD,
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
+        background: "rgba(14,7,4,0.82)",
+        borderColor: "rgba(251,146,60,0.16)",
+        boxShadow: "0 8px 24px rgba(0,0,0,0.60), inset 0 1px 0 rgba(255,255,255,0.08)",
+        backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
       }}
       aria-live="off"
       aria-label={`Current time: ${timeStr}, date: ${dateStr}`}

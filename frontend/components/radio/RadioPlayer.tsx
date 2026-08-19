@@ -683,31 +683,27 @@ export default function RadioPlayer({
           <PlaylistDrawer onClose={() => onPlaylistToggle?.()} onPlaySong={handlePlaySong} />
         )}
 
-        {/* ── Modern glassmorphic pill ── */}
+        {/* ── Modern minimal glassmorphic pill ── */}
         <div
-          className="flex flex-col rounded-[28px]"
+          className="flex flex-col rounded-[26px]"
           style={{
-            background: "linear-gradient(165deg, rgba(22, 9, 5, 0.94) 0%, rgba(12, 5, 3, 0.94) 100%)",
-            backdropFilter: "blur(20px)",
-            WebkitBackdropFilter: "blur(20px)",
-            border: "1px solid rgba(251, 146, 60, 0.25)",
-            boxShadow: [
-              "10px 10px 32px rgba(0,0,0,0.85)",
-              "-4px -4px 16px rgba(90,40,15,0.25)",
-              "inset 0 1px 0 rgba(254,215,170,0.12)",
-            ].join(", "),
+            background: "rgba(14, 7, 4, 0.82)",
+            backdropFilter: "blur(24px)",
+            WebkitBackdropFilter: "blur(24px)",
+            border: "1px solid rgba(251, 146, 60, 0.16)",
+            boxShadow: "0 16px 40px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.08)",
           }}
         >
           {/* Mobile only: song name strip at top of pill */}
           {currentSong && (
             <div
               className="sm:hidden flex flex-col items-center px-5 pt-3 pb-1 border-b"
-              style={{ borderColor: "rgba(251,146,60,0.15)" }}
+              style={{ borderColor: "rgba(251,146,60,0.10)" }}
             >
-              <p className="text-[#fff7ed] text-sm font-bold truncate w-full text-center leading-tight">
+              <p className="text-[#fff7ed] text-sm font-semibold truncate w-full text-center leading-tight tracking-wide">
                 {currentSong.title}
               </p>
-              <p className="text-[11px] truncate w-full text-center mt-0.5" style={{ color: "rgba(253,186,116,0.80)" }}>
+              <p className="text-[11px] truncate w-full text-center mt-0.5" style={{ color: "rgba(254,215,170,0.65)" }}>
                 {currentSong.artist}
               </p>
             </div>
@@ -723,15 +719,15 @@ export default function RadioPlayer({
               {error ? (
                 <p className="text-red-400 text-xs" role="alert">{error}</p>
               ) : !isReady ? (
-                <p className="text-orange-400/40 text-xs animate-pulse">Tuning in…</p>
+                <p className="text-amber-200/50 text-xs animate-pulse tracking-wide">Tuning in…</p>
               ) : currentSong ? (
                 <>
-                  <p className="text-white text-sm font-bold truncate leading-tight tracking-tight">{currentSong.title}</p>
-                  <p className="text-orange-400/80 text-[11px] truncate mt-0.5 flex items-center gap-1.5">
+                  <p className="text-[#fff7ed] text-sm font-semibold truncate leading-tight tracking-wide">{currentSong.title}</p>
+                  <p className="text-amber-200/70 text-[11px] truncate mt-0.5 flex items-center gap-1.5 font-medium tracking-wide">
                     {isPlaying && (
                       <span
                         className="inline-block w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0"
-                        style={{ animation: "nmFabPulse 1.5s ease-in-out infinite" }}
+                        style={{ animation: "nmFabPulse 1.8s ease-in-out infinite" }}
                         aria-hidden="true"
                       />
                     )}

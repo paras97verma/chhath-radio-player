@@ -172,13 +172,13 @@ export default function ListenerCount({ onCountChange }: ListenerCountProps = {}
 
   return (
     <div
-      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border"
+      className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 border"
       style={{
-        background: "rgba(18,8,5,0.90)",
-        borderColor: "rgba(251,146,60,0.22)",
-        boxShadow: NM_PILL,
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
+        background: "rgba(14,7,4,0.82)",
+        borderColor: "rgba(251,146,60,0.16)",
+        boxShadow: "0 8px 24px rgba(0,0,0,0.60), inset 0 1px 0 rgba(255,255,255,0.08)",
+        backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
       }}
       aria-live="polite"
       aria-label={`${formatted} ${count !== 1 ? "people" : "person"} listening`}
@@ -186,12 +186,11 @@ export default function ListenerCount({ onCountChange }: ListenerCountProps = {}
       <OnlineDot />
       <Spectrogram />
       <span
-        className="tabular-nums text-sm font-extrabold text-[#fff7ed] tracking-wide"
-        style={{ textShadow: "0 1px 4px rgba(0,0,0,0.8)" }}
+        className="tabular-nums text-xs font-bold text-[#fff7ed] tracking-wide"
       >
         {formatted}
       </span>
-      <span className="text-[11px] font-medium text-amber-200/70 tracking-wide">listening</span>
+      <span className="text-[11px] font-medium text-amber-200/60 tracking-wide">listening</span>
     </div>
   );
 }

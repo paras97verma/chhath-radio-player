@@ -143,17 +143,17 @@ export default function ChhathCountdown() {
   // ── Full neumorphic card (all screen sizes — mobile scaling handled by PageClient wrapper) ──
   return (
     <div
-      className="flex flex-col items-center gap-2 text-center select-none w-[200px] rounded-2xl px-4 py-2.5 border"
+      className="flex flex-col items-center gap-2 text-center select-none w-[190px] rounded-2xl px-3.5 py-2 border"
       style={{
-        background: "rgba(18,8,5,0.90)",
-        borderColor: "rgba(251,146,60,0.22)",
-        boxShadow: NM_CARD,
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
+        background: "rgba(14,7,4,0.82)",
+        borderColor: "rgba(251,146,60,0.16)",
+        boxShadow: "0 8px 24px rgba(0,0,0,0.60), inset 0 1px 0 rgba(255,255,255,0.08)",
+        backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
       }}
     >
       {/* Header */}
-      <p className="text-xs font-bold tracking-[0.15em] uppercase text-orange-400">
+      <p className="text-[11px] font-bold tracking-[0.15em] uppercase text-orange-400">
         Chhath {data.year}
       </p>
 
