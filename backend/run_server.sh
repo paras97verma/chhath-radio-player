@@ -18,23 +18,31 @@ echo "🪔  Chhath Radio API starting..."
 echo "    Python: $(python --version)"
 echo "    Workers: ${WEB_CONCURRENCY:-auto}"
 
-# ── Run Alembic migrations ────────────────────────────────────────────────────
-echo ""
-echo "  Running database migrations..."
-alembic upgrade head
-echo "  ✓ Migrations complete."
-echo ""
-
-# ── Seed admin user (idempotent — skips if already exists) ───────────────────
-# ADMIN_EMAIL and ADMIN_PASSWORD must be set as environment variables.
-# seed_admin.py is safe to run on every startup — it checks for existing admin.
-if [ -n "${ADMIN_EMAIL:-}" ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
-  echo "  Seeding admin user..."
-  python seed_admin.py && echo "  ✓ Admin seed complete." || echo "  ⚠ Admin seed failed (non-fatal)."
+# ── Run Alembic migrations (conditional — default: false) ─────────────────────
+if [ "${RUN_MIGRATIONS:-false}" = "true" ] || [ "${RUN_MIGRATIONS:-0}" = "1" ]; then
+  echo ""
+  echo "  Running database migrations..."
+  alembic upgrade head
+  echo "  ✓ Migrations complete."
   echo ""
 else
-  echo "  ⚠ ADMIN_EMAIL or ADMIN_PASSWORD not set — skipping admin seed."
-  echo "    Set these env vars and redeploy, or run: python seed_admin.py manually."
+  echo ""
+  echo "  ℹ RUN_MIGRATIONS is off — skipping automatic database migrations on startup."
+  echo ""
+fi
+
+# ── Seed admin user (conditional — default: false) ────────────────────────────
+if [ "${SEED_ADMIN:-false}" = "true" ] || [ "${SEED_ADMIN:-0}" = "1" ]; then
+  if [ -n "${ADMIN_EMAIL:-}" ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
+    echo "  Seeding admin user..."
+    python seed_admin.py && echo "  ✓ Admin seed complete." || echo "  ⚠ Admin seed failed (non-fatal)."
+    echo ""
+  else
+    echo "  ⚠ SEED_ADMIN is true but ADMIN_EMAIL or ADMIN_PASSWORD not set — skipping admin seed."
+    echo ""
+  fi
+else
+  echo "  ℹ SEED_ADMIN is off — skipping automatic admin seed on startup."
   echo ""
 fi
 

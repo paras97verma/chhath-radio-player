@@ -119,7 +119,7 @@ Go to **GitHub → Actions → Database Operations → Run workflow** and select
 | `rollback` | Roll back last migration (requires `confirm=yes`) |
 | `status` | Show current migration state |
 
-> **Note**: Migrations also run automatically on every deploy via `run_server.sh`. The `seed-admin` operation is also run automatically on startup if `ADMIN_EMAIL` and `ADMIN_PASSWORD` are set.
+> **Note**: Migrations and admin seeding are skipped on container startup by default to prevent unwanted database operations during standard deployments. To run them on startup, set `RUN_MIGRATIONS=true` and `SEED_ADMIN=true`. Alternatively, run them on demand via GitHub Actions (`.github/workflows/db.yml`) or via `./scripts/db.sh`.
 
 ---
 
@@ -226,8 +226,8 @@ Copy `frontend/.env.example` → `frontend/.env.local` and fill in values.
 6. Go to **Account Settings → API Keys** → create a key
 
 Render automatically runs `run_server.sh` on startup, which:
-- Runs `alembic upgrade head` (migrations)
-- Seeds the admin user (if `ADMIN_EMAIL`/`ADMIN_PASSWORD` are set)
+- Checks `RUN_MIGRATIONS=true` (skips migrations by default)
+- Checks `SEED_ADMIN=true` (skips admin seeding by default)
 - Starts Gunicorn + Uvicorn workers
 
 ---
