@@ -187,9 +187,9 @@ export default function PageClient() {
           BOTTOM STACK
       ══════════════════════════════════════════════════════════ */}
 
-      {/* Facts ticker — always visible */}
+      {/* Facts ticker — always visible, elevated above player */}
       <div
-        className="fixed left-0 right-0 z-20 flex justify-center px-4 pointer-events-none"
+        className="fixed left-0 right-0 z-30 flex justify-center px-4 pointer-events-none"
         style={{ bottom: "var(--facts-bottom)" }}
       >
         <ChhathFacts />

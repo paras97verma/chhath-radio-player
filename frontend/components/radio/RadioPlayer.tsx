@@ -752,20 +752,20 @@ export default function RadioPlayer({
         >
           {/* Song name & artist strip at top of pill (both desktop and mobile) */}
           <div
-            className="flex items-center justify-between px-5 pt-3 pb-2 border-b"
+            className="flex items-center justify-between px-4 sm:px-5 py-1.5 border-b h-12 shrink-0"
             style={{ borderColor: "rgba(251,146,60,0.12)" }}
           >
-            <div className="min-w-0 flex-1 text-center px-2">
+            <div className="min-w-0 flex-1 text-center px-2 flex flex-col justify-center h-full">
               {error ? (
-                <p className="text-red-400 text-xs font-medium" role="alert">{error}</p>
+                <p className="text-red-400 text-xs font-medium truncate" role="alert">{error}</p>
               ) : !isReady ? (
                 <p className="text-amber-200/50 text-xs animate-pulse tracking-wide font-medium">Tuning in…</p>
               ) : currentSong ? (
                 <>
-                  <p className="text-[#fff7ed] text-sm font-semibold truncate leading-tight tracking-wide">
+                  <p className="text-[#fff7ed] text-xs sm:text-sm font-semibold truncate leading-tight tracking-wide">
                     {currentSong.title}
                   </p>
-                  <p className="text-amber-200/70 text-[11px] truncate mt-0.5 flex items-center justify-center gap-1.5 font-medium tracking-wide">
+                  <p className="text-amber-200/70 text-[10px] sm:text-[11px] truncate mt-0.5 flex items-center justify-center gap-1.5 font-medium tracking-wide">
                     {isPlaying && (
                       <span
                         className="inline-block w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0"
