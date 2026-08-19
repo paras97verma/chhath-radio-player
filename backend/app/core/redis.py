@@ -33,14 +33,34 @@ def _create_pool(url: str) -> Optional[redis_lib.ConnectionPool]:
     """
     Attempt to create and verify a Redis connection pool.
     Returns the pool on success, None on failure.
+
+    Upstash TLS handling:
+      - Upstash requires TLS; plain redis:// URLs are rewritten to rediss://.
+      - ssl_cert_reqs="none" (string) is required for redis-py v5 to disable
+        cert verification against Upstash's self-signed cert chain.
+        Passing Python None is silently ignored in v5, leaving verification on.
     """
+    if not url:
+        return None
+
+    # Upstash requires TLS — rewrite redis:// → rediss:// for cloud endpoints
+    if "upstash.io" in url and url.startswith("redis://"):
+        url = url.replace("redis://", "rediss://", 1)
+        logger.debug("Rewrote Redis URL to use TLS (rediss://) for Upstash endpoint")
+
+    # For TLS connections pass ssl_cert_reqs as the string "none" (redis-py v5)
+    extra_kwargs: dict = {}
+    if url.startswith("rediss://"):
+        extra_kwargs["ssl_cert_reqs"] = "none"
+
     try:
         pool = redis_lib.ConnectionPool.from_url(
             url,
             decode_responses=True,
             max_connections=20,
-            socket_connect_timeout=2,
-            socket_timeout=2,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            **extra_kwargs,
         )
         # Verify connectivity with a PING
         redis_lib.Redis(connection_pool=pool).ping()
