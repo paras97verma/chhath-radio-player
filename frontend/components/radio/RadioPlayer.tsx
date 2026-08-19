@@ -18,7 +18,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { fetchRadioQueue } from "@/lib/api";
-import { YouTubeIFramePlayerAdapter } from "@/lib/youtube-adapter";
+import { YouTubeIFramePlayerAdapter, preloadYouTubeAPI } from "@/lib/youtube-adapter";
 import { useRadioStore } from "@/lib/radio-store";
 import { useUserStore } from "@/lib/user-store";
 import type { Song } from "@/lib/api";
@@ -531,6 +531,8 @@ export default function RadioPlayer({
 }) {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<YouTubeIFramePlayerAdapter | null>(null);
+  // Pre-fetched songs cache — populated on mount so they're ready when user clicks Tune In
+  const prefetchedSongsRef = useRef<Song[] | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(80);
   const [isReady, setIsReady] = useState(false);
@@ -673,19 +675,43 @@ export default function RadioPlayer({
     if (showPlaylistRef.current) onPlaylistToggle?.();
   }, [onPlaylistToggle]);
 
+  // ── Effect A: Pre-warm on mount ──────────────────────────────────────────────
+  // Inject the YouTube IFrame API script and fetch the song queue immediately
+  // when the component mounts — before the user even clicks "Tune In".
+  // By the time the user clicks and the 300ms fade completes, both are ready.
+  useEffect(() => {
+    // Kick off YT script injection (idempotent — safe to call multiple times)
+    preloadYouTubeAPI();
+
+    // Pre-fetch the queue and cache it; errors are silently swallowed here
+    // because Effect B will retry if the ref is still null.
+    fetchRadioQueue()
+      .then((songs) => {
+        prefetchedSongsRef.current = songs;
+      })
+      .catch(() => {
+        // Will fall back to a fresh fetch in Effect B
+      });
+  }, []); // runs once on mount
+
+  // ── Effect B: Initialize player when user tunes in ───────────────────────────
+  // By this point the YT API script is already loaded and the queue is cached,
+  // so the only remaining work is creating the YT.Player iframe (~1s, unavoidable).
   useEffect(() => {
     if (!hasTunedIn) return;
     let cancelled = false;
 
     async function init() {
       try {
-        const songs = await fetchRadioQueue();
+        // Use pre-fetched songs if available; otherwise fetch now (cold-start fallback)
+        const songs = prefetchedSongsRef.current ?? await fetchRadioQueue();
         if (cancelled || songs.length === 0) return;
 
         const adapter = new YouTubeIFramePlayerAdapter();
         adapterRef.current = adapter;
 
         if (playerContainerRef.current) {
+          // YT API is already loaded from Effect A — initialize() resolves fast
           await adapter.initialize(playerContainerRef.current, songs[0].youtube_video_id);
         }
 

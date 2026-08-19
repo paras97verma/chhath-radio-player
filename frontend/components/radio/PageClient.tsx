@@ -385,7 +385,13 @@ export default function PageClient() {
 
     {/* ── TuneInSplash rendered OUTSIDE <main> to avoid overflow-hidden clipping ── */}
     {!hasTunedIn && (
-      <TuneInSplash onTuneIn={() => setHasTunedIn(true)} />
+      <TuneInSplash
+        onTuneIn={() => setHasTunedIn(true)}
+        onEarlyStart={() => {
+          // No-op: pre-warming already started on RadioPlayer mount.
+          // This hook is available for any future last-mile work during the fade.
+        }}
+      />
     )}
 
     {/* Mobile only: ReactionBar — OUTSIDE <main> to avoid overflow-hidden clipping.

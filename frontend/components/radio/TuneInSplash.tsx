@@ -14,13 +14,17 @@ import { useState } from "react";
 
 interface TuneInSplashProps {
   onTuneIn: () => void;
+  /** Called immediately on click — before the 300ms fade animation completes.
+   *  Use this to kick off initialization work during the animation window. */
+  onEarlyStart?: () => void;
 }
 
-export default function TuneInSplash({ onTuneIn }: TuneInSplashProps) {
+export default function TuneInSplash({ onTuneIn, onEarlyStart }: TuneInSplashProps) {
   const [fading, setFading] = useState(false);
 
   const handleClick = () => {
     if (fading) return;
+    onEarlyStart?.(); // fire immediately — runs during the 300ms fade window
     setFading(true);
   };
 

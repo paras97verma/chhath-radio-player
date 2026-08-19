@@ -104,6 +104,14 @@ interface YTPlayer {
 let ytApiLoaded = false;
 let ytApiLoadPromise: Promise<void> | null = null;
 
+/**
+ * Pre-warm the YouTube IFrame API by injecting the script tag immediately.
+ * Safe to call multiple times — idempotent. Fire-and-forget.
+ */
+export function preloadYouTubeAPI(): void {
+  loadYouTubeAPI(); // result cached in ytApiLoadPromise
+}
+
 function loadYouTubeAPI(): Promise<void> {
   if (typeof window !== "undefined" && window.YT && window.YT.Player) {
     ytApiLoaded = true;
