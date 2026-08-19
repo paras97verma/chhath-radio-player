@@ -142,14 +142,23 @@ export class YouTubeIFramePlayerAdapter implements YouTubePlayerAdapter {
         playerVars: {
           // Golden Rule: NO ad-blocking, NO fake controls
           autoplay: 1,
+          controls: 0,
           rel: 0,
           modestbranding: 1,
           enablejsapi: 1,
-          // Needed for autoplay in some browsers
           playsinline: 1,
+          origin: typeof window !== "undefined" ? window.location.origin : undefined,
+          widget_referrer: typeof window !== "undefined" ? window.location.origin : undefined,
         },
         events: {
-          onReady: () => resolve(),
+          onReady: () => {
+            try {
+              this.player?.playVideo();
+            } catch {
+              /* ignore */
+            }
+            resolve();
+          },
           onStateChange: (event) => {
             const state = YT_STATE_MAP[event.data] ?? "UNSTARTED";
             this.currentState = state;
@@ -169,7 +178,19 @@ export class YouTubeIFramePlayerAdapter implements YouTubePlayerAdapter {
 
   async loadVideo(videoId: string): Promise<void> {
     if (!this.player) throw new Error("Player not initialized");
-    this.player.loadVideoById(videoId);
+    if (typeof (this.player as unknown as { loadVideoById: (args: unknown) => void }).loadVideoById === "function") {
+      try {
+        (this.player as unknown as { loadVideoById: (args: unknown) => void }).loadVideoById({
+          videoId,
+          suggestedQuality: "small",
+        });
+      } catch {
+        this.player.loadVideoById(videoId);
+      }
+    } else {
+      this.player.loadVideoById(videoId);
+    }
+    this.player.playVideo();
   }
 
   async play(): Promise<void> {

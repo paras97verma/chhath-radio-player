@@ -87,8 +87,12 @@ export default function RootLayout({
     <html lang="hi">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://www.youtube.com" />
+        <link rel="preconnect" href="https://www.youtube.com" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://www.youtube-nocookie.com" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://i.ytimg.com" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://www.youtube.com" />
         <link rel="dns-prefetch" href="https://i.ytimg.com" />
+        <script src="https://www.youtube.com/iframe_api" async id="yt-iframe-api" />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}

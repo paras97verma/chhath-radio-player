@@ -254,13 +254,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const song = queue[currentIndex];
     set({ playState: "BUFFERING" });
     await adapter.loadVideo(song.youtube_video_id);
-
-    setTimeout(async () => {
-      const state = get();
-      if (state.playState === "BUFFERING") {
-        try { await adapter.play(); } catch { /* ignore */ }
-      }
-    }, 1500);
+    await adapter.play();
   },
 
   pausePlayback: async () => {
