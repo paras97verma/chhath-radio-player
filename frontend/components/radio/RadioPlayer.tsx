@@ -750,25 +750,43 @@ export default function RadioPlayer({
             boxShadow: "0 16px 40px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.08)",
           }}
         >
-          {/* Mobile only: song name strip at top of pill */}
-          {currentSong && (
-            <div
-              className="sm:hidden flex items-center justify-between px-5 pt-3 pb-1 border-b"
-              style={{ borderColor: "rgba(251,146,60,0.10)" }}
-            >
-              <div className="min-w-0 flex-1 text-center">
-                <p className="text-[#fff7ed] text-sm font-semibold truncate leading-tight tracking-wide">
-                  {currentSong.title}
-                </p>
-                <p className="text-[11px] truncate mt-0.5" style={{ color: "rgba(254,215,170,0.65)" }}>
-                  {currentSong.artist}
-                </p>
-              </div>
+          {/* Song name & artist strip at top of pill (both desktop and mobile) */}
+          <div
+            className="flex items-center justify-between px-5 pt-3 pb-2 border-b"
+            style={{ borderColor: "rgba(251,146,60,0.12)" }}
+          >
+            <div className="min-w-0 flex-1 text-center px-2">
+              {error ? (
+                <p className="text-red-400 text-xs font-medium" role="alert">{error}</p>
+              ) : !isReady ? (
+                <p className="text-amber-200/50 text-xs animate-pulse tracking-wide font-medium">Tuning in…</p>
+              ) : currentSong ? (
+                <>
+                  <p className="text-[#fff7ed] text-sm font-semibold truncate leading-tight tracking-wide">
+                    {currentSong.title}
+                  </p>
+                  <p className="text-amber-200/70 text-[11px] truncate mt-0.5 flex items-center justify-center gap-1.5 font-medium tracking-wide">
+                    {isPlaying && (
+                      <span
+                        className="inline-block w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0"
+                        style={{ animation: "nmFabPulse 1.8s ease-in-out infinite" }}
+                        aria-hidden="true"
+                      />
+                    )}
+                    {currentSong.artist}
+                  </p>
+                </>
+              ) : (
+                <p className="text-white/30 text-xs font-medium">No songs loaded</p>
+              )}
+            </div>
+
+            {currentSong && (
               <button
                 onClick={() => toggleFavorite(currentSong.id)}
                 aria-label={isFavorite(currentSong.id) ? "Remove from favorites" : "Add to favorites"}
                 title={isFavorite(currentSong.id) ? "Remove from favorites" : "Add to favorites"}
-                className="p-1.5 rounded-full text-xs transition-all shrink-0 ml-2"
+                className="p-1.5 rounded-full text-xs transition-all hover:scale-110 shrink-0 ml-2"
                 style={{
                   color: isFavorite(currentSong.id) ? "#ef4444" : "rgba(255,255,255,0.35)",
                   background: isFavorite(currentSong.id) ? "rgba(239,68,68,0.12)" : "transparent",
@@ -776,52 +794,13 @@ export default function RadioPlayer({
               >
                 {isFavorite(currentSong.id) ? "❤️" : "♡"}
               </button>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Main row */}
-          <div className="flex items-center gap-3 px-5 pt-3 pb-2">
+          <div className="flex items-center justify-between gap-3 px-5 pt-3 pb-2">
             {/* Vinyl art */}
             <VinylArt src={albumArt} isPlaying={isPlaying} />
-
-            {/* Song info — hidden on mobile (shown in top strip instead) */}
-            <div className="flex-1 min-w-0 hidden sm:block">
-              {error ? (
-                <p className="text-red-400 text-xs" role="alert">{error}</p>
-              ) : !isReady ? (
-                <p className="text-amber-200/50 text-xs animate-pulse tracking-wide">Tuning in…</p>
-              ) : currentSong ? (
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[#fff7ed] text-sm font-semibold truncate leading-tight tracking-wide">{currentSong.title}</p>
-                    <p className="text-amber-200/70 text-[11px] truncate mt-0.5 flex items-center gap-1.5 font-medium tracking-wide">
-                      {isPlaying && (
-                        <span
-                          className="inline-block w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0"
-                          style={{ animation: "nmFabPulse 1.8s ease-in-out infinite" }}
-                          aria-hidden="true"
-                        />
-                      )}
-                      {currentSong.artist}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => toggleFavorite(currentSong.id)}
-                    aria-label={isFavorite(currentSong.id) ? "Remove from favorites" : "Add to favorites"}
-                    title={isFavorite(currentSong.id) ? "Remove from favorites" : "Add to favorites"}
-                    className="p-1.5 rounded-full text-xs transition-all hover:scale-110 shrink-0"
-                    style={{
-                      color: isFavorite(currentSong.id) ? "#ef4444" : "rgba(255,255,255,0.35)",
-                      background: isFavorite(currentSong.id) ? "rgba(239,68,68,0.12)" : "transparent",
-                    }}
-                  >
-                    {isFavorite(currentSong.id) ? "❤️" : "♡"}
-                  </button>
-                </div>
-              ) : (
-                <p className="text-white/30 text-xs">No songs loaded</p>
-              )}
-            </div>
 
             {/* Controls */}
             <div className="flex items-center gap-1 shrink-0">

@@ -14,14 +14,14 @@
 
   /* ── Layout grid tokens ── */
   --footer-h: 3.5rem;
-  --player-h: 4.75rem;
+  --player-h: 7.75rem;
   --player-footer-gap: 1.25rem;
   --stack-gap: 1.5rem;
   --hud-inset: 0.75rem;
 
   --player-bottom: calc(var(--footer-h) + var(--player-footer-gap));
   --fab-bottom: calc(var(--player-bottom) + var(--player-h) / 2 - 1.5rem);
-  --facts-bottom: calc(var(--player-bottom) + var(--player-h) + var(--stack-gap) + 1.75rem);
+  --facts-bottom: calc(var(--player-bottom) + var(--player-h) + var(--stack-gap) + 1.25rem);
   --chat-fab-bottom: calc(var(--fab-bottom) + 2rem);
   --chat-drawer-bottom: calc(var(--player-bottom) + var(--player-h) / 2 + 1.25rem);
   --chat-drawer-max-h: calc(100dvh - var(--chat-drawer-bottom) - var(--hud-inset) - 3.5rem);
@@ -38,8 +38,9 @@
 @media (min-width: 640px) {
   :root {
     --footer-h: 4rem;
+    --player-h: 7.75rem;
     --player-footer-gap: 1.5rem;
-    --stack-gap: 2rem;
+    --stack-gap: 2.25rem;
     --hud-inset: 1rem;
   }
 }
