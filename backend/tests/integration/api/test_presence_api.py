@@ -22,7 +22,7 @@ def client():
 class TestHeartbeatEndpoint:
     def test_valid_session_id_returns_204(self, client):
         """POST /api/presence/heartbeat with valid UUID session_id returns 204 No Content."""
-        with patch("app.services.presence_service._get_client", return_value=None):
+        with patch("app.services.presence_service.get_redis_client", return_value=None):
             resp = client.post(
                 "/api/presence/heartbeat",
                 json={"session_id": "550e8400-e29b-41d4-a716-446655440000"},
@@ -53,7 +53,7 @@ class TestHeartbeatEndpoint:
 class TestListenersEndpoint:
     def test_returns_200_with_count(self, client):
         """GET /api/presence/listeners returns 200 with {"count": <int>}."""
-        with patch("app.services.presence_service._get_client", return_value=None):
+        with patch("app.services.presence_service.get_redis_client", return_value=None):
             resp = client.get("/api/presence/listeners")
 
         assert resp.status_code == 200
@@ -63,7 +63,7 @@ class TestListenersEndpoint:
 
     def test_count_is_non_negative(self, client):
         """Listener count is always >= 0."""
-        with patch("app.services.presence_service._get_client", return_value=None):
+        with patch("app.services.presence_service.get_redis_client", return_value=None):
             resp = client.get("/api/presence/listeners")
 
         assert resp.json()["count"] >= 0

@@ -106,7 +106,7 @@ class TestGetListenerCount:
         _mem_sessions["s2"] = time.time() + 100
         _mem_sessions["s3"] = time.time() + 100
 
-        with patch("app.services.presence_service._get_client", return_value=None):
+        with patch("app.services.presence_service.get_redis_client", return_value=None):
             count = get_listener_count()
 
         assert count == 3
@@ -117,7 +117,7 @@ class TestGetListenerCount:
         _mem_sessions["expired1"] = time.time() - 1
         _mem_sessions["expired2"] = time.time() - 5
 
-        with patch("app.services.presence_service._get_client", return_value=None):
+        with patch("app.services.presence_service.get_redis_client", return_value=None):
             count = get_listener_count()
 
         assert count == 1
@@ -127,7 +127,7 @@ class TestGetListenerCount:
 
     def test_returns_int(self):
         """Return value is always an int."""
-        with patch("app.services.presence_service._get_client", return_value=None):
+        with patch("app.services.presence_service.get_redis_client", return_value=None):
             count = get_listener_count()
         assert isinstance(count, int)
 
@@ -137,7 +137,7 @@ class TestGetListenerCount:
         ps._last_known_write = 0.0  # force write
 
         mock_redis = make_mock_redis()
-        with patch("app.services.presence_service._get_client", return_value=mock_redis):
+        with patch("app.services.presence_service.get_redis_client", return_value=mock_redis):
             count = get_listener_count()
 
         assert count == 1
@@ -148,7 +148,7 @@ class TestGetListenerCount:
         ps._last_known_write = 0.0
 
         mock_redis = make_mock_redis()
-        with patch("app.services.presence_service._get_client", return_value=mock_redis):
+        with patch("app.services.presence_service.get_redis_client", return_value=mock_redis):
             get_listener_count()
 
         mock_redis.set.assert_not_called()
@@ -159,7 +159,7 @@ class TestGetListenerCount:
         ps._last_known_write = time.time()  # just wrote
 
         mock_redis = make_mock_redis()
-        with patch("app.services.presence_service._get_client", return_value=mock_redis):
+        with patch("app.services.presence_service.get_redis_client", return_value=mock_redis):
             get_listener_count()
 
         mock_redis.set.assert_not_called()
@@ -206,7 +206,7 @@ class TestGetLastKnownCount:
         mock_redis = make_mock_redis()
         mock_redis.get.return_value = "42"
 
-        with patch("app.services.presence_service._get_client", return_value=mock_redis):
+        with patch("app.services.presence_service.get_redis_client", return_value=mock_redis):
             count = get_last_known_count()
 
         assert count == 42
@@ -217,14 +217,14 @@ class TestGetLastKnownCount:
         mock_redis = make_mock_redis()
         mock_redis.get.return_value = None
 
-        with patch("app.services.presence_service._get_client", return_value=mock_redis):
+        with patch("app.services.presence_service.get_redis_client", return_value=mock_redis):
             count = get_last_known_count()
 
         assert count == 0
 
     def test_returns_zero_when_redis_unavailable(self):
         """Returns 0 when _get_client returns None (Redis unavailable)."""
-        with patch("app.services.presence_service._get_client", return_value=None):
+        with patch("app.services.presence_service.get_redis_client", return_value=None):
             count = get_last_known_count()
 
         assert count == 0
@@ -234,7 +234,7 @@ class TestGetLastKnownCount:
         mock_redis = make_mock_redis()
         mock_redis.get.side_effect = Exception("Redis timeout")
 
-        with patch("app.services.presence_service._get_client", return_value=mock_redis):
+        with patch("app.services.presence_service.get_redis_client", return_value=mock_redis):
             count = get_last_known_count()
 
         assert count == 0
@@ -244,7 +244,7 @@ class TestGetLastKnownCount:
         mock_redis = make_mock_redis()
         mock_redis.get.return_value = "7"
 
-        with patch("app.services.presence_service._get_client", return_value=mock_redis):
+        with patch("app.services.presence_service.get_redis_client", return_value=mock_redis):
             count = get_last_known_count()
 
         assert isinstance(count, int)
