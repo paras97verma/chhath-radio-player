@@ -16,7 +16,7 @@
   --footer-h: 3.5rem;
   --player-h: 8.5rem;
   --player-footer-gap: 1.25rem;
-  --stack-gap: 2.0rem;
+  --stack-gap: 3.5rem;
   --hud-inset: 0.75rem;
 
   --player-bottom: calc(var(--footer-h) + var(--player-footer-gap));
@@ -31,7 +31,7 @@
 @media (max-width: 639px) {
   :root {
     --player-h: 8.5rem;
-    --stack-gap: 2.0rem;
+    --stack-gap: 3.5rem;
   }
 }
 
@@ -41,7 +41,7 @@
     --footer-h: 4rem;
     --player-h: 8.5rem;
     --player-footer-gap: 1.5rem;
-    --stack-gap: 3.0rem;
+    --stack-gap: 3.5rem;
     --hud-inset: 1rem;
   }
 }

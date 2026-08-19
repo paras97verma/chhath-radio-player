@@ -909,10 +909,8 @@ export default function RadioPlayer({
             </div>
           </div>
 
-          {/* Progress bar row */}
-          {isReady && (
-            <ProgressBar adapterRef={adapterRef} isPlaying={isPlaying} />
-          )}
+          {/* Progress bar row — always rendered for constant height stability */}
+          <ProgressBar adapterRef={adapterRef} isPlaying={isPlaying} />
         </div>
       </div>
     </>
