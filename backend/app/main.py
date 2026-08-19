@@ -3,6 +3,7 @@ Chhath Radio — FastAPI Application Entry Point.
 Registers all routers and configures CORS.
 """
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,11 +18,33 @@ from app.api.ws_chat import router as ws_chat_router
 from app.api.admin.auth import router as admin_auth_router
 from app.api.admin.songs import router as admin_songs_router
 from app.api.chhath_dates import router as chhath_dates_router
+from app.core.config import settings
+from app.core.redis import init_redis, close_redis
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Application lifespan handler.
+
+    Startup:
+      - Eagerly initialise the shared Redis connection pool with retries.
+        This prevents the lru_cache-poison bug where a transient failure at
+        cold-start permanently disables Redis for the process lifetime.
+
+    Shutdown:
+      - Cleanly disconnect the Redis pool.
+    """
+    await init_redis(settings.REDIS_URL, retries=5, delay=1.5)
+    yield
+    close_redis()
+
 
 app = FastAPI(
     title="Chhath Radio API",
     description="Backend API for Chhath Radio — छठ के गीत, बिना रुके",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # ---------------------------------------------------------------------------
@@ -57,7 +80,6 @@ app.include_router(ws_chat_router)
 app.include_router(admin_auth_router)
 app.include_router(admin_songs_router)
 app.include_router(chhath_dates_router)
-
 
 
 @app.get("/api/health", tags=["health"])

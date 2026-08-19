@@ -6,16 +6,25 @@ Endpoints:
   GET  /api/chat/messages  — Fetch last N messages (initial load)
 
 Storage:
-  Messages are stored in Redis as a time-sorted set (score = unix timestamp).
-  Max 200 messages are retained permanently across server restarts & redeployments.
-  An in-memory deque(maxlen=200) acts as a write-through cache so GET requests
-  don't need a Redis round-trip after the first load.
+  Messages are stored exclusively in Redis as a time-sorted set
+  (score = unix timestamp). Max 200 messages are retained and survive
+  server restarts and redeployments.
+
+  There is NO in-memory deque fallback — the deque was the root cause of
+  history loss: it was wiped on every deploy and the lru_cache on the Redis
+  pool permanently cached None on a cold-start failure, silently routing all
+  writes to the doomed deque.
+
+  If Redis is unavailable, _store_message() logs a warning and drops the
+  message (honest data loss), and _load_messages() returns [] (honest empty
+  state). This is far better than silently accumulating messages in a deque
+  that will be wiped on the next deploy.
 
 Real-time broadcast:
   New messages are pushed to all active WebSocket connections via ws_chat.broadcast().
 
 Rate limiting:
-  In-memory dict (1 message per 3 seconds per IP).
+  In-memory dict (1 message per 3 seconds per IP). Correct for single-worker.
 """
 
 import json
@@ -23,15 +32,12 @@ import logging
 import time
 import uuid
 import random
-from collections import deque
-from functools import lru_cache
-from typing import Any, Optional
+from typing import Any
 
-import redis as redis_lib
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.core.config import settings
+from app.core.redis import get_redis_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -39,10 +45,6 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 # ─── Redis key ────────────────────────────────────────────────────────────────
 CHAT_KEY = "chhath:chat:messages"
 MAX_MESSAGES = 200          # Retain latest 200 messages permanently
-
-# ─── In-memory write-through cache ───────────────────────────────────────────
-_message_buffer: deque = deque(maxlen=MAX_MESSAGES)
-_buffer_loaded: bool = False  # True after first Redis load
 
 # ─── Rate limiting (in-memory, single-worker) ─────────────────────────────────
 _rate_limit: dict[str, float] = {}
@@ -97,88 +99,61 @@ def _random_name() -> str:
     return random.choice(_NAMES)
 
 
-# ─── Redis helpers ────────────────────────────────────────────────────────────
-
-@lru_cache(maxsize=1)
-def _get_redis_pool() -> Optional[redis_lib.ConnectionPool]:
-    """
-    Create a single connection pool for the process (cached via lru_cache).
-    Returns None if Redis is not configured or unreachable.
-    """
-    try:
-        pool = redis_lib.ConnectionPool.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            max_connections=20,
-            socket_connect_timeout=2,
-            socket_timeout=2,
-        )
-        redis_lib.Redis(connection_pool=pool).ping()
-        return pool
-    except Exception as exc:
-        logger.warning("Redis unavailable for chat: %s", exc)
-        return None
-
-
-def _get_redis() -> Optional[redis_lib.Redis]:
-    """Return a Redis client from the shared pool, or None if unavailable."""
-    pool = _get_redis_pool()
-    return redis_lib.Redis(connection_pool=pool) if pool else None
-
-
-# ─── Message storage ──────────────────────────────────────────────────────────
+# ─── Message storage (Redis-only) ─────────────────────────────────────────────
 
 def _store_message(msg: dict[str, Any]) -> None:
     """
-    Store a message in both the in-memory deque and Redis sorted set.
+    Persist a message to the Redis sorted set (score = unix timestamp).
 
-    The deque write is performed first.
-    The Redis write retains the latest 200 messages using zremrangebyrank.
+    Enforces the MAX_MESSAGES cap via ZREMRANGEBYRANK in the same pipeline.
+    If Redis is unavailable, logs a warning and drops the message — this is
+    intentional: a dropped message is far better than silently accumulating
+    in an in-memory deque that will be wiped on the next deploy.
     """
-    # 1. Write to in-memory cache (deque auto-drops oldest if > MAX_MESSAGES)
-    _message_buffer.append(msg)
+    r = get_redis_client()
+    if r is None:
+        logger.warning(
+            "Redis unavailable — chat message dropped (id=%s). "
+            "Message will not appear in history after reconnect.",
+            msg.get("id"),
+        )
+        return
 
-    # 2. Persist to Redis sorted set (score = unix timestamp for time-ordering)
     try:
-        r = _get_redis()
-        if r:
-            ts = msg["ts"]
-            pipe = r.pipeline()
-            pipe.zadd(CHAT_KEY, {json.dumps(msg): ts})
-            # Enforce hard cap — retain only the newest MAX_MESSAGES entries
-            pipe.zremrangebyrank(CHAT_KEY, 0, -(MAX_MESSAGES + 1))
-            pipe.execute()
+        ts = float(msg["ts"])
+        pipe = r.pipeline()
+        pipe.zadd(CHAT_KEY, {json.dumps(msg): ts})
+        # Enforce hard cap — retain only the newest MAX_MESSAGES entries.
+        # zremrangebyrank removes by rank (0 = oldest). After adding the new
+        # entry, rank -(MAX_MESSAGES+1) and below are excess.
+        pipe.zremrangebyrank(CHAT_KEY, 0, -(MAX_MESSAGES + 1))
+        pipe.execute()
     except Exception as exc:
-        logger.warning("Redis chat store failed (message in deque): %s", exc)
+        logger.warning("Redis chat store failed (message dropped): %s", exc)
 
 
-def _load_messages(limit: int = 200) -> list[dict[str, Any]]:
+def _load_messages(limit: int = MAX_MESSAGES) -> list[dict[str, Any]]:
     """
-    Load last N messages for initial load (e.g. on WebSocket connect).
+    Load the last `limit` messages from the Redis sorted set.
 
-    Loads the latest 200 messages from Redis sorted set.
+    Always reads from Redis — there is no in-memory cache. This guarantees
+    that history survives deploys as long as Redis is available.
+
+    Returns [] if Redis is unavailable (honest empty state).
     """
-    global _buffer_loaded
+    r = get_redis_client()
+    if r is None:
+        logger.warning("Redis unavailable — returning empty chat history.")
+        return []
 
-    # Populate deque from Redis if not yet loaded or if buffer is empty
-    if not _buffer_loaded or not _message_buffer:
-        try:
-            r = _get_redis()
-            if r:
-                # Fetch latest MAX_MESSAGES entries from sorted set (ascending by score)
-                raw = r.zrange(CHAT_KEY, -MAX_MESSAGES, -1)
-                msgs = [json.loads(m) for m in raw]
-                _message_buffer.clear()
-                for m in msgs:
-                    _message_buffer.append(m)
-                _buffer_loaded = True
-                logger.info("Loaded %d messages from Redis into deque", len(msgs))
-        except Exception as exc:
-            logger.warning("Redis chat load failed, using deque: %s", exc)
-            _buffer_loaded = True
-
-    msgs = list(_message_buffer)
-    return msgs[-limit:]
+    try:
+        # zrange with -limit..-1 returns the newest `limit` entries in
+        # ascending timestamp order (oldest first, newest last).
+        raw = r.zrange(CHAT_KEY, -limit, -1)
+        return [json.loads(m) for m in raw]
+    except Exception as exc:
+        logger.warning("Redis chat load failed: %s", exc)
+        return []
 
 
 # ─── Schemas ──────────────────────────────────────────────────────────────────
@@ -240,7 +215,7 @@ async def send_message(body: ChatMessageIn, request: Request) -> ChatMessageOut:
 
 
 @router.get("/messages", response_model=list[ChatMessageOut])
-def get_messages(limit: int = 200) -> list[ChatMessageOut]:
+def get_messages(limit: int = MAX_MESSAGES) -> list[ChatMessageOut]:
     """Fetch the last N chat messages for initial load."""
     limit = min(limit, MAX_MESSAGES)
     msgs = _load_messages(limit)

@@ -25,7 +25,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from app.services.presence_service import _get_client as _get_redis
+from app.core.redis import get_redis_client as _get_redis
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chhath"])

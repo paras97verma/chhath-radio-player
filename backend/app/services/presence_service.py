@@ -23,12 +23,8 @@ Redis key layout:
 
 import time
 import logging
-from functools import lru_cache
-from typing import Optional
 
-import redis as redis_lib
-
-from app.core.config import settings
+from app.core.redis import get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -50,34 +46,6 @@ LAST_KNOWN_WRITE_INTERVAL = 30
 
 _mem_sessions: dict[str, float] = {}  # session_id → expiry timestamp
 _last_known_write: float = 0.0        # unix timestamp of last Redis write
-
-# ─── Redis connection (for last-known count only) ─────────────────────────────
-
-@lru_cache(maxsize=1)
-def _get_pool() -> Optional[redis_lib.ConnectionPool]:
-    """
-    Create a single connection pool for the process.
-    Returns None if Redis is not configured or unreachable.
-    """
-    try:
-        pool = redis_lib.ConnectionPool.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            max_connections=10,
-            socket_connect_timeout=2,
-            socket_timeout=2,
-        )
-        redis_lib.Redis(connection_pool=pool).ping()
-        return pool
-    except Exception as exc:
-        logger.warning("Redis unavailable for presence last-known: %s", exc)
-        return None
-
-
-def _get_client() -> Optional[redis_lib.Redis]:
-    pool = _get_pool()
-    return redis_lib.Redis(connection_pool=pool) if pool else None
-
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -110,7 +78,7 @@ def get_listener_count() -> int:
     # Periodically persist last-known count to Redis
     if count > 0 and (now - _last_known_write) >= LAST_KNOWN_WRITE_INTERVAL:
         try:
-            r = _get_client()
+            r = get_redis_client()
             if r:
                 r.set(LAST_KNOWN_KEY, count, ex=3600)  # expire after 1 hour
                 _last_known_write = now
@@ -130,7 +98,7 @@ def get_last_known_count() -> int:
     is unavailable or the key has expired.
     """
     try:
-        r = _get_client()
+        r = get_redis_client()
         if r:
             val = r.get(LAST_KNOWN_KEY)
             return int(val) if val else 0

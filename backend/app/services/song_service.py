@@ -20,7 +20,7 @@ from sqlalchemy import select, func
 
 from app.models.song import Song
 from app.schemas.song import SongCreate, SongUpdate, extract_youtube_video_id
-from app.services.presence_service import _get_client as _get_redis
+from app.core.redis import get_redis_client as _get_redis
 
 logger = logging.getLogger(__name__)
 
