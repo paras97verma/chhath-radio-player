@@ -70,6 +70,11 @@ const IconClose = () => (
     <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
   </svg>
 );
+const IconShuffle = () => (
+  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+    <path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.45 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z" />
+  </svg>
+);
 
 // ─── Spectrogram Bars ─────────────────────────────────────────────────────────
 
@@ -380,85 +385,132 @@ function PlaylistDrawer({
   onPlaySong: (index: number, song: Song) => void;
 }) {
   const queue = useRadioStore((s) => s.queue);
+  const allSongs = useRadioStore((s) => s.allSongs);
+  const favorites = useRadioStore((s) => s.favorites);
+  const activeFilter = useRadioStore((s) => s.activeFilter);
   const currentIndex = useRadioStore((s) => s.currentIndex);
-  const toggleFavorite = useUserStore((s) => s.toggleFavorite);
-  const favorites = useUserStore((s) => s.favorites);
+  const toggleFavorite = useRadioStore((s) => s.toggleFavorite);
+  const isFavorite = useRadioStore((s) => s.isFavorite);
+  const setFilter = useRadioStore((s) => s.setFilter);
+
+  const favoritedCount = favorites.length;
+  const activeItemRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-scroll active song into view when playlist opens
+  useEffect(() => {
+    if (activeItemRef.current) {
+      activeItemRef.current.scrollIntoView({ block: "center", behavior: "auto" });
+    }
+  }, []);
 
   return (
-    <div className="absolute bottom-full left-0 right-0 mb-3">
+    <div className="absolute bottom-full left-0 right-0 mb-3 z-30">
       <div
-        className="rounded-2xl overflow-hidden"
+        className="rounded-2xl overflow-hidden border"
         style={{
-          background: "rgba(10, 4, 2, 0.97)",
-          boxShadow: "10px 10px 28px rgba(0,0,0,0.80), -5px -5px 16px rgba(60,30,10,0.28), inset 0 1px 0 rgba(255,255,255,0.04)",
+          background: "rgba(14, 7, 4, 0.95)",
+          borderColor: "rgba(251, 146, 60, 0.18)",
+          boxShadow: "0 16px 40px rgba(0,0,0,0.85), inset 0 1px 0 rgba(255,255,255,0.08)",
+          backdropFilter: "blur(24px)",
+          WebkitBackdropFilter: "blur(24px)",
         }}
       >
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/5">
-          <span className="text-orange-400/80 text-xs font-semibold tracking-wide">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-orange-500/15">
+          <span className="text-orange-400 font-semibold text-xs tracking-wide">
             🎵 Playlist ({queue.length})
           </span>
-          <button onClick={onClose} className="text-white/30 hover:text-white/70 transition-colors p-1" aria-label="Close playlist">
+          <button onClick={onClose} className="text-white/40 hover:text-white/80 transition-colors p-1" aria-label="Close playlist">
             <IconClose />
           </button>
         </div>
-        <div className="max-h-56 overflow-y-auto">
-          {queue.map((song, i) => {
-            const isFav = favorites.includes(song.youtube_video_id);
-            return (
-              <div
-                key={song.id}
-                className={`flex items-center gap-1 transition-colors ${
-                  i === currentIndex ? "bg-orange-500/10" : "hover:bg-white/4"
-                }`}
-              >
-                <button
-                  onClick={() => onPlaySong(i, song)}
-                  className="flex items-center gap-3 px-4 py-2 text-left flex-1 min-w-0"
+
+        {/* Tab Switcher: Appears ONLY when user has favorited at least 1 song */}
+        {favoritedCount > 0 && (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-orange-500/10 bg-black/40">
+            <button
+              onClick={() => setFilter("all")}
+              className={`flex-1 py-1 px-2.5 rounded-lg text-[11px] font-semibold transition-all ${
+                activeFilter === "all"
+                  ? "bg-orange-500/20 text-orange-400 border border-orange-500/35"
+                  : "text-amber-200/50 hover:text-amber-200 hover:bg-white/5"
+              }`}
+            >
+              All Songs ({allSongs.length})
+            </button>
+            <button
+              onClick={() => setFilter("favorites")}
+              className={`flex-1 py-1 px-2.5 rounded-lg text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5 ${
+                activeFilter === "favorites"
+                  ? "bg-orange-500/20 text-orange-400 border border-orange-500/35"
+                  : "text-amber-200/50 hover:text-amber-200 hover:bg-white/5"
+              }`}
+            >
+              <span>❤️ Favorites</span>
+              <span>({favoritedCount})</span>
+            </button>
+          </div>
+        )}
+
+        {/* Song List */}
+        <div className="max-h-56 overflow-y-auto chat-scrollbar">
+          {queue.length === 0 ? (
+            <div className="py-6 text-center text-white/30 text-xs">
+              No favorite songs yet. Tap ♡ on any song to add!
+            </div>
+          ) : (
+            queue.map((song, i) => {
+              const favorited = isFavorite(song.id);
+              const isPlaying = i === currentIndex;
+              return (
+                <div
+                  key={song.id}
+                  ref={isPlaying ? activeItemRef : null}
+                  className={`flex items-center gap-1 transition-colors ${
+                    isPlaying ? "bg-orange-500/15" : "hover:bg-white/5"
+                  }`}
                 >
-                  <span className={`text-[10px] w-4 text-right shrink-0 ${i === currentIndex ? "text-orange-400" : "text-white/25"}`}>
-                    {i === currentIndex ? "▶" : i + 1}
-                  </span>
-                  <img
-                    src={`https://i.ytimg.com/vi/${song.youtube_video_id}/default.jpg`}
-                    alt=""
-                    className="w-7 h-7 rounded object-cover shrink-0 opacity-70"
-                    loading="lazy"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className={`text-xs truncate ${i === currentIndex ? "text-orange-400" : "text-white/70"}`}>{song.title}</p>
-                    <p className="text-white/30 text-[10px] truncate">{song.artist}</p>
-                  </div>
-                </button>
-                {/* ❤️ Favorite toggle */}
-                <button
-                  onClick={(e) => { e.stopPropagation(); toggleFavorite(song.youtube_video_id); }}
-                  aria-label={isFav ? "Remove from favorites" : "Add to favorites"}
-                  title={isFav ? "Remove from favorites" : "Add to favorites"}
-                  className="shrink-0 mr-2 w-7 h-7 flex items-center justify-center rounded-full transition-all"
-                  style={{
-                    color: isFav ? "#f97316" : "rgba(255,255,255,0.25)",
-                    background: isFav ? "rgba(249,115,22,0.12)" : "transparent",
-                    fontSize: 13,
-                    border: isFav ? "1px solid rgba(249,115,22,0.3)" : "1px solid transparent",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isFav) {
-                      e.currentTarget.style.color = "rgba(249,115,22,0.7)";
-                      e.currentTarget.style.background = "rgba(249,115,22,0.08)";
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isFav) {
-                      e.currentTarget.style.color = "rgba(255,255,255,0.25)";
-                      e.currentTarget.style.background = "transparent";
-                    }
-                  }}
-                >
-                  {isFav ? "❤️" : "♡"}
-                </button>
-              </div>
-            );
-          })}
+                  <button
+                    onClick={() => onPlaySong(i, song)}
+                    className="flex items-center gap-3 px-4 py-2 text-left flex-1 min-w-0"
+                  >
+                    <span className={`text-[10px] w-4 text-right shrink-0 font-bold ${isPlaying ? "text-orange-400" : "text-white/30"}`}>
+                      {isPlaying ? "▶" : i + 1}
+                    </span>
+                    <img
+                      src={`https://i.ytimg.com/vi/${song.youtube_video_id}/default.jpg`}
+                      alt=""
+                      className="w-7 h-7 rounded object-cover shrink-0 opacity-80"
+                      loading="lazy"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xs truncate font-medium ${isPlaying ? "text-orange-400" : "text-white/80"}`}>{song.title}</p>
+                      <p className="text-amber-200/50 text-[10px] truncate">{song.artist}</p>
+                    </div>
+                  </button>
+
+                  {/* Heart Favorite toggle button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFavorite(song.id);
+                    }}
+                    aria-label={favorited ? "Remove from favorites" : "Add to favorites"}
+                    title={favorited ? "Remove from favorites" : "Add to favorites"}
+                    className="shrink-0 mr-3 w-7 h-7 flex items-center justify-center rounded-full transition-all"
+                    style={{
+                      color: favorited ? "#ef4444" : "rgba(255,255,255,0.3)",
+                      background: favorited ? "rgba(239,68,68,0.12)" : "transparent",
+                      fontSize: 13,
+                      border: favorited ? "1px solid rgba(239,68,68,0.3)" : "1px solid transparent",
+                    }}
+                  >
+                    {favorited ? "❤️" : "♡"}
+                  </button>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
     </div>
@@ -505,6 +557,10 @@ export default function RadioPlayer({
   const startPlayback = useRadioStore((s) => s.startPlayback);
   const pausePlayback = useRadioStore((s) => s.pausePlayback);
   const nextSong = useRadioStore((s) => s.nextSong);
+  const toggleFavorite = useRadioStore((s) => s.toggleFavorite);
+  const isFavorite = useRadioStore((s) => s.isFavorite);
+  const isShuffleEnabled = useRadioStore((s) => s.isShuffleEnabled);
+  const toggleShuffle = useRadioStore((s) => s.toggleShuffle);
 
   const currentSong = queue[currentIndex] ?? null;
   const isPlaying = playState === "PLAYING";
@@ -697,15 +753,29 @@ export default function RadioPlayer({
           {/* Mobile only: song name strip at top of pill */}
           {currentSong && (
             <div
-              className="sm:hidden flex flex-col items-center px-5 pt-3 pb-1 border-b"
+              className="sm:hidden flex items-center justify-between px-5 pt-3 pb-1 border-b"
               style={{ borderColor: "rgba(251,146,60,0.10)" }}
             >
-              <p className="text-[#fff7ed] text-sm font-semibold truncate w-full text-center leading-tight tracking-wide">
-                {currentSong.title}
-              </p>
-              <p className="text-[11px] truncate w-full text-center mt-0.5" style={{ color: "rgba(254,215,170,0.65)" }}>
-                {currentSong.artist}
-              </p>
+              <div className="min-w-0 flex-1 text-center">
+                <p className="text-[#fff7ed] text-sm font-semibold truncate leading-tight tracking-wide">
+                  {currentSong.title}
+                </p>
+                <p className="text-[11px] truncate mt-0.5" style={{ color: "rgba(254,215,170,0.65)" }}>
+                  {currentSong.artist}
+                </p>
+              </div>
+              <button
+                onClick={() => toggleFavorite(currentSong.id)}
+                aria-label={isFavorite(currentSong.id) ? "Remove from favorites" : "Add to favorites"}
+                title={isFavorite(currentSong.id) ? "Remove from favorites" : "Add to favorites"}
+                className="p-1.5 rounded-full text-xs transition-all shrink-0 ml-2"
+                style={{
+                  color: isFavorite(currentSong.id) ? "#ef4444" : "rgba(255,255,255,0.35)",
+                  background: isFavorite(currentSong.id) ? "rgba(239,68,68,0.12)" : "transparent",
+                }}
+              >
+                {isFavorite(currentSong.id) ? "❤️" : "♡"}
+              </button>
             </div>
           )}
 
@@ -721,19 +791,33 @@ export default function RadioPlayer({
               ) : !isReady ? (
                 <p className="text-amber-200/50 text-xs animate-pulse tracking-wide">Tuning in…</p>
               ) : currentSong ? (
-                <>
-                  <p className="text-[#fff7ed] text-sm font-semibold truncate leading-tight tracking-wide">{currentSong.title}</p>
-                  <p className="text-amber-200/70 text-[11px] truncate mt-0.5 flex items-center gap-1.5 font-medium tracking-wide">
-                    {isPlaying && (
-                      <span
-                        className="inline-block w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0"
-                        style={{ animation: "nmFabPulse 1.8s ease-in-out infinite" }}
-                        aria-hidden="true"
-                      />
-                    )}
-                    {currentSong.artist}
-                  </p>
-                </>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[#fff7ed] text-sm font-semibold truncate leading-tight tracking-wide">{currentSong.title}</p>
+                    <p className="text-amber-200/70 text-[11px] truncate mt-0.5 flex items-center gap-1.5 font-medium tracking-wide">
+                      {isPlaying && (
+                        <span
+                          className="inline-block w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0"
+                          style={{ animation: "nmFabPulse 1.8s ease-in-out infinite" }}
+                          aria-hidden="true"
+                        />
+                      )}
+                      {currentSong.artist}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => toggleFavorite(currentSong.id)}
+                    aria-label={isFavorite(currentSong.id) ? "Remove from favorites" : "Add to favorites"}
+                    title={isFavorite(currentSong.id) ? "Remove from favorites" : "Add to favorites"}
+                    className="p-1.5 rounded-full text-xs transition-all hover:scale-110 shrink-0"
+                    style={{
+                      color: isFavorite(currentSong.id) ? "#ef4444" : "rgba(255,255,255,0.35)",
+                      background: isFavorite(currentSong.id) ? "rgba(239,68,68,0.12)" : "transparent",
+                    }}
+                  >
+                    {isFavorite(currentSong.id) ? "❤️" : "♡"}
+                  </button>
+                </div>
               ) : (
                 <p className="text-white/30 text-xs">No songs loaded</p>
               )}
@@ -797,6 +881,21 @@ export default function RadioPlayer({
                 }}
               >
                 <IconNext />
+              </button>
+
+              {/* Shuffle button */}
+              <button
+                onClick={toggleShuffle}
+                aria-label={isShuffleEnabled ? "Disable shuffle" : "Enable shuffle"}
+                title={isShuffleEnabled ? "Shuffle is ON" : "Shuffle is OFF"}
+                className="w-10 h-10 flex items-center justify-center rounded-full transition-all hover:scale-110"
+                style={{
+                  color: isShuffleEnabled ? "#fb923c" : "rgba(255,255,255,0.4)",
+                  background: isShuffleEnabled ? "rgba(249,115,22,0.18)" : "transparent",
+                  boxShadow: isShuffleEnabled ? "0 0 14px rgba(249,115,22,0.35)" : "none",
+                }}
+              >
+                <IconShuffle />
               </button>
 
               {/* Divider */}

@@ -4,18 +4,68 @@
  * Central Zustand store that manages:
  * - The song queue and current index
  * - Play state machine
- * - Auto-progression when a song ends (Phase 4.2)
- * - Error recovery for private/deleted videos (Phase 4.3)
- * - Session guard to prevent race conditions (Phase 4.4)
+ * - Continuous auto-progression & loop repeating when queue ends
+ * - Favorites management with localStorage persistence
+ * - Queue filtering ("all" vs "favorites")
+ * - Shuffle (Random) playback mode with persistence
  */
 
 import { create } from "zustand";
-// Use the built-in Web Crypto API — no external dependency needed
 const uuidv4 = () => crypto.randomUUID();
 import type { Song } from "./api";
 import type { YouTubePlayerAdapter, PlayerState } from "./youtube-adapter";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+const FAVORITES_STORAGE_KEY = "chhath_radio_favorites_v1";
+const SHUFFLE_STORAGE_KEY = "chhath_radio_shuffle_v1";
+
+function loadFavoritesFromStorage(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(FAVORITES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveFavoritesToStorage(favs: string[]) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favs));
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadShuffleFromStorage(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(SHUFFLE_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function saveShuffleToStorage(enabled: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(SHUFFLE_STORAGE_KEY, enabled ? "true" : "false");
+  } catch {
+    /* ignore */
+  }
+}
+
+function getNextIndex(current: number, length: number, isShuffle: boolean): number {
+  if (length <= 1) return 0;
+  if (isShuffle) {
+    let rand = Math.floor(Math.random() * length);
+    if (rand === current) {
+      rand = (current + 1) % length;
+    }
+    return rand;
+  }
+  return (current + 1) % length;
+}
 
 export type RadioPlayState =
   | "IDLE"
@@ -24,49 +74,43 @@ export type RadioPlayState =
   | "BUFFERING"
   | "ERROR";
 
+export type PlaylistFilter = "all" | "favorites";
+
 interface RadioState {
-  // Queue
+  // Queue & Song data
+  allSongs: Song[];
   queue: Song[];
   currentIndex: number;
+  favorites: string[];
+  activeFilter: PlaylistFilter;
+  isShuffleEnabled: boolean;
 
   // Play state
   playState: RadioPlayState;
-
-  // Phase 4.4: Session guard — each channel/queue load gets a new ID
   radioSessionId: string;
-
-  // The adapter instance (set externally by the player component)
   adapter: YouTubePlayerAdapter | null;
 
-  // ─── Actions ───────────────────────────────────────────────────────────────
-
-  /** Load a new queue of songs and reset the session. */
+  // Actions
   loadQueue: (songs: Song[], adapter: YouTubePlayerAdapter) => Promise<void>;
-
-  /** Start playing the radio (user tapped the Play button). */
   startPlayback: () => Promise<void>;
-
-  /** Pause playback. */
   pausePlayback: () => Promise<void>;
-
-  /** Skip to the next song manually. */
   nextSong: () => Promise<void>;
-
-  /** Called internally when the YouTube adapter emits a state change. */
   handleAdapterStateChange: (state: PlayerState, sessionId: string) => Promise<void>;
-
-  /** Get the currently playing song, or null if queue is empty. */
   currentSong: () => Song | null;
-
-  /** Get the next N songs in the queue. */
   upNextSongs: (count?: number) => Song[];
+  toggleFavorite: (songId: string) => void;
+  isFavorite: (songId: string) => boolean;
+  setFilter: (filter: PlaylistFilter) => Promise<void>;
+  toggleShuffle: () => void;
 }
 
-// ─── Store ────────────────────────────────────────────────────────────────────
-
 export const useRadioStore = create<RadioState>((set, get) => ({
+  allSongs: [],
   queue: [],
   currentIndex: 0,
+  favorites: loadFavoritesFromStorage(),
+  activeFilter: "all",
+  isShuffleEnabled: loadShuffleFromStorage(),
   playState: "IDLE",
   radioSessionId: uuidv4(),
   adapter: null,
@@ -77,30 +121,123 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   },
 
   upNextSongs: (count = 3) => {
-    const { queue, currentIndex } = get();
-    return queue.slice(currentIndex + 1, currentIndex + 1 + count);
+    const { queue, currentIndex, isShuffleEnabled } = get();
+    if (queue.length === 0) return [];
+    const result: Song[] = [];
+    for (let i = 1; i <= Math.min(count, queue.length - 1); i++) {
+      const idx = isShuffleEnabled
+        ? (currentIndex + i * 3) % queue.length
+        : (currentIndex + i) % queue.length;
+      result.push(queue[idx]);
+    }
+    return result;
+  },
+
+  isFavorite: (songId: string) => {
+    return get().favorites.includes(songId);
+  },
+
+  toggleShuffle: () => {
+    const { isShuffleEnabled } = get();
+    const nextVal = !isShuffleEnabled;
+    saveShuffleToStorage(nextVal);
+    set({ isShuffleEnabled: nextVal });
+  },
+
+  toggleFavorite: (songId: string) => {
+    const { favorites, activeFilter, allSongs, queue, currentIndex, adapter } = get();
+    const isFav = favorites.includes(songId);
+    const updatedFavs = isFav
+      ? favorites.filter((id) => id !== songId)
+      : [...favorites, songId];
+
+    saveFavoritesToStorage(updatedFavs);
+
+    if (activeFilter === "favorites") {
+      const currentPlayingSong = queue[currentIndex];
+      const newFavQueue = allSongs.filter((s) => updatedFavs.includes(s.id));
+
+      if (newFavQueue.length === 0) {
+        set({
+          favorites: updatedFavs,
+          activeFilter: "all",
+          queue: allSongs,
+          currentIndex: currentPlayingSong
+            ? Math.max(0, allSongs.findIndex((s) => s.id === currentPlayingSong.id))
+            : 0,
+        });
+      } else {
+        const newIdx = currentPlayingSong
+          ? Math.max(0, newFavQueue.findIndex((s) => s.id === currentPlayingSong.id))
+          : 0;
+        set({
+          favorites: updatedFavs,
+          queue: newFavQueue,
+          currentIndex: newIdx,
+        });
+        if (!isFav && adapter && currentPlayingSong && newFavQueue[newIdx]?.id !== currentPlayingSong.id) {
+          adapter.loadVideo(newFavQueue[newIdx].youtube_video_id);
+        }
+      }
+    } else {
+      set({ favorites: updatedFavs });
+    }
+  },
+
+  setFilter: async (filter: PlaylistFilter) => {
+    const { allSongs, favorites, currentSong, adapter } = get();
+    const curSong = currentSong();
+
+    if (filter === "favorites") {
+      const favQueue = allSongs.filter((s) => favorites.includes(s.id));
+      if (favQueue.length === 0) return;
+
+      const matchIdx = curSong ? favQueue.findIndex((s) => s.id === curSong.id) : 0;
+      const targetIdx = matchIdx >= 0 ? matchIdx : 0;
+
+      set({
+        activeFilter: "favorites",
+        queue: favQueue,
+        currentIndex: targetIdx,
+      });
+
+      if (adapter && favQueue[targetIdx]) {
+        set({ playState: "BUFFERING" });
+        await adapter.loadVideo(favQueue[targetIdx].youtube_video_id);
+      }
+    } else {
+      const matchIdx = curSong ? allSongs.findIndex((s) => s.id === curSong.id) : 0;
+      const targetIdx = matchIdx >= 0 ? matchIdx : 0;
+
+      set({
+        activeFilter: "all",
+        queue: allSongs,
+        currentIndex: targetIdx,
+      });
+    }
   },
 
   loadQueue: async (songs, adapter) => {
-    // Phase 4.4: Generate a new session ID to invalidate any in-flight events
     const newSessionId = uuidv4();
+    const { activeFilter, favorites } = get();
+    const activeQueue =
+      activeFilter === "favorites" && favorites.length > 0
+        ? songs.filter((s) => favorites.includes(s.id))
+        : songs;
 
     set({
-      queue: songs,
+      allSongs: songs,
+      queue: activeQueue.length > 0 ? activeQueue : songs,
       currentIndex: 0,
       playState: "IDLE",
       radioSessionId: newSessionId,
       adapter,
     });
 
-    // Subscribe to adapter state changes, passing the session ID so stale
-    // events from a previous session can be ignored.
     const unsubscribe = adapter.onStateChange((state) => {
       get().handleAdapterStateChange(state, newSessionId);
     });
 
-    // Store the unsubscribe function so it can be called on cleanup
-    // (We attach it to the adapter instance for simplicity)
     (adapter as unknown as { _unsubscribe?: () => void })._unsubscribe = unsubscribe;
   },
 
@@ -109,20 +246,15 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     if (!adapter || queue.length === 0) return;
 
     const currentState = adapter.getState();
-
-    // If already loaded/paused, just resume — don't reload the video
     if (currentState === "PAUSED" || currentState === "CUED") {
       await adapter.play();
-      // playState will be updated by the onStateChange → PLAYING handler
       return;
     }
 
-    // Otherwise load (and auto-play) the current song
     const song = queue[currentIndex];
     set({ playState: "BUFFERING" });
     await adapter.loadVideo(song.youtube_video_id);
-    // YouTube's loadVideoById auto-plays; if it doesn't fire PLAYING event
-    // within a short window, nudge it with an explicit play() call.
+
     setTimeout(async () => {
       const state = get();
       if (state.playState === "BUFFERING") {
@@ -139,15 +271,10 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   },
 
   nextSong: async () => {
-    const { queue, currentIndex, adapter, radioSessionId } = get();
-    if (!adapter) return;
+    const { queue, currentIndex, adapter, isShuffleEnabled } = get();
+    if (!adapter || queue.length === 0) return;
 
-    const nextIndex = currentIndex + 1;
-    if (nextIndex >= queue.length) {
-      // End of queue — wrap around to beginning
-      set({ currentIndex: 0, playState: "IDLE" });
-      return;
-    }
+    const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
 
     set({ currentIndex: nextIndex, playState: "BUFFERING" });
     await adapter.loadVideo(queue[nextIndex].youtube_video_id);
@@ -156,7 +283,6 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   handleAdapterStateChange: async (state, sessionId) => {
     const { radioSessionId, queue, currentIndex, adapter } = get();
 
-    // Phase 4.4: Session guard — ignore events from old sessions
     if (sessionId !== radioSessionId) return;
 
     switch (state) {
@@ -173,25 +299,24 @@ export const useRadioStore = create<RadioState>((set, get) => ({
         break;
 
       case "ENDED": {
-        // Phase 4.2: Auto-progression
-        const nextIndex = currentIndex + 1;
-        if (nextIndex < queue.length) {
+        if (queue.length > 0) {
+          const { isShuffleEnabled } = get();
+          const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
           set({ currentIndex: nextIndex, playState: "BUFFERING" });
           await adapter?.loadVideo(queue[nextIndex].youtube_video_id);
         } else {
-          // Wrap around
           set({ currentIndex: 0, playState: "IDLE" });
         }
         break;
       }
 
       case "ERROR": {
-        // Phase 4.3: Error recovery — skip the broken song
         console.warn(
           `[RadioController] Video error for song at index ${currentIndex}. Skipping.`
         );
-        const nextIndex = currentIndex + 1;
-        if (nextIndex < queue.length) {
+        if (queue.length > 1) {
+          const { isShuffleEnabled } = get();
+          const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
           set({ currentIndex: nextIndex, playState: "BUFFERING" });
           await adapter?.loadVideo(queue[nextIndex].youtube_video_id);
         } else {
