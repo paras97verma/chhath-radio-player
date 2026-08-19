@@ -212,7 +212,6 @@ function EditSongModal({
   const [title, setTitle] = useState(song.title);
   const [artist, setArtist] = useState(song.artist);
   const [category, setCategory] = useState(song.category ?? "");
-  const [youtubeUrl, setYoutubeUrl] = useState(song.youtube_url ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -225,7 +224,6 @@ function EditSongModal({
         title: title.trim(),
         artist: artist.trim(),
         category: category.trim() || undefined,
-        youtube_url: youtubeUrl.trim() || undefined,
       });
       onUpdated(updated);
       onClose();
@@ -307,12 +305,14 @@ function EditSongModal({
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">YouTube URL</label>
+            <label className="block text-xs text-gray-400 mb-1">
+              YouTube URL <span className="text-gray-500 font-normal">(Read-only)</span>
+            </label>
             <input
               type="text"
-              value={youtubeUrl}
-              onChange={(e) => setYoutubeUrl(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 font-mono text-xs"
+              disabled
+              value={song.youtube_url ?? `https://www.youtube.com/watch?v=${song.youtube_video_id}`}
+              className="w-full bg-gray-800/50 border border-gray-800 text-gray-400 rounded-lg px-3 py-2 text-sm cursor-not-allowed font-mono text-xs"
             />
           </div>
 
