@@ -1,63 +1,46 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0a0402;
-  --foreground: #f5e6d3;
+  --background: #090403;
+  --foreground: #fff7ed;
 
-  /* ── Neumorphic dark warm palette ── */
-  --nm-bg: rgba(15, 8, 4, 0.92);
-  --nm-shadow-dark: rgba(0, 0, 0, 0.72);
-  --nm-shadow-light: rgba(60, 30, 10, 0.32);
+  /* ── Refined Chhath Puja Glassmorphic Palette ── */
+  --nm-bg: rgba(18, 8, 5, 0.88);
+  --nm-shadow-dark: rgba(0, 0, 0, 0.85);
+  --nm-shadow-light: rgba(90, 40, 15, 0.28);
   --nm-accent: #f97316;
+  --nm-accent-gold: #fbbf24;
   --nm-accent-glow: rgba(249, 115, 22, 0.45);
 
-  /* ── Layout grid — all positions relative to these tokens ── */
-  /* Footer height */
-  --footer-h: 3.5rem;           /* breathing room from bottom */
-  /* Player height (pill + progress bar) */
-  --player-h: 5rem;             /* compact pill height */
-  /* Gap between player and footer */
-  --player-footer-gap: 1.25rem; /* visible gap between footer and player */
-  /* Gap between stacked elements */
-  --stack-gap: 1.5rem;          /* generous gap between stacked elements */
-  /* HUD edge inset */
-  --hud-inset: 0.75rem;         /* 12px */
+  /* ── Layout grid tokens ── */
+  --footer-h: 3.5rem;
+  --player-h: 5rem;
+  --player-footer-gap: 1.25rem;
+  --stack-gap: 1.5rem;
+  --hud-inset: 0.75rem;
 
-  /* Derived positions (bottom of viewport) */
-  /* Player sits above footer with a visible gap */
   --player-bottom: calc(var(--footer-h) + var(--player-footer-gap));
-  /* FABs (reaction, help) sit at vertical center of player */
   --fab-bottom: calc(var(--player-bottom) + var(--player-h) / 2 - 1.5rem);
-  /* Facts sit above player with generous gap */
   --facts-bottom: calc(var(--player-bottom) + var(--player-h) + var(--stack-gap) + 2rem);
-  /* Chat FAB sits at the same vertical level as the reaction bar (player pill center).
-     Reaction bar uses absolute top-1/2 on the pill body; chat FAB uses fixed bottom.
-     Offset tuned to visually align centers: fab-bottom + 2rem raises it to match. */
   --chat-fab-bottom: calc(var(--fab-bottom) + 2rem);
-  /* Chat drawer bottom: aligns the drawer's bottom edge with the FAB's top edge.
-     FAB center = player-bottom + player-h/2.
-     FAB half-height = 1.25rem (half of minHeight 2.5rem).
-     Drawer bottom = FAB center + FAB half-height = player-bottom + player-h/2 + 1.25rem */
   --chat-drawer-bottom: calc(var(--player-bottom) + var(--player-h) / 2 + 1.25rem);
-  /* Chat drawer height: fills from drawer bottom up to just below the LiveClock.
-     Clock sits at top: var(--hud-inset) and is ~3.5rem tall → reserve hud-inset + 3.5rem. */
   --chat-drawer-max-h: calc(100dvh - var(--chat-drawer-bottom) - var(--hud-inset) - 3.5rem);
 }
 
-/* Mobile-only override: push facts higher to clear the song name strip in the pill */
+/* Mobile-only override */
 @media (max-width: 639px) {
   :root {
-    --player-h: 8rem; /* pill is taller on mobile due to song name strip (~3rem extra) */
+    --player-h: 8rem;
   }
 }
 
 /* Responsive overrides at sm (640px+) */
 @media (min-width: 640px) {
   :root {
-    --footer-h: 4rem;            /* more breathing room from bottom at sm+ */
-    --player-footer-gap: 1.5rem; /* slightly more gap at sm+ */
-    --stack-gap: 2rem;           /* more generous gap at sm+ */
-    --hud-inset: 1rem;           /* 16px */
+    --footer-h: 4rem;
+    --player-footer-gap: 1.5rem;
+    --stack-gap: 2rem;
+    --hud-inset: 1rem;
   }
 }
 
@@ -71,88 +54,114 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
 }
 
-/* ── Neumorphic shadow utilities ───────────────────────────────────────────── */
+/* ── Refined Glass & Tactile Utilities ───────────────────────────────────── */
 
-/* Raised card / pill — extruded from surface */
+/* Raised card / pill */
 .nm-raised {
+  background: rgba(18, 8, 5, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(251, 146, 60, 0.22);
   box-shadow:
-    6px 6px 16px rgba(0, 0, 0, 0.72),
-    -3px -3px 10px rgba(60, 30, 10, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    8px 8px 24px rgba(0, 0, 0, 0.82),
+    -4px -4px 14px rgba(90, 40, 15, 0.22),
+    inset 0 1px 0 rgba(254, 215, 170, 0.12);
 }
 
 /* Larger raised card */
 .nm-card {
+  background: linear-gradient(160deg, rgba(24, 10, 6, 0.94) 0%, rgba(14, 6, 3, 0.94) 100%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(251, 146, 60, 0.25);
   box-shadow:
-    8px 8px 22px rgba(0, 0, 0, 0.75),
-    -4px -4px 14px rgba(60, 30, 10, 0.30),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    10px 10px 32px rgba(0, 0, 0, 0.88),
+    -4px -4px 16px rgba(90, 40, 15, 0.25),
+    inset 0 1px 0 rgba(254, 215, 170, 0.15);
 }
 
 /* Pressed / inset element */
 .nm-pressed {
+  background: rgba(10, 4, 2, 0.7);
   box-shadow:
-    inset 4px 4px 10px rgba(0, 0, 0, 0.65),
-    inset -2px -2px 6px rgba(60, 30, 10, 0.25);
+    inset 4px 4px 10px rgba(0, 0, 0, 0.75),
+    inset -2px -2px 6px rgba(90, 40, 15, 0.20);
 }
 
 /* Button — raised with hover/active states */
 .nm-btn {
+  background: rgba(22, 10, 5, 0.88);
+  border: 1px solid rgba(251, 146, 60, 0.25);
   box-shadow:
-    4px 4px 10px rgba(0, 0, 0, 0.65),
-    -2px -2px 6px rgba(60, 30, 10, 0.28);
-  transition: box-shadow 0.15s ease, transform 0.1s ease;
+    4px 4px 12px rgba(0, 0, 0, 0.75),
+    -2px -2px 8px rgba(90, 40, 15, 0.22),
+    inset 0 1px 0 rgba(254, 215, 170, 0.10);
+  transition: all 0.15s ease;
 }
 .nm-btn:hover {
+  background: rgba(30, 14, 7, 0.95);
+  border-color: rgba(251, 146, 60, 0.45);
   box-shadow:
-    5px 5px 14px rgba(0, 0, 0, 0.70),
-    -3px -3px 8px rgba(60, 30, 10, 0.30);
+    6px 6px 18px rgba(0, 0, 0, 0.82),
+    -3px -3px 10px rgba(90, 40, 15, 0.30),
+    0 0 16px rgba(249, 115, 22, 0.25);
 }
 .nm-btn:active {
   box-shadow:
-    inset 3px 3px 8px rgba(0, 0, 0, 0.60),
-    inset -1px -1px 4px rgba(60, 30, 10, 0.20);
+    inset 3px 3px 8px rgba(0, 0, 0, 0.70),
+    inset -1px -1px 4px rgba(90, 40, 15, 0.20);
   transform: scale(0.97);
 }
 
 /* Pill (player, listener count) */
 .nm-pill {
+  background: rgba(18, 8, 5, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(251, 146, 60, 0.22);
   box-shadow:
-    8px 8px 24px rgba(0, 0, 0, 0.72),
-    -4px -4px 14px rgba(60, 30, 10, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    8px 8px 28px rgba(0, 0, 0, 0.85),
+    -4px -4px 14px rgba(90, 40, 15, 0.22),
+    inset 0 1px 0 rgba(254, 215, 170, 0.12);
 }
 
 /* FAB button */
 .nm-fab {
+  background: rgba(22, 10, 5, 0.90);
+  border: 1px solid rgba(251, 146, 60, 0.30);
   box-shadow:
-    5px 5px 14px rgba(0, 0, 0, 0.70),
-    -3px -3px 8px rgba(60, 30, 10, 0.28);
-  transition: box-shadow 0.2s ease, transform 0.15s ease;
+    5px 5px 16px rgba(0, 0, 0, 0.80),
+    -3px -3px 8px rgba(90, 40, 15, 0.25),
+    0 0 12px rgba(249, 115, 22, 0.15);
+  transition: all 0.2s ease;
 }
 .nm-fab:hover {
+  border-color: rgba(251, 146, 60, 0.55);
   box-shadow:
-    6px 6px 18px rgba(0, 0, 0, 0.75),
-    -3px -3px 10px rgba(60, 30, 10, 0.30);
+    7px 7px 22px rgba(0, 0, 0, 0.85),
+    -3px -3px 10px rgba(90, 40, 15, 0.35),
+    0 0 20px rgba(249, 115, 22, 0.30);
 }
 .nm-fab:active {
   box-shadow:
-    inset 3px 3px 8px rgba(0, 0, 0, 0.60),
-    inset -1px -1px 4px rgba(60, 30, 10, 0.20);
+    inset 3px 3px 8px rgba(0, 0, 0, 0.70),
+    inset -1px -1px 4px rgba(90, 40, 15, 0.20);
   transform: scale(0.95);
 }
 
 /* Inset track (progress bar, input) */
 .nm-inset {
+  background: rgba(10, 4, 2, 0.75);
   box-shadow:
-    inset 3px 3px 8px rgba(0, 0, 0, 0.60),
-    inset -1px -1px 4px rgba(60, 30, 10, 0.22);
+    inset 3px 3px 8px rgba(0, 0, 0, 0.75),
+    inset -1px -1px 4px rgba(90, 40, 15, 0.20);
 }
 
-/* ── Custom animations ─────────────────────────────────────────────────────── */
+/* ── Custom Animations ─────────────────────────────────────────────────────── */
 
 @keyframes heartbeat {
   0%   { transform: scale(1);    box-shadow: 0 0 0 0   rgba(239, 68, 68, 0.7); }
@@ -165,17 +174,17 @@ body {
 
 @keyframes diyaPulse {
   0%, 100% { transform: scale(1);    filter: drop-shadow(0 0 24px rgba(249,115,22,0.6)); }
-  50%       { transform: scale(1.08); filter: drop-shadow(0 0 48px rgba(249,115,22,0.9)); }
+  50%       { transform: scale(1.08); filter: drop-shadow(0 0 48px rgba(251,191,36,0.9)); }
 }
 
 @keyframes nmFabPulse {
   0%, 100% {
-    box-shadow: 5px 5px 14px rgba(0,0,0,0.70), -3px -3px 8px rgba(60,30,10,0.28),
+    box-shadow: 5px 5px 16px rgba(0,0,0,0.80), -3px -3px 8px rgba(90,40,15,0.25),
                 0 0 0 0 rgba(249,115,22,0.5);
   }
   50% {
-    box-shadow: 5px 5px 14px rgba(0,0,0,0.70), -3px -3px 8px rgba(60,30,10,0.28),
-                0 0 0 10px rgba(249,115,22,0);
+    box-shadow: 5px 5px 16px rgba(0,0,0,0.80), -3px -3px 8px rgba(90,40,15,0.25),
+                0 0 0 12px rgba(249,115,22,0);
   }
 }
 
@@ -185,40 +194,33 @@ body {
 }
 
 @keyframes factGlow {
-  0%, 100% { filter: drop-shadow(0 0 4px rgba(251,146,60,0.45)); }
-  50%       { filter: drop-shadow(0 0 10px rgba(251,146,60,0.75)); }
+  0%, 100% { filter: drop-shadow(0 0 6px rgba(251,191,36,0.45)); }
+  50%       { filter: drop-shadow(0 0 14px rgba(249,115,22,0.75)); }
 }
 
-@keyframes chatMsgIn {
-  0%   { opacity: 0; transform: translateY(6px); }
-  100% { opacity: 1; transform: translateY(0); }
+/* ── Gradient Typography ─────────────────────────────────────────────────── */
+
+.gold-gradient-text {
+  background: linear-gradient(135deg, #fef3c7 0%, #fbbf24 50%, #f97316 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
-@keyframes chatDrawerIn {
-  0%   { opacity: 0; transform: translateX(20px) scale(0.97); }
-  100% { opacity: 1; transform: translateX(0) scale(1); }
+.saffron-gradient-text {
+  background: linear-gradient(135deg, #fdba74 0%, #f97316 50%, #ea580c 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
-
-@keyframes chatDrawerUpIn {
-  0%   { opacity: 0; transform: translateY(100%); }
-  100% { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes reactionArcIn {
-  0%   { transform: translate(var(--tx0), var(--ty0)) scale(0.3); opacity: 0; }
-  65%  { transform: translate(var(--tx), var(--ty)) scale(1.15); opacity: 1; }
-  100% { transform: translate(var(--tx), var(--ty)) scale(1); opacity: 1; }
-}
-
-/* ── Gradient text utilities ───────────────────────────────────────────────── */
 
 .fact-gradient-text {
   background: linear-gradient(
     90deg,
     #fff7ed 0%,
-    #fdba74 25%,
-    #fb923c 55%,
-    #fde68a 85%,
+    #fef3c7 25%,
+    #fbbf24 55%,
+    #f97316 85%,
     #fff7ed 100%
   );
   -webkit-background-clip: text;
@@ -231,31 +233,27 @@ body {
   display: inline-block;
   width: 2px;
   height: 0.85em;
-  background: rgba(251, 146, 60, 0.9);
+  background: rgba(251, 191, 36, 0.9);
   margin-left: 2px;
   vertical-align: text-bottom;
   animation: factCursorBlink 0.6s step-end infinite;
 }
 
 .clock-time-3d {
-  background: linear-gradient(180deg, #fb923c 0%, #f97316 45%, #ea580c 100%);
+  background: linear-gradient(180deg, #fef3c7 0%, #fbbf24 45%, #f97316 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  filter: drop-shadow(0 1px 0 rgba(120, 40, 0, 0.6)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4));
-  font-weight: 700;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.7));
+  font-weight: 800;
   letter-spacing: 0.12em;
-}
-.clock-time-3d:hover {
-  filter: drop-shadow(0 1px 0 rgba(120, 40, 0, 0.6)) drop-shadow(0 3px 8px rgba(249, 115, 22, 0.35));
 }
 
 .clock-date-3d {
-  background: linear-gradient(180deg, #fb923c 0%, #f97316 55%, #ea580c 100%);
+  background: linear-gradient(180deg, #fdba74 0%, #f97316 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  filter: drop-shadow(0 1px 0 rgba(120, 40, 0, 0.45));
   font-weight: 600;
   letter-spacing: 0.06em;
 }
@@ -265,7 +263,7 @@ body {
 .chat-scrollbar::-webkit-scrollbar { width: 4px; }
 .chat-scrollbar::-webkit-scrollbar-track { background: transparent; }
 .chat-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(249, 115, 22, 0.3);
+  background: rgba(251, 146, 60, 0.35);
   border-radius: 2px;
 }
 

@@ -34,7 +34,7 @@ export function formatDate(d: Date): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-const NM_CARD = "6px 6px 16px rgba(0,0,0,0.72), -3px -3px 10px rgba(60,30,10,0.32), inset 0 1px 0 rgba(255,255,255,0.04)";
+const NM_CARD = "8px 8px 24px rgba(0,0,0,0.85), -4px -4px 12px rgba(90,40,15,0.22), inset 0 1px 0 rgba(254,215,170,0.12)";
 
 export default function LiveClock() {
   const [now, setNow] = useState<Date | null>(null);
@@ -66,8 +66,14 @@ export default function LiveClock() {
   return (
     <div
       data-testid="live-clock"
-      className="text-center tabular-nums select-none rounded-2xl px-3.5 py-2 sm:px-4 sm:py-2.5"
-      style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_CARD }}
+      className="text-center tabular-nums select-none rounded-2xl px-3.5 py-2 sm:px-4 sm:py-2.5 border"
+      style={{
+        background: "rgba(18,8,5,0.90)",
+        borderColor: "rgba(251,146,60,0.22)",
+        boxShadow: NM_CARD,
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+      }}
       aria-live="off"
       aria-label={`Current time: ${timeStr}, date: ${dateStr}`}
     >

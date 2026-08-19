@@ -18,8 +18,8 @@ const POLL_INTERVAL_MS = 5_000;
 const SSE_RETRY_DELAY_MS = 3_000;
 const HOT_THRESHOLD = 50;
 
-const NM_PILL = "4px 4px 12px rgba(0,0,0,0.65), -2px -2px 8px rgba(60,30,10,0.28), inset 0 1px 0 rgba(255,255,255,0.03)";
-const NM_HOT  = "4px 4px 12px rgba(0,0,0,0.65), -2px -2px 8px rgba(120,20,20,0.25), inset 0 1px 0 rgba(255,255,255,0.03)";
+const NM_PILL = "6px 6px 18px rgba(0,0,0,0.82), -3px -3px 10px rgba(90,40,15,0.22), inset 0 1px 0 rgba(254,215,170,0.12)";
+const NM_HOT  = "6px 6px 18px rgba(0,0,0,0.85), -3px -3px 10px rgba(160,30,20,0.25), inset 0 1px 0 rgba(254,215,170,0.12)";
 
 function formatCount(n: number): string {
   return new Intl.NumberFormat("en-IN").format(n);
@@ -172,20 +172,26 @@ export default function ListenerCount({ onCountChange }: ListenerCountProps = {}
 
   return (
     <div
-      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1"
-      style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_PILL }}
+      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border"
+      style={{
+        background: "rgba(18,8,5,0.90)",
+        borderColor: "rgba(251,146,60,0.22)",
+        boxShadow: NM_PILL,
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+      }}
       aria-live="polite"
       aria-label={`${formatted} ${count !== 1 ? "people" : "person"} listening`}
     >
       <OnlineDot />
       <Spectrogram />
       <span
-        className="tabular-nums text-sm font-extrabold text-white tracking-wide"
-        style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7)" }}
+        className="tabular-nums text-sm font-extrabold text-[#fff7ed] tracking-wide"
+        style={{ textShadow: "0 1px 4px rgba(0,0,0,0.8)" }}
       >
         {formatted}
       </span>
-      <span className="text-[11px] font-medium text-white/70 tracking-wide">listening</span>
+      <span className="text-[11px] font-medium text-amber-200/70 tracking-wide">listening</span>
     </div>
   );
 }

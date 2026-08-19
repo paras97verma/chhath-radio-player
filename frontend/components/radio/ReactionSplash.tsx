@@ -1,27 +1,26 @@
 "use client";
 
 /**
- * ReactionSplash — Full-screen emoji splash animation.
+ * ReactionSplash — Balanced full-screen emoji splash animation.
  *
- * Rendered at the root level (in PageClient) so it's truly full-screen
- * with position: fixed, unaffected by any parent overflow: hidden.
- *
- * Usage:
- *   <ReactionSplash emoji="🪔" onDone={() => setEmoji(null)} />
+ * Evenly distributes floating reaction particles across 6 screen zones
+ * (left, mid-left, center, mid-right, right) so both left and right sides
+ * are equally rich and visually balanced on all screen sizes.
  */
 
 import { useEffect, useRef, useState } from "react";
 
 interface Particle {
   id: number;
-  x: number;   // vw %
-  y: number;   // vh %
-  size: number; // px
-  delay: number; // ms
-  duration: number; // ms
-  rotate: number; // deg
-  vx: number;  // horizontal drift px
-  vy: number;  // vertical drift px
+  x: number;       // vw % (5% to 95%)
+  y: number;       // vh % (8% to 88%)
+  size: number;    // px
+  delay: number;   // ms
+  duration: number;// ms
+  rotate: number;  // deg
+  vx: number;      // horizontal drift px
+  vy: number;      // vertical drift px
+  displayEmoji: string; // primary emoji or golden sparkle accent
 }
 
 interface Props {
@@ -31,28 +30,62 @@ interface Props {
 
 let pid = 0;
 
-function makeParticles(n: number): Particle[] {
-  return Array.from({ length: n }, () => ({
-    id: ++pid,
-    x: 5 + Math.random() * 90,
-    y: 5 + Math.random() * 90,
-    size: 22 + Math.random() * 56,
-    delay: Math.random() * 500,
-    duration: 900 + Math.random() * 700,
-    rotate: (Math.random() - 0.5) * 80,
-    vx: (Math.random() - 0.5) * 60,
-    vy: -(20 + Math.random() * 80),
-  }));
+/**
+ * Generates particles uniformly distributed across 6 horizontal zones
+ * to guarantee that left, center, and right sides of the screen are
+ * equally filled with floating elements.
+ */
+function generateBalancedParticles(mainEmoji: string, totalParticles = 36): Particle[] {
+  const ZONES = 6;
+  const perZone = Math.floor(totalParticles / ZONES);
+  const particles: Particle[] = [];
+
+  for (let z = 0; z < ZONES; z++) {
+    const zoneMinX = 5 + (z * 90) / ZONES;
+    const zoneMaxX = 5 + ((z + 1) * 90) / ZONES;
+
+    for (let i = 0; i < perZone; i++) {
+      // Mix main emoji with occasional golden sparkles/diyas (1 in 5)
+      const isAccent = (z + i) % 5 === 0;
+      const displayEmoji = isAccent ? (i % 2 === 0 ? "🪔" : "✨") : mainEmoji;
+
+      // Uniform vertical distribution with random jitter
+      const yNorm = (i + Math.random() * 0.8) / perZone;
+      const y = 10 + yNorm * 76; // 10% to 86% vh
+
+      // Natural upward & outward drift
+      const vx = (Math.random() - 0.5) * 80;
+      const vy = -(35 + Math.random() * 85);
+
+      particles.push({
+        id: ++pid,
+        x: zoneMinX + Math.random() * (zoneMaxX - zoneMinX),
+        y,
+        size: 26 + Math.random() * 48,
+        delay: Math.random() * 450,
+        duration: 1050 + Math.random() * 650,
+        rotate: (Math.random() - 0.5) * 90,
+        vx,
+        vy,
+        displayEmoji,
+      });
+    }
+  }
+
+  return particles;
 }
 
 export default function ReactionSplash({ emoji, onDone }: Props) {
-  const [particles] = useState(() => makeParticles(28));
+  const [particles, setParticles] = useState<Particle[]>([]);
   const doneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!emoji) return;
+    // Generate a fresh, perfectly zone-balanced set of particles on every click
+    setParticles(generateBalancedParticles(emoji, 36));
+
     if (doneTimer.current) clearTimeout(doneTimer.current);
-    doneTimer.current = setTimeout(onDone, 1700);
+    doneTimer.current = setTimeout(onDone, 1800);
     return () => { if (doneTimer.current) clearTimeout(doneTimer.current); };
   }, [emoji, onDone]);
 
@@ -62,17 +95,17 @@ export default function ReactionSplash({ emoji, onDone }: Props) {
     <>
       <style>{`
         @keyframes splashParticle {
-          0%   { opacity: 0; transform: translate(0, 0) rotate(0deg) scale(0.4); }
+          0%   { opacity: 0; transform: translate(0, 0) rotate(0deg) scale(0.35); }
           20%  { opacity: 1; }
-          80%  { opacity: 0.7; }
+          75%  { opacity: 0.85; }
           100% { opacity: 0;
-                 transform: translate(var(--vx), var(--vy)) rotate(var(--rot)) scale(1.05); }
+                 transform: translate(var(--vx), var(--vy)) rotate(var(--rot)) scale(1.1); }
         }
         @keyframes splashCenter {
           0%   { transform: translate(-50%, -50%) scale(0); opacity: 0; }
-          35%  { transform: translate(-50%, -50%) scale(1.5); opacity: 1; }
+          30%  { transform: translate(-50%, -50%) scale(1.45); opacity: 1; }
           65%  { transform: translate(-50%, -50%) scale(1.15); opacity: 0.95; }
-          100% { transform: translate(-50%, -50%) scale(0.7); opacity: 0; }
+          100% { transform: translate(-50%, -50%) scale(0.6); opacity: 0; }
         }
         @keyframes splashGlow {
           0%   { opacity: 0; }
@@ -94,18 +127,18 @@ export default function ReactionSplash({ emoji, onDone }: Props) {
           overflow: "hidden",
         }}
       >
-        {/* Radial glow */}
+        {/* Radial ambient glow */}
         <div
           aria-hidden="true"
           style={{
             position: "absolute",
             inset: 0,
-            background: "radial-gradient(ellipse at center, rgba(249,115,22,0.15) 0%, transparent 65%)",
-            animation: "splashGlow 1.7s ease-out forwards",
+            background: "radial-gradient(ellipse at center, rgba(249,115,22,0.18) 0%, transparent 70%)",
+            animation: "splashGlow 1.8s ease-out forwards",
           }}
         />
 
-        {/* Big center emoji */}
+        {/* Hero center emoji */}
         <div
           aria-hidden="true"
           style={{
@@ -114,13 +147,14 @@ export default function ReactionSplash({ emoji, onDone }: Props) {
             left: "50%",
             fontSize: 110,
             lineHeight: 1,
-            animation: "splashCenter 1.5s cubic-bezier(0.34,1.56,0.64,1) forwards",
+            animation: "splashCenter 1.6s cubic-bezier(0.34,1.56,0.64,1) forwards",
+            filter: "drop-shadow(0 0 32px rgba(249,115,22,0.6))",
           }}
         >
           {emoji}
         </div>
 
-        {/* Scattered particles */}
+        {/* Zone-balanced scattered floating particles */}
         {particles.map((p) => (
           <span
             key={p.id}
@@ -135,9 +169,10 @@ export default function ReactionSplash({ emoji, onDone }: Props) {
               "--vx": `${p.vx}px`,
               "--vy": `${p.vy}px`,
               "--rot": `${p.rotate}deg`,
+              filter: "drop-shadow(0 2px 8px rgba(0,0,0,0.5))",
             } as React.CSSProperties}
           >
-            {emoji}
+            {p.displayEmoji}
           </span>
         ))}
       </div>

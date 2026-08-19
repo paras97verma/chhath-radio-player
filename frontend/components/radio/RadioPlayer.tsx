@@ -687,14 +687,14 @@ export default function RadioPlayer({
         <div
           className="flex flex-col rounded-[28px]"
           style={{
-            background: "rgba(10, 4, 2, 0.92)",
+            background: "linear-gradient(165deg, rgba(22, 9, 5, 0.94) 0%, rgba(12, 5, 3, 0.94) 100%)",
             backdropFilter: "blur(20px)",
             WebkitBackdropFilter: "blur(20px)",
-            border: "1px solid rgba(255,255,255,0.06)",
+            border: "1px solid rgba(251, 146, 60, 0.25)",
             boxShadow: [
-              "8px 8px 28px rgba(0,0,0,0.80)",
-              "-4px -4px 16px rgba(60,30,10,0.28)",
-              "inset 0 1px 0 rgba(255,255,255,0.05)",
+              "10px 10px 32px rgba(0,0,0,0.85)",
+              "-4px -4px 16px rgba(90,40,15,0.25)",
+              "inset 0 1px 0 rgba(254,215,170,0.12)",
             ].join(", "),
           }}
         >
@@ -702,12 +702,12 @@ export default function RadioPlayer({
           {currentSong && (
             <div
               className="sm:hidden flex flex-col items-center px-5 pt-3 pb-1 border-b"
-              style={{ borderColor: "rgba(249,115,22,0.10)" }}
+              style={{ borderColor: "rgba(251,146,60,0.15)" }}
             >
-              <p className="text-white text-sm font-bold truncate w-full text-center leading-tight">
+              <p className="text-[#fff7ed] text-sm font-bold truncate w-full text-center leading-tight">
                 {currentSong.title}
               </p>
-              <p className="text-[11px] truncate w-full text-center mt-0.5" style={{ color: "rgba(249,115,22,0.70)" }}>
+              <p className="text-[11px] truncate w-full text-center mt-0.5" style={{ color: "rgba(253,186,116,0.80)" }}>
                 {currentSong.artist}
               </p>
             </div>
