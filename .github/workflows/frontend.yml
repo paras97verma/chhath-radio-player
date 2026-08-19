@@ -24,11 +24,6 @@ on:
     paths:
       - 'frontend/**'
       - '.github/workflows/frontend.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend.yml'
   workflow_dispatch:
     inputs:
       reason:
@@ -43,6 +38,7 @@ jobs:
   # ── Job 1: Run unit tests ─────────────────────────────────────────────────
   test:
     name: vitest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     steps:

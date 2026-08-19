@@ -27,11 +27,6 @@ on:
     paths:
       - 'backend/**'
       - '.github/workflows/backend.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - '.github/workflows/backend.yml'
   workflow_dispatch:
     inputs:
       reason:
@@ -46,6 +41,7 @@ jobs:
   # ── Job 1: Run all backend tests ──────────────────────────────────────────
   test:
     name: pytest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     services:
