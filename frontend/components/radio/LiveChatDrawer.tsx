@@ -26,6 +26,7 @@ import type { ChatMessage, ChatWsEvent } from "@/lib/api";
 const NAME_KEY        = "chhath_chat_name_v1";
 const MESSAGES_KEY    = "chhath_chat_messages_v1";
 const MY_IDS_KEY      = "chhath_chat_my_ids_v1";
+const NOTICE_SEEN_KEY = "chhath_chat_notice_seen_v1";
 const PING_INTERVAL   = 20_000;   // 20 s — keeps Render free-tier WS alive
 const MAX_RECONNECT   = 30_000;   // 30 s max back-off
 
@@ -197,6 +198,7 @@ export default function LiveChatDrawer({
   const [unreadCount, setUnreadCount] = useState(0);
   const [cooldown, setCooldown] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
+  const [showFirstTimeNotice, setShowFirstTimeNotice] = useState(false);
 
   const messagesEndRef   = useRef<HTMLDivElement>(null);
   const inputRef         = useRef<HTMLInputElement>(null);
@@ -363,6 +365,24 @@ export default function LiveChatDrawer({
       messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
     }
   }, [effectiveOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── First-time user notice: show brief 3s floating toast on first chat open, then vanish forever ─
+  useEffect(() => {
+    if (!effectiveOpen) return;
+    try {
+      const hasSeen = localStorage.getItem(NOTICE_SEEN_KEY);
+      if (!hasSeen) {
+        setShowFirstTimeNotice(true);
+        localStorage.setItem(NOTICE_SEEN_KEY, "true");
+        const timer = setTimeout(() => {
+          setShowFirstTimeNotice(false);
+        }, 3000);
+        return () => clearTimeout(timer);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [effectiveOpen]);
 
   // ── Focus name input when entering edit mode ──────────────────────────────
   useEffect(() => {
@@ -631,6 +651,19 @@ export default function LiveChatDrawer({
               </button>
             </div>
           </div>
+
+          {/* First-time user notice toast — floats briefly for 3s on first chat open, then vanishes forever */}
+          {showFirstTimeNotice && (
+            <div
+              className="absolute top-14 left-1/2 -translate-x-1/2 z-30 px-3.5 py-1.5 rounded-full text-[11px] font-medium text-amber-200 bg-amber-950/95 border border-orange-500/40 backdrop-blur-md flex items-center gap-1.5 whitespace-nowrap shadow-2xl transition-all duration-300 pointer-events-none select-none"
+              style={{
+                boxShadow: "0 8px 24px rgba(0,0,0,0.85), 0 0 16px rgba(249,115,22,0.35)",
+              }}
+            >
+              <span className="text-xs">🪔</span>
+              <span>Only the latest 200 messages are retained in chat.</span>
+            </div>
+          )}
 
           {/* Messages */}
           <div className="chat-scrollbar flex-1 overflow-y-auto px-3.5 py-3 flex flex-col">

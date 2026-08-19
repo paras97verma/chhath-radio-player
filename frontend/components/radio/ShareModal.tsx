@@ -270,7 +270,7 @@ export default function ShareModal({ onClose }: ShareModalProps) {
               <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 18, height: 18 }}>
                 <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
               </svg>
-              {downloading ? "Downloading Card…" : "Download Card Image"}
+              {downloading ? "Downloading Card…" : "Download"}
             </button>
 
             {/* Divider */}

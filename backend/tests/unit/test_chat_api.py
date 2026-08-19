@@ -2,8 +2,8 @@
 Unit + integration tests for app.api.chat.
 
 Tests cover:
-  - _store_message: Redis sorted set storage, TTL pruning, MAX_MESSAGES cap, memory fallback
-  - _load_messages: Redis zrangebyscore, limit, memory fallback
+  - _store_message: Redis sorted set storage, MAX_MESSAGES cap, memory fallback
+  - _load_messages: Redis zrange, limit, memory fallback
   - Rate limiting: per-IP 3-second window
   - POST /api/chat/messages endpoint: validation, random name, 201 response
   - GET  /api/chat/messages endpoint: returns list, respects limit
@@ -21,7 +21,6 @@ from app.main import app
 from app.api.chat import (
     CHAT_KEY,
     MAX_MESSAGES,
-    MESSAGE_TTL_SECONDS,
     RATE_LIMIT_SECONDS,
     _store_message,
     _load_messages,
@@ -45,8 +44,8 @@ def make_mock_redis() -> MagicMock:
     mock = MagicMock()
     mock.pipeline.return_value.__enter__ = MagicMock(return_value=mock.pipeline.return_value)
     mock.pipeline.return_value.__exit__ = MagicMock(return_value=False)
-    mock.pipeline.return_value.execute.return_value = [1, 0, 0]
-    mock.zrangebyscore.return_value = []
+    mock.pipeline.return_value.execute.return_value = [1, 0]
+    mock.zrange.return_value = []
     return mock
 
 
@@ -66,17 +65,6 @@ class TestStoreMessage:
             _store_message(msg)
 
         pipe.zadd.assert_called_once_with(CHAT_KEY, {json.dumps(msg): msg["ts"]})
-
-    def test_prunes_messages_older_than_ttl(self):
-        """zremrangebyscore is called with cutoff = ts - MESSAGE_TTL_SECONDS."""
-        mock_redis = make_mock_redis()
-        pipe = mock_redis.pipeline.return_value
-
-        with patch("app.api.chat._get_redis", return_value=mock_redis):
-            msg = make_msg()
-            _store_message(msg)
-
-        pipe.zremrangebyscore.assert_called_once_with(CHAT_KEY, "-inf", msg["ts"] - MESSAGE_TTL_SECONDS)
 
     def test_enforces_max_messages_cap(self):
         """zremrangebyrank is called to enforce MAX_MESSAGES cap."""
@@ -119,35 +107,30 @@ class TestStoreMessage:
 class TestLoadMessages:
     def setup_method(self):
         _message_buffer.clear()
-        # Reset the buffer-loaded flag so each test starts fresh
         import app.api.chat as chat_mod
         chat_mod._buffer_loaded = False
 
-    def test_loads_from_redis_zrangebyscore_with_cutoff(self):
-        """Calls zrangebyscore with cutoff = now - MESSAGE_TTL_SECONDS."""
+    def test_loads_from_redis_zrange(self):
+        """Calls zrange to fetch latest MAX_MESSAGES."""
         mock_redis = make_mock_redis()
         msg = make_msg()
-        mock_redis.zrangebyscore.return_value = [json.dumps(msg)]
+        mock_redis.zrange.return_value = [json.dumps(msg)]
 
         with patch("app.api.chat._get_redis", return_value=mock_redis):
             result = _load_messages(limit=50)
 
         assert result == [msg]
-        call_args = mock_redis.zrangebyscore.call_args[0]
-        assert call_args[0] == CHAT_KEY
-        assert call_args[2] == "+inf"
-        assert call_args[1] == pytest.approx(time.time() - MESSAGE_TTL_SECONDS, abs=2)
+        mock_redis.zrange.assert_called_once_with(CHAT_KEY, -MAX_MESSAGES, -1)
 
     def test_returns_oldest_first_limited_to_limit(self):
         """Returns the newest `limit` messages in oldest-first order."""
         mock_redis = make_mock_redis()
         msgs = [make_msg(text=f"msg {i}") for i in range(10)]
-        mock_redis.zrangebyscore.return_value = [json.dumps(m) for m in msgs]
+        mock_redis.zrange.return_value = [json.dumps(m) for m in msgs]
 
         with patch("app.api.chat._get_redis", return_value=mock_redis):
             result = _load_messages(limit=5)
 
-        # Should return the last 5 (newest), oldest-first
         assert result == msgs[-5:]
 
     def test_falls_back_to_memory_when_redis_unavailable(self):
@@ -167,7 +150,7 @@ class TestLoadMessages:
         msg = make_msg()
         _message_buffer.append(msg)
         mock_redis = make_mock_redis()
-        mock_redis.zrangebyscore.side_effect = Exception("Redis error")
+        mock_redis.zrange.side_effect = Exception("Redis error")
 
         with patch("app.api.chat._get_redis", return_value=mock_redis):
             result = _load_messages(limit=50)
@@ -195,7 +178,7 @@ class TestRateLimit:
 
     def test_second_message_within_3s_is_rate_limited(self, client):
         """Second message within 3 seconds returns 429."""
-        _rate_limit["testclient"] = time.time()  # simulate recent message
+        _rate_limit["testclient"] = time.time()
 
         with patch("app.api.chat._get_redis", return_value=None):
             resp = client.post("/api/chat/messages", json={"text": "Too fast!"})
@@ -240,7 +223,7 @@ class TestSendMessageEndpoint:
 
         assert resp.status_code == 201
         data = resp.json()
-        assert data["name"]  # non-empty
+        assert data["name"]
         assert data["name"] != ""
 
     def test_provided_name_is_used_as_is(self, client):
@@ -298,13 +281,12 @@ class TestGetMessagesEndpoint:
 
     def test_limit_param_is_respected(self, client):
         """limit query param caps the number of returned messages."""
-        # Pre-populate buffer with 10 messages
         now = int(time.time())
         for i in range(10):
             _message_buffer.append({"id": str(uuid.uuid4()), "name": "Bhakt", "text": f"msg {i}", "ts": now - i})
 
         import app.api.chat as chat_mod
-        chat_mod._buffer_loaded = True  # skip Redis load
+        chat_mod._buffer_loaded = True
 
         with patch("app.api.chat._get_redis", return_value=None):
             resp = client.get("/api/chat/messages?limit=3")
@@ -325,10 +307,7 @@ class TestGetMessagesEndpoint:
         chat_mod._buffer_loaded = False
 
 
-# ─── Fixtures ─────────────────────────────────────────────────────────────────
-
 @pytest.fixture
 def client():
-    """FastAPI TestClient for the full app."""
     with TestClient(app) as c:
         yield c
