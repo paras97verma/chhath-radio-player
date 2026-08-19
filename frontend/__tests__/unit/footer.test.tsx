@@ -168,12 +168,10 @@ describe("<UpiDonateModal />", () => {
     expect(el.textContent).toBe(FOOTER_CONFIG.payment.upi.id);
   });
 
-  it("renders a QR code image for the UPI deep-link", () => {
-    render(<UpiDonateModal onClose={onClose} />);
-    const img = screen.getByAltText("Scan to pay via UPI");
-    const src = img.getAttribute("src") ?? "";
-    expect(src).toContain("api.qrserver.com");
-    expect(src).toContain("upi%3A%2F%2Fpay");
+  it("renders a QR code SVG for the UPI deep-link", () => {
+    const { container } = render(<UpiDonateModal onClose={onClose} />);
+    const svg = container.querySelector("svg[role='img']");
+    expect(svg).toBeTruthy();
   });
 
   it("UPI deep-link href starts with valid upi protocol", () => {

@@ -40,7 +40,9 @@ def seed_admin() -> None:
     try:
         existing = db.scalar(select(Admin).where(Admin.email == email))
         if existing:
-            print(f"Admin '{email}' already exists — skipping.")
+            existing.password_hash = hash_password(password)
+            db.commit()
+            print(f"✓ Admin user '{email}' password updated successfully.")
             return
 
         admin = Admin(

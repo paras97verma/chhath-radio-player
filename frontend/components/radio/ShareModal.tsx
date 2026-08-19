@@ -159,119 +159,84 @@ export default function ShareModal({ onClose }: ShareModalProps) {
         {/* ── Modal panel ── */}
         <div
           onClick={(e) => e.stopPropagation()}
+          className="relative bg-[#0e0502]/98 border border-orange-500/25 rounded-3xl p-4 sm:p-5 w-full max-w-[360px] sm:max-w-[380px] max-h-[92vh] overflow-y-auto sm:overflow-hidden shadow-2xl flex flex-col items-center gap-2 sm:gap-3"
           style={{
-            position: "relative",
-            background: "rgba(14,5,2,0.98)",
-            border: "1px solid rgba(249,115,22,0.25)",
-            borderRadius: 24,
-            padding: "20px 16px 16px",
-            width: "100%",
-            maxWidth: 380,
-            maxHeight: "90vh",
-            overflowY: "auto",
             boxShadow: "0 24px 64px rgba(0,0,0,0.8), 0 0 0 1px rgba(249,115,22,0.08)",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 14,
           }}
         >
           {/* Close button */}
           <button
             onClick={onClose}
             aria-label="Close"
-            style={{
-              position: "absolute",
-              top: 14,
-              right: 14,
-              width: 32,
-              height: 32,
-              borderRadius: "50%",
-              background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              color: "rgba(255,255,255,0.5)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-              fontSize: 18,
-              lineHeight: 1,
-              transition: "all 0.15s",
-            }}
+            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/5 border border-white/10 text-white/50 flex items-center justify-center text-lg leading-none hover:text-white hover:bg-white/10 transition-colors"
           >
             ×
           </button>
 
           {/* Header */}
-          <div style={{ textAlign: "center" }}>
-            <div
-              style={{
-                fontSize: 13,
-                fontWeight: 700,
-                letterSpacing: "0.12em",
-                textTransform: "uppercase",
-                color: "rgba(249,115,22,0.7)",
-                marginBottom: 2,
-              }}
-            >
+          <div className="text-center pt-1">
+            <div className="text-[12px] font-extrabold tracking-[0.12em] uppercase text-orange-500/80 mb-0.5">
               Share Chhath Radio
             </div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>
+            <div className="text-[10px] text-white/40">
               Share the devotional vibe 🪔
             </div>
           </div>
 
-          {/* Live minimal card render box */}
-          <div
-            style={{
-              width: "100%",
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              transform: "scale(0.72)",
-              transformOrigin: "top center",
-              marginBottom: -160, // compensate for scale transformation
-            }}
-          >
-            <ShareCard
-              ref={cardRef}
-              songTitle={songTitle}
-              songArtist={songArtist}
-              albumArtUrl={albumArtUrl}
-              listenerCount={listenerCount}
-              siteUrl={siteUrl}
-            />
+          {/* Live minimal card render box — with UPI-style circular download icon on bottom right edge */}
+          <div className="w-full flex justify-center items-center scale-[0.58] sm:scale-[0.72] origin-top -mb-[228px] sm:-mb-[172px]">
+            <div className="relative">
+              <ShareCard
+                ref={cardRef}
+                songTitle={songTitle}
+                songArtist={songArtist}
+                albumArtUrl={albumArtUrl}
+                listenerCount={listenerCount}
+                siteUrl={siteUrl}
+              />
+
+              {/* Circular download icon matching UPI style — positioned on the right bottom edge */}
+              <button
+                onClick={handleDownload}
+                aria-label="Download Share Card"
+                title="Download Share Card"
+                disabled={downloading}
+                style={{
+                  position: "absolute",
+                  bottom: -12,
+                  right: -12,
+                  width: 44,
+                  height: 44,
+                  borderRadius: "50%",
+                  background: "linear-gradient(135deg, #f97316, #ea580c)",
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  border: "none",
+                  cursor: downloading ? "wait" : "pointer",
+                  boxShadow: "0 4px 16px rgba(249,115,22,0.45), 0 0 0 2px rgba(249,115,22,0.2)",
+                  zIndex: 30,
+                  opacity: downloading ? 0.7 : 1,
+                }}
+                className="transition-transform hover:scale-110 active:scale-95"
+              >
+                {downloading ? (
+                  <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 20, height: 20 }} className="animate-spin">
+                    <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z" opacity=".3"/>
+                    <path d="M12 2a10 10 0 0 1 10 10h-2a8 8 0 0 0-8-8z"/>
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 20, height: 20 }}>
+                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+                  </svg>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Action buttons */}
-          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
-            {/* Download Button */}
-            <button
-              onClick={handleDownload}
-              disabled={downloading}
-              style={{
-                width: "100%",
-                padding: "12px 0",
-                borderRadius: 14,
-                background: "linear-gradient(135deg, #f97316, #ea580c)",
-                border: "none",
-                color: "#ffffff",
-                fontWeight: 700,
-                fontSize: 13,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 8,
-                cursor: downloading ? "wait" : "pointer",
-                boxShadow: "0 4px 16px rgba(249,115,22,0.35)",
-                opacity: downloading ? 0.75 : 1,
-              }}
-            >
-              <svg viewBox="0 0 24 24" fill="currentColor" style={{ width: 18, height: 18 }}>
-                <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
-              </svg>
-              {downloading ? "Downloading Card…" : "Download"}
-            </button>
+          <div className="w-full flex flex-col gap-2 mt-0">
 
             {/* Divider */}
             <div

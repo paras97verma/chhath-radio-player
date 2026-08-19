@@ -15,13 +15,17 @@ automatically fetches the following year.
 """
 
 import datetime
+import json
 import logging
 import os
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
+
+from app.services.presence_service import _get_client as _get_redis
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chhath"])
@@ -47,7 +51,7 @@ class ChhathDatesOut(BaseModel):
     source: str            # always "calendarific"
 
 
-# ─── In-process cache ─────────────────────────────────────────────────────────
+# ─── In-process + Redis cache ──────────────────────────────────────────────────
 
 _cache: dict[int, ChhathDatesOut] = {}
 
@@ -59,6 +63,46 @@ def _cache_valid(result: ChhathDatesOut) -> bool:
         datetime.datetime.fromisoformat(d.date_ist) > now
         for d in result.days
     )
+
+
+def _redis_cache_get(year: int) -> Optional[ChhathDatesOut]:
+    """Retrieve cached ChhathDatesOut from Redis across deployments."""
+    try:
+        client = _get_redis()
+        if client is None:
+            return None
+        raw = client.get(f"chhath:dates:{year}")
+        if raw:
+            data = json.loads(raw)
+            result = ChhathDatesOut.model_validate(data)
+            if _cache_valid(result):
+                return result
+    except Exception as exc:
+        logger.warning("Redis GET chhath:dates failed: %s", exc)
+    return None
+
+
+def _redis_cache_set(result: ChhathDatesOut) -> None:
+    """Store ChhathDatesOut in Redis with TTL until 24 hours after Usha Arghya."""
+    try:
+        client = _get_redis()
+        if client is None:
+            return
+
+        now = datetime.datetime.now(tz=IST)
+        last_day_dt = max(datetime.datetime.fromisoformat(d.date_ist) for d in result.days)
+        expire_dt = last_day_dt + datetime.timedelta(days=1)
+        ttl = int((expire_dt - now).total_seconds())
+
+        if ttl > 0:
+            client.setex(
+                f"chhath:dates:{result.year}",
+                ttl,
+                result.model_dump_json(),
+            )
+            logger.info("Persisted Chhath dates for %d to Redis with TTL=%d seconds", result.year, ttl)
+    except Exception as exc:
+        logger.warning("Redis SET chhath:dates failed: %s", exc)
 
 
 # ─── Calendarific API ─────────────────────────────────────────────────────────
@@ -202,18 +246,29 @@ async def get_chhath_dates(
     now = datetime.datetime.now(tz=IST)
     target_year = year or now.year
 
-    # Check in-process cache
+    # 1. Check in-process cache
     if target_year in _cache and _cache_valid(_cache[target_year]):
         return _cache[target_year]
 
-    # Fetch from Calendarific (raises HTTPException on failure)
+    # 2. Check Redis cache (persisted across container restarts/deployments)
+    redis_cached = _redis_cache_get(target_year)
+    if redis_cached:
+        _cache[target_year] = redis_cached
+        return redis_cached
+
+    # 3. Fetch from Calendarific API
     days = await _fetch_calendarific(target_year)
 
     # If no year specified and all days are past, advance to next year
     if year is None and all(d.is_past for d in days):
         target_year += 1
+        redis_cached_next = _redis_cache_get(target_year)
+        if redis_cached_next:
+            _cache[target_year] = redis_cached_next
+            return redis_cached_next
         days = await _fetch_calendarific(target_year)
 
     result = ChhathDatesOut(year=target_year, days=days, source="calendarific")
     _cache[target_year] = result
+    _redis_cache_set(result)
     return result

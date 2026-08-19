@@ -216,7 +216,7 @@ describe("TestAdminLogin", () => {
       expect.stringContaining("/api/admin/login"),
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ email: "admin@test.com", password: "password123" }),
+        body: JSON.stringify({ email: "admin@test.com", password: btoa("password123") }),
       })
     );
   });

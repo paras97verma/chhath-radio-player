@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import { QRCodeSVG } from "qrcode.react";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CUSTOMIZATION
@@ -318,13 +319,14 @@ export function UpiDonateModal({ onClose }: { onClose: () => void }) {
         {/* QR Code */}
         <div className="flex justify-center mb-3">
           <div className="relative">
-            <div className="rounded-xl overflow-hidden border border-orange-500/25 p-2 bg-white">
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=148x148&data=${encodeURIComponent(upiLink)}&bgcolor=ffffff&color=111111&margin=4`}
-                alt="Scan to pay via UPI"
-                width={148}
-                height={148}
-                className="block"
+            <div className="rounded-xl overflow-hidden border border-orange-500/25 p-2 bg-white flex items-center justify-center">
+              <QRCodeSVG
+                value={upiLink}
+                size={148}
+                bgColor="#ffffff"
+                fgColor="#111111"
+                level="M"
+                marginSize={1}
               />
             </div>
 

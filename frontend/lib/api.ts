@@ -193,10 +193,16 @@ export async function adminLogin(
   email: string,
   password: string
 ): Promise<{ access_token: string; token_type: string }> {
+  // Obfuscate password in Network tab payload using Base64
+  const obfuscatedPassword =
+    typeof btoa !== "undefined"
+      ? btoa(unescape(encodeURIComponent(password)))
+      : password;
+
   const res = await fetch(`${API_BASE}/api/admin/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password: obfuscatedPassword }),
   });
   if (!res.ok) throw new Error("Invalid credentials");
   return res.json();
@@ -213,7 +219,7 @@ export async function adminFetchSongs(token: string): Promise<Song[]> {
 
 export async function adminCreateSong(
   token: string,
-  data: { title: string; artist: string; youtube_url: string; category?: string; sort_order?: number }
+  data: { title?: string; artist?: string; youtube_url: string; category?: string }
 ): Promise<Song> {
   const res = await fetch(`${API_BASE}/api/admin/songs`, {
     method: "POST",
@@ -230,10 +236,29 @@ export async function adminCreateSong(
   return res.json();
 }
 
+export async function adminCreateSongsBatch(
+  token: string,
+  urls: string
+): Promise<Song[]> {
+  const res = await fetch(`${API_BASE}/api/admin/songs/batch`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ urls }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail ?? "Failed to batch upload songs");
+  }
+  return res.json();
+}
+
 export async function adminUpdateSong(
   token: string,
   songId: string,
-  data: Partial<{ title: string; artist: string; enabled: boolean; sort_order: number; youtube_url: string }>
+  data: Partial<{ title: string; artist: string; category: string; enabled: boolean; sort_order: number; youtube_url: string }>
 ): Promise<Song> {
   const res = await fetch(`${API_BASE}/api/admin/songs/${songId}`, {
     method: "PATCH",

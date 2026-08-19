@@ -29,9 +29,13 @@ class SongBase(BaseModel):
     sort_order: int = Field(default=0, ge=0)
 
 
-class SongCreate(SongBase):
+class SongCreate(BaseModel):
     """Schema for creating a new song. Accepts a full YouTube URL."""
     youtube_url: str = Field(..., description="Full YouTube URL or 11-char video ID")
+    title: str | None = Field(default=None, max_length=255)
+    artist: str | None = Field(default=None, max_length=255)
+    category: str | None = Field(default=None, max_length=100)
+    sort_order: int = Field(default=0, ge=0)
 
     @field_validator("youtube_url")
     @classmethod

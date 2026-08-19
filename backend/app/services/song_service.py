@@ -10,11 +10,13 @@ Scale additions:
 
 import json
 import logging
+import urllib.parse
+import urllib.request
 import uuid
 from typing import Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.models.song import Song
 from app.schemas.song import SongCreate, SongUpdate, extract_youtube_video_id
@@ -78,6 +80,21 @@ def _song_to_dict(song: Song) -> dict:
     }
 
 
+def fetch_yt_metadata(yt_id: str) -> dict:
+    """Fetch title and artist from YouTube oEmbed API."""
+    url = f"https://www.youtube.com/watch?v={yt_id}"
+    oembed = f"https://www.youtube.com/oembed?url={urllib.parse.quote(url, safe=':/=?&')}&format=json"
+    try:
+        req = urllib.request.Request(oembed, headers={"User-Agent": "ChhathRadio/1.0"})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        raw_title = data.get("title", "").strip() or f"Chhath Song ({yt_id})"
+        raw_artist = data.get("author_name", "").strip() or "Chhath Singer"
+        return {"title": raw_title, "artist": raw_artist}
+    except Exception:
+        return {"title": f"Chhath Song ({yt_id})", "artist": "Chhath Radio"}
+
+
 class SongService:
 
     @staticmethod
@@ -103,21 +120,41 @@ class SongService:
     @staticmethod
     def create(db: Session, data: SongCreate) -> Song:
         """
-        Create a new song.
-        Parses the YouTube URL to extract the 11-character video ID.
-        Invalidates the queue cache.
+        Create a new song idempotently.
+        If a song with the same youtube_video_id exists, returns the existing record.
+        Auto-assigns unique sort_order and auto-fetches title/artist if not provided.
         """
         video_id = extract_youtube_video_id(data.youtube_url)
         if not video_id:
             raise ValueError("Could not extract YouTube video ID from the provided URL.")
 
+        # Idempotency check: Return existing song if video_id is already in DB
+        existing = db.scalar(select(Song).where(Song.youtube_video_id == video_id))
+        if existing:
+            logger.info("Song with video_id '%s' already exists (id=%s) — returning existing.", video_id, existing.id)
+            return existing
+
+        title = data.title.strip() if data.title and data.title.strip() else None
+        artist = data.artist.strip() if data.artist and data.artist.strip() else None
+
+        if not title or not artist:
+            meta = fetch_yt_metadata(video_id)
+            if not title:
+                title = meta["title"]
+            if not artist:
+                artist = meta["artist"]
+
+        # Always auto-increment sort_order to ensure no duplicates
+        max_order = db.scalar(select(func.max(Song.sort_order)))
+        sort_order = (max_order or 0) + 1
+
         song = Song(
-            title=data.title,
-            artist=data.artist,
+            title=title,
+            artist=artist,
             youtube_video_id=video_id,
             youtube_url=data.youtube_url,
             category=data.category,
-            sort_order=data.sort_order,
+            sort_order=sort_order,
             enabled=True,
         )
         db.add(song)
@@ -125,6 +162,25 @@ class SongService:
         db.refresh(song)
         _cache_delete(QUEUE_CACHE_KEY)
         return song
+
+    @staticmethod
+    def create_batch(db: Session, urls: list[str]) -> list[Song]:
+        """
+        Process a list of YouTube URLs idempotently.
+        Skips existing songs and assigns sequential auto-increment sort_orders.
+        """
+        results: list[Song] = []
+        for raw_url in urls:
+            cleaned = raw_url.strip()
+            if not cleaned:
+                continue
+            v_id = extract_youtube_video_id(cleaned)
+            if not v_id:
+                continue
+            song = SongService.create(db, SongCreate(youtube_url=cleaned))
+            if song not in results:
+                results.append(song)
+        return results
 
     @staticmethod
     def update(db: Session, song: Song, data: SongUpdate) -> Song:

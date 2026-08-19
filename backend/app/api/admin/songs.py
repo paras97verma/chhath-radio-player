@@ -4,6 +4,7 @@ All endpoints require a valid JWT Bearer token.
 """
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -28,6 +29,10 @@ def list_all_songs(
     return SongService.get_all(db)
 
 
+class BatchSongsCreate(BaseModel):
+    urls: str | list[str]
+
+
 @router.post("", response_model=SongPublic, status_code=status.HTTP_201_CREATED)
 def create_song(
     body: SongCreate,
@@ -44,6 +49,25 @@ def create_song(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
     return SongPublic.model_validate(song)
+
+
+@router.post("/batch", response_model=list[SongPublic], status_code=status.HTTP_201_CREATED)
+def create_songs_batch(
+    body: BatchSongsCreate,
+    db: Session = Depends(get_db),
+    _admin: Admin = Depends(get_current_admin),
+) -> list[SongPublic]:
+    """
+    POST /api/admin/songs/batch
+    Batch upload multiple YouTube URLs. Idempotent — existing songs are skipped.
+    """
+    if isinstance(body.urls, list):
+        urls_list = body.urls
+    else:
+        urls_list = [line.strip() for line in body.urls.replace(",", "\n").splitlines() if line.strip()]
+    
+    songs = SongService.create_batch(db, urls_list)
+    return [SongPublic.model_validate(s) for s in songs]
 
 
 @router.patch("/{song_id}", response_model=SongPublic)

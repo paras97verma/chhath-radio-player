@@ -224,7 +224,7 @@ export const ShareCard = React.forwardRef<HTMLDivElement, ShareCardProps>(
               Scan QR code to join
             </span>
             <span style={{ fontSize: 10, color: "rgba(253,186,116,0.5)", fontFamily: "monospace" }}>
-              chhath-radio-ten.vercel.app
+              {siteUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")}
             </span>
           </div>
         </div>
