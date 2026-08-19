@@ -199,6 +199,7 @@ export default function LiveChatDrawer({
   const [cooldown, setCooldown] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
   const [showFirstTimeNotice, setShowFirstTimeNotice] = useState(false);
+  const [mobileHeight, setMobileHeight] = useState<string>("85dvh");
 
   const messagesEndRef   = useRef<HTMLDivElement>(null);
   const inputRef         = useRef<HTMLInputElement>(null);
@@ -214,6 +215,32 @@ export default function LiveChatDrawer({
   const pendingNonces    = useRef<Map<string, number>>(new Map());
 
   useEffect(() => { isOpenRef.current = effectiveOpen; }, [effectiveOpen]);
+
+  // ── Universal Mobile Keyboard / VisualViewport offset handler ────────────
+  useEffect(() => {
+    if (!effectiveOpen || typeof window === "undefined") return;
+
+    const handleVisualViewportChange = () => {
+      const vv = window.visualViewport;
+      if (!vv) return;
+      setMobileHeight(`${vv.height}px`);
+      messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
+    };
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", handleVisualViewportChange);
+      window.visualViewport.addEventListener("scroll", handleVisualViewportChange);
+      handleVisualViewportChange();
+    }
+
+    return () => {
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener("resize", handleVisualViewportChange);
+        window.visualViewport.removeEventListener("scroll", handleVisualViewportChange);
+      }
+      setMobileHeight("85dvh");
+    };
+  }, [effectiveOpen]);
 
   // ── Hydrate name + IDs from sessionStorage on mount ──────────────────────
   useEffect(() => {
@@ -586,7 +613,8 @@ export default function LiveChatDrawer({
           style={
             isMobileControlled
               ? {
-                  height: "85dvh",
+                  height: mobileHeight,
+                  maxHeight: mobileHeight,
                   background: "rgba(10,4,2,0.99)",
                   boxShadow: NM_DRAWER,
                   animation: "chatDrawerUpIn 0.30s cubic-bezier(0.34,1.2,0.64,1) forwards",
@@ -714,7 +742,7 @@ export default function LiveChatDrawer({
                 onKeyDown={handleNameKeyDown}
                 onBlur={commitName}
                 className="w-full rounded-lg px-2.5 py-1.5 text-white/70 outline-none border-none"
-                style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_INPUT, fontSize: "16px" }}
+                style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_INPUT, fontSize: "16px", touchAction: "manipulation" }}
               />
             )}
           </div>
@@ -735,7 +763,7 @@ export default function LiveChatDrawer({
                 onChange={(e) => { setInputText(e.target.value); setSendError(null); }}
                 onKeyDown={handleKeyDown}
                 className="flex-1 rounded-xl px-3 py-2 text-white outline-none border-none transition-all"
-                style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_INPUT, fontSize: "16px" }}
+                style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_INPUT, fontSize: "16px", touchAction: "manipulation" }}
               />
               <button
                 onClick={handleSendWithNonce}
