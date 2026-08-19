@@ -118,7 +118,7 @@ export default function PageClient() {
 
   return (
     <>
-    <main className="fixed inset-0 overflow-hidden bg-[#0a0402]">
+    <main className="fixed inset-0 overflow-hidden bg-[#090403]">
 
       {/* ── Layer 0: 3D Chhath Ghat scene ── */}
       <GhatSceneLoader />
@@ -126,7 +126,7 @@ export default function PageClient() {
       {/* ── Layer 1: Full-canvas dark overlay for wallpaper depth ── */}
       <div
         className="absolute inset-0 z-[1] pointer-events-none"
-        style={{ background: "rgba(5,2,1,0.38)" }}
+        style={{ background: "rgba(9,4,3,0.38)" }}
         aria-hidden="true"
       />
 
@@ -134,7 +134,7 @@ export default function PageClient() {
       <div
         className="absolute inset-0 z-[2] pointer-events-none"
         style={{
-          background: "linear-gradient(to bottom, rgba(5,2,1,0.55) 0%, rgba(5,2,1,0.10) 30%, transparent 55%, rgba(5,2,1,0.65) 100%)",
+          background: "linear-gradient(to bottom, rgba(9,4,3,0.70) 0%, rgba(9,4,3,0.15) 30%, transparent 55%, rgba(9,4,3,0.85) 100%)",
         }}
         aria-hidden="true"
       />
@@ -143,7 +143,7 @@ export default function PageClient() {
       <div
         className="absolute inset-0 z-10 pointer-events-none"
         style={{
-          background: "linear-gradient(to top, rgba(5,2,1,0.90) 0%, rgba(5,2,1,0.40) 30%, transparent 55%)",
+          background: "linear-gradient(to top, rgba(9,4,3,0.95) 0%, rgba(9,4,3,0.50) 30%, transparent 55%)",
         }}
         aria-hidden="true"
       />
@@ -292,10 +292,13 @@ export default function PageClient() {
 
       {/* Footer bar — always visible */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-20 h-11 sm:h-12"
+        className="fixed bottom-0 left-0 right-0 z-20 h-11 sm:h-12 border-t"
         style={{
-          background: "rgba(8, 3, 1, 0.97)",
-          boxShadow: "0 -4px 16px rgba(0,0,0,0.65), 0 -1px 0 rgba(249,115,22,0.18)",
+          background: "rgba(10, 5, 2, 0.90)",
+          borderColor: "rgba(251, 146, 60, 0.14)",
+          boxShadow: "0 -4px 20px rgba(0,0,0,0.60)",
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
         }}
       >
         <div className="flex items-center justify-between h-full px-4 sm:px-5 gap-3">

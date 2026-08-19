@@ -21,10 +21,10 @@ const REACTIONS = [
 const STORAGE_KEY = "chhath_reactions_session_v1";
 const THROTTLE_MS = 800;
 
-const NM_FAB = "5px 5px 14px rgba(0,0,0,0.70), -3px -3px 8px rgba(60,30,10,0.28)";
-const NM_FAB_ACTIVE = "inset 3px 3px 8px rgba(0,0,0,0.60), inset -1px -1px 4px rgba(60,30,10,0.20)";
-const NM_ARC_BTN = "4px 4px 10px rgba(0,0,0,0.65), -2px -2px 6px rgba(60,30,10,0.25)";
-const NM_ARC_HOVER = "5px 5px 14px rgba(0,0,0,0.70), -3px -3px 8px rgba(60,30,10,0.28), 0 0 12px rgba(249,115,22,0.35)";
+const NM_FAB = "6px 6px 18px rgba(0,0,0,0.82), -3px -3px 10px rgba(90,40,15,0.22), inset 0 1px 0 rgba(254,215,170,0.12)";
+const NM_FAB_ACTIVE = "inset 3px 3px 8px rgba(0,0,0,0.70), inset -1px -1px 4px rgba(90,40,15,0.20)";
+const NM_ARC_BTN = "5px 5px 14px rgba(0,0,0,0.80), -2px -2px 8px rgba(90,40,15,0.20), inset 0 1px 0 rgba(254,215,170,0.12)";
+const NM_ARC_HOVER = "6px 6px 18px rgba(0,0,0,0.85), -3px -3px 10px rgba(90,40,15,0.30), 0 0 16px rgba(249,115,22,0.45)";
 
 function loadSessionReactions(): Record<string, number> {
   try {

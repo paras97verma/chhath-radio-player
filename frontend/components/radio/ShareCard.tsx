@@ -1,11 +1,8 @@
 "use client";
 
 /**
- * ShareCard — Minimal portrait share card (540×960px, exports at 1080×1920 @2x).
- *
- * All styles are inline so html-to-image captures them faithfully.
- * Content: brand header, album art, song title, artist name, QR code.
- * Removed: waveform, listener count, URL pill.
+ * ShareCard — Minimal portrait share card for social sharing & downloads.
+ * Clean, high-contrast, modern devotional aesthetic for Chhath Radio.
  */
 
 import React from "react";
@@ -19,8 +16,8 @@ export interface ShareCardProps {
   siteUrl: string;
 }
 
-const CARD_W = 540;
-const CARD_H = 960;
+const CARD_W = 440;
+const CARD_H = 640;
 
 export const ShareCard = React.forwardRef<HTMLDivElement, ShareCardProps>(
   function ShareCard({ songTitle, songArtist, albumArtUrl, siteUrl }, ref) {
@@ -32,161 +29,203 @@ export const ShareCard = React.forwardRef<HTMLDivElement, ShareCardProps>(
           height: CARD_H,
           position: "relative",
           overflow: "hidden",
-          fontFamily: "'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
-          background: "radial-gradient(ellipse at 25% 15%, #2d0d00 0%, #160400 40%, #080101 100%)",
+          fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+          background: "linear-gradient(165deg, #180702 0%, #0d0402 45%, #050101 100%)",
+          borderRadius: 24,
+          border: "1px solid rgba(249,115,22,0.3)",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.8), 0 0 40px rgba(249,115,22,0.12)",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           boxSizing: "border-box",
+          padding: "36px 28px 28px",
         }}
       >
-        {/* ── Background layers ── */}
-        {/* Top-right radial glow */}
-        <div style={{ position: "absolute", top: -120, right: -120, width: 420, height: 420, borderRadius: "50%", background: "radial-gradient(circle, rgba(249,115,22,0.28) 0%, rgba(234,88,12,0.08) 50%, transparent 70%)", pointerEvents: "none" }} />
-        {/* Bottom-left glow */}
-        <div style={{ position: "absolute", bottom: -80, left: -80, width: 360, height: 360, borderRadius: "50%", background: "radial-gradient(circle, rgba(180,40,0,0.22) 0%, transparent 65%)", pointerEvents: "none" }} />
-        {/* Dot-grid texture */}
-        <div style={{ position: "absolute", inset: 0, backgroundImage: "radial-gradient(circle, rgba(249,115,22,0.07) 1px, transparent 1px)", backgroundSize: "24px 24px", pointerEvents: "none" }} />
-        {/* Top-right corner accent */}
-        <div style={{ position: "absolute", top: 0, right: 0, width: 0, height: 0, borderStyle: "solid", borderWidth: "0 180px 180px 0", borderColor: "transparent rgba(249,115,22,0.09) transparent transparent", pointerEvents: "none" }} />
-        {/* Bottom fade vignette */}
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 320, background: "linear-gradient(to top, rgba(8,1,1,0.85) 0%, transparent 100%)", pointerEvents: "none" }} />
-
-        {/* ── Content ── */}
+        {/* Subtle background glow */}
         <div
           style={{
-            position: "relative",
-            zIndex: 1,
+            position: "absolute",
+            top: -60,
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: 320,
+            height: 220,
+            borderRadius: "50%",
+            background: "radial-gradient(ellipse at center, rgba(249,115,22,0.22) 0%, transparent 70%)",
+            pointerEvents: "none",
+          }}
+        />
+
+        {/* Brand header */}
+        <div
+          style={{
             display: "flex",
-            flexDirection: "column",
             alignItems: "center",
-            width: "100%",
-            height: "100%",
-            padding: "60px 40px 52px",
-            boxSizing: "border-box",
+            gap: 8,
+            marginBottom: 24,
+            zIndex: 1,
           }}
         >
-          {/* ── Brand header ── */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 0, marginBottom: 32 }}>
-            {/* Diya with layered glow */}
-            <div style={{ position: "relative", marginBottom: 12 }}>
-              <div style={{ position: "absolute", inset: -32, borderRadius: "50%", background: "radial-gradient(circle, rgba(249,115,22,0.40) 0%, rgba(249,115,22,0.10) 50%, transparent 70%)" }} />
-              <div style={{ position: "absolute", inset: -16, borderRadius: "50%", background: "radial-gradient(circle, rgba(251,146,60,0.25) 0%, transparent 70%)" }} />
-              <span style={{ fontSize: 72, lineHeight: 1, position: "relative", display: "block" }}>🪔</span>
-            </div>
-            {/* Brand name */}
-            <div
-              style={{
-                fontSize: 42,
-                fontWeight: 900,
-                letterSpacing: "0.05em",
-                textTransform: "uppercase",
-                background: "linear-gradient(135deg, #fb923c 0%, #f97316 45%, #ea580c 100%)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                backgroundClip: "text",
-                lineHeight: 1.1,
-                marginTop: 4,
-              }}
-            >
-              CHHATH RADIO
-            </div>
-            {/* Hindi tagline */}
-            <div style={{ fontSize: 15, color: "rgba(251,146,60,0.60)", marginTop: 8, fontWeight: 500, letterSpacing: "0.08em" }}>
-              छठ के गीत, बिना रुके
-            </div>
-          </div>
-
-          {/* ── Divider ── */}
-          <div style={{ width: 80, height: 1, background: "linear-gradient(90deg, transparent, rgba(249,115,22,0.6), transparent)", marginBottom: 36 }} />
-
-          {/* ── Album art ── */}
-          <div
+          <span style={{ fontSize: 22, lineHeight: 1 }}>🪔</span>
+          <span
             style={{
-              width: 240,
-              height: 240,
-              borderRadius: 28,
-              overflow: "hidden",
-              flexShrink: 0,
-              background: "linear-gradient(135deg, #1a0500, #2d0a00)",
-              border: "1px solid rgba(249,115,22,0.28)",
-              boxShadow: "0 12px 48px rgba(0,0,0,0.65), 0 0 0 1px rgba(249,115,22,0.10), 0 0 60px rgba(249,115,22,0.12)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              marginBottom: 36,
+              fontSize: 16,
+              fontWeight: 800,
+              letterSpacing: "0.15em",
+              color: "#f97316",
+              textTransform: "uppercase",
             }}
           >
-            {albumArtUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={albumArtUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} crossOrigin="anonymous" />
-            ) : (
-              <span style={{ fontSize: 80 }}>🪔</span>
-            )}
-          </div>
+            CHHATH RADIO
+          </span>
+        </div>
 
-          {/* ── NOW PLAYING label ── */}
-          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 16 }}>
-            <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#f97316", boxShadow: "0 0 8px rgba(249,115,22,0.9)", flexShrink: 0 }} />
-            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.18em", color: "rgba(249,115,22,0.65)", textTransform: "uppercase" }}>
-              NOW PLAYING
-            </span>
-          </div>
+        {/* Album Art */}
+        <div
+          style={{
+            width: 190,
+            height: 190,
+            borderRadius: 20,
+            overflow: "hidden",
+            background: "rgba(249,115,22,0.08)",
+            border: "1px solid rgba(249,115,22,0.25)",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.6), 0 0 20px rgba(249,115,22,0.15)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: 24,
+            flexShrink: 0,
+            position: "relative",
+            zIndex: 1,
+          }}
+        >
+          {albumArtUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={albumArtUrl}
+              alt=""
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              crossOrigin="anonymous"
+            />
+          ) : (
+            <span style={{ fontSize: 64 }}>🪔</span>
+          )}
+        </div>
 
-          {/* ── Song title ── */}
+        {/* Live badge */}
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "4px 10px",
+            borderRadius: 20,
+            background: "rgba(239,68,68,0.15)",
+            border: "1px solid rgba(239,68,68,0.3)",
+            marginBottom: 12,
+            zIndex: 1,
+          }}
+        >
           <div
             style={{
-              fontSize: 28,
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "#ef4444",
+              boxShadow: "0 0 6px #ef4444",
+            }}
+          />
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 800,
+              letterSpacing: "0.12em",
+              color: "#f87171",
+              textTransform: "uppercase",
+            }}
+          >
+            NOW PLAYING · LIVE
+          </span>
+        </div>
+
+        {/* Song Title & Artist */}
+        <div
+          style={{
+            textAlign: "center",
+            width: "100%",
+            marginBottom: 20,
+            zIndex: 1,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 20,
               fontWeight: 800,
               color: "#ffffff",
               lineHeight: 1.25,
-              marginBottom: 10,
-              textAlign: "center",
+              marginBottom: 6,
               display: "-webkit-box",
               WebkitLineClamp: 2,
               WebkitBoxOrient: "vertical",
               overflow: "hidden",
-              width: "100%",
             }}
           >
             {songTitle || "Chhath Geet"}
           </div>
-
-          {/* ── Artist name ── */}
           <div
             style={{
-              fontSize: 16,
-              color: "rgba(249,115,22,0.70)",
+              fontSize: 14,
               fontWeight: 500,
-              textAlign: "center",
+              color: "rgba(253,186,116,0.75)",
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
-              width: "100%",
             }}
           >
             {songArtist || "Various Artists"}
           </div>
+        </div>
 
-          {/* ── Spacer ── */}
-          <div style={{ flex: 1 }} />
+        {/* Spacer */}
+        <div style={{ flex: 1 }} />
 
-          {/* ── QR code section ── */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.30)", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 700 }}>
-              Scan to listen live
-            </div>
-            <div
-              style={{
-                background: "rgba(255,255,255,0.96)",
-                borderRadius: 16,
-                padding: "12px 12px 10px",
-                display: "inline-flex",
-                boxShadow: "0 4px 24px rgba(0,0,0,0.5), 0 0 0 1px rgba(249,115,22,0.15)",
-              }}
-            >
-              <QRCodeSVG value={siteUrl} size={100} bgColor="#f5f5f5" fgColor="#0d0505" level="M" />
-            </div>
+        {/* QR Section */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 16,
+            width: "100%",
+            padding: "12px 16px",
+            borderRadius: 16,
+            background: "rgba(249,115,22,0.06)",
+            border: "1px solid rgba(249,115,22,0.15)",
+            boxSizing: "border-box",
+            zIndex: 1,
+          }}
+        >
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: 10,
+              padding: 6,
+              display: "flex",
+              flexShrink: 0,
+            }}
+          >
+            <QRCodeSVG value={siteUrl} size={64} bgColor="#ffffff" fgColor="#0d0402" level="M" />
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#f97316" }}>
+              Listen 24/7 Live
+            </span>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
+              Scan QR code to join
+            </span>
+            <span style={{ fontSize: 10, color: "rgba(253,186,116,0.5)", fontFamily: "monospace" }}>
+              chhath-radio-ten.vercel.app
+            </span>
           </div>
         </div>
       </div>

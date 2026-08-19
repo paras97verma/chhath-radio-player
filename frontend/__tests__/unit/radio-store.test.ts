@@ -111,15 +111,16 @@ describe("TestUpNextSongs", () => {
     expect(upNext).toEqual([songs[1], songs[2], songs[3]]);
   });
 
-  it("returns empty array at end of queue", async () => {
+  it("returns wrapped next song when at end of queue in circular loop", async () => {
     const adapter = new MockYouTubePlayerAdapter();
     const songs = makeSongs(2);
 
     await getStore().loadQueue(songs, adapter);
-    // Advance to last song
+    // Advance to last song (index 1)
     await getStore().nextSong();
 
-    expect(getStore().upNextSongs(3)).toEqual([]);
+    // Next song in continuous loop is index 0 (songs[0])
+    expect(getStore().upNextSongs(3)).toEqual([songs[0]]);
   });
 });
 
@@ -215,7 +216,7 @@ describe("TestNextSong", () => {
     expect(loadVideoSpy).toHaveBeenCalledWith(songs[1].youtube_video_id);
   });
 
-  it("wraps to index 0 and sets playState=IDLE at end of queue", async () => {
+  it("wraps to index 0 and continuous loops at end of queue", async () => {
     const adapter = new MockYouTubePlayerAdapter();
     const songs = makeSongs(2);
     await getStore().loadQueue(songs, adapter);
@@ -224,10 +225,10 @@ describe("TestNextSong", () => {
     await getStore().nextSong();
     expect(getStore().currentIndex).toBe(1);
 
-    // Next from last → wrap
+    // Next from last → wrap to 0 and continue playing
     await getStore().nextSong();
     expect(getStore().currentIndex).toBe(0);
-    expect(getStore().playState).toBe("IDLE");
+    expect(getStore().playState).toBe("PLAYING");
   });
 });
 
@@ -270,17 +271,17 @@ describe("TestHandleAdapterStateChange", () => {
     expect(loadVideoSpy).toHaveBeenCalledWith(songs[1].youtube_video_id);
   });
 
-  it("ENDED at last song → wraps to index 0, playState=IDLE", async () => {
+  it("ENDED at last song → wraps to index 0 and continues loop", async () => {
     const { sessionId } = await setupStore(2);
 
     // Advance to last song first
     await getStore().handleAdapterStateChange("ENDED", sessionId);
     expect(getStore().currentIndex).toBe(1);
 
-    // ENDED at last song
+    // ENDED at last song -> wrap to 0
     await getStore().handleAdapterStateChange("ENDED", sessionId);
     expect(getStore().currentIndex).toBe(0);
-    expect(getStore().playState).toBe("IDLE");
+    expect(getStore().playState).toBe("PLAYING");
   });
 
   it("ERROR → skips broken song and loads next", async () => {

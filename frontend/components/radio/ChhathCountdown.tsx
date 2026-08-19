@@ -48,9 +48,9 @@ function computeCountdown(dateIso: string) {
 
 // ─── Neumorphic shadow constant ───────────────────────────────────────────────
 
-const NM_CARD = "6px 6px 16px rgba(0,0,0,0.72), -3px -3px 10px rgba(60,30,10,0.32), inset 0 1px 0 rgba(255,255,255,0.04)";
-const NM_BTN  = "4px 4px 10px rgba(0,0,0,0.65), -2px -2px 6px rgba(60,30,10,0.28)";
-const NM_BTN_PRESSED = "inset 3px 3px 8px rgba(0,0,0,0.60), inset -1px -1px 4px rgba(60,30,10,0.20)";
+const NM_CARD = "8px 8px 24px rgba(0,0,0,0.85), -4px -4px 12px rgba(90,40,15,0.22), inset 0 1px 0 rgba(254,215,170,0.12)";
+const NM_BTN  = "4px 4px 12px rgba(0,0,0,0.75), -2px -2px 6px rgba(90,40,15,0.20)";
+const NM_BTN_PRESSED = "inset 3px 3px 8px rgba(0,0,0,0.70), inset -1px -1px 4px rgba(90,40,15,0.20)";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -143,11 +143,17 @@ export default function ChhathCountdown() {
   // ── Full neumorphic card (all screen sizes — mobile scaling handled by PageClient wrapper) ──
   return (
     <div
-      className="flex flex-col items-center gap-2 text-center select-none w-[200px] rounded-2xl px-4 py-2.5"
-      style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_CARD }}
+      className="flex flex-col items-center gap-2 text-center select-none w-[190px] rounded-2xl px-3.5 py-2 border"
+      style={{
+        background: "rgba(14,7,4,0.82)",
+        borderColor: "rgba(251,146,60,0.16)",
+        boxShadow: "0 8px 24px rgba(0,0,0,0.60), inset 0 1px 0 rgba(255,255,255,0.08)",
+        backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
+      }}
     >
       {/* Header */}
-      <p className="text-xs font-bold tracking-[0.15em] uppercase text-orange-500/85">
+      <p className="text-[11px] font-bold tracking-[0.15em] uppercase text-orange-400">
         Chhath {data.year}
       </p>
 

@@ -136,7 +136,7 @@ export async function GET(request: NextRequest) {
               fontSize: "20px",
             }}
           >
-            छठ के गीत, बिना रुके · chhathradio.com
+            छठ के गीत, बिना रुके · chhath-radio-ten.vercel.app
           </div>
         </div>
       </div>
