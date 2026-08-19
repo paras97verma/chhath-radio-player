@@ -37,6 +37,13 @@ class SongCreate(BaseModel):
     category: str | None = Field(default=None, max_length=100)
     sort_order: int = Field(default=0, ge=0)
 
+    @field_validator("title", "artist")
+    @classmethod
+    def validate_non_empty_str(cls, v: str | None) -> str | None:
+        if v is not None and len(v.strip()) == 0:
+            raise ValueError("Field cannot be an empty string.")
+        return v
+
     @field_validator("youtube_url")
     @classmethod
     def validate_and_extract_video_id(cls, v: str) -> str:
