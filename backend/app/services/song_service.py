@@ -130,7 +130,7 @@ class SongService:
 
         # Idempotency check: Return existing song if video_id is already in DB
         existing = db.scalar(select(Song).where(Song.youtube_video_id == video_id))
-        if existing:
+        if existing and isinstance(existing, Song):
             logger.info("Song with video_id '%s' already exists (id=%s) — returning existing.", video_id, existing.id)
             return existing
 

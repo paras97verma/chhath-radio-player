@@ -22,7 +22,7 @@ def hash_password(plain_password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plain-text password against a bcrypt hash cleanly with passlib fallback."""
-    if not plain_password or not hashed_password:
+    if plain_password is None or not hashed_password:
         return False
     try:
         pw_bytes = plain_password.encode("utf-8")
