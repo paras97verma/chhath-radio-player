@@ -105,6 +105,10 @@ let ytApiLoaded = false;
 let ytApiLoadPromise: Promise<void> | null = null;
 
 function loadYouTubeAPI(): Promise<void> {
+  if (typeof window !== "undefined" && window.YT && window.YT.Player) {
+    ytApiLoaded = true;
+    return Promise.resolve();
+  }
   if (ytApiLoaded) return Promise.resolve();
   if (ytApiLoadPromise) return ytApiLoadPromise;
 
@@ -142,23 +146,13 @@ export class YouTubeIFramePlayerAdapter implements YouTubePlayerAdapter {
         playerVars: {
           // Golden Rule: NO ad-blocking, NO fake controls
           autoplay: 1,
-          controls: 0,
           rel: 0,
           modestbranding: 1,
           enablejsapi: 1,
           playsinline: 1,
-          origin: typeof window !== "undefined" ? window.location.origin : undefined,
-          widget_referrer: typeof window !== "undefined" ? window.location.origin : undefined,
         },
         events: {
-          onReady: () => {
-            try {
-              this.player?.playVideo();
-            } catch {
-              /* ignore */
-            }
-            resolve();
-          },
+          onReady: () => resolve(),
           onStateChange: (event) => {
             const state = YT_STATE_MAP[event.data] ?? "UNSTARTED";
             this.currentState = state;
@@ -178,18 +172,7 @@ export class YouTubeIFramePlayerAdapter implements YouTubePlayerAdapter {
 
   async loadVideo(videoId: string): Promise<void> {
     if (!this.player) throw new Error("Player not initialized");
-    if (typeof (this.player as unknown as { loadVideoById: (args: unknown) => void }).loadVideoById === "function") {
-      try {
-        (this.player as unknown as { loadVideoById: (args: unknown) => void }).loadVideoById({
-          videoId,
-          suggestedQuality: "small",
-        });
-      } catch {
-        this.player.loadVideoById(videoId);
-      }
-    } else {
-      this.player.loadVideoById(videoId);
-    }
+    this.player.loadVideoById(videoId);
     this.player.playVideo();
   }
 

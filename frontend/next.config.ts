@@ -1,14 +1,13 @@
 import type { NextConfig } from "next";
 
-// Backend URL for server-side rewrites (Next.js → FastAPI).
-// Inside Docker the backend is reachable via the service name; on the host it's localhost.
-// Set BACKEND_URL in the container environment to override (e.g. http://chhath_backend:8000).
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
-
 // Public API URL baked in at build time (NEXT_PUBLIC_API_URL).
 // Used in CSP connect-src so the browser can reach the backend directly (SSE, heartbeat).
 // In production this is the Render URL; in local dev it's empty (uses Next.js rewrites).
 const PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+
+// Backend URL for server-side rewrites (Next.js → FastAPI).
+// Fallback to PUBLIC_API_URL if set, or localhost for local development.
+const BACKEND_URL = process.env.BACKEND_URL || PUBLIC_API_URL || "http://localhost:8000";
 
 const isProd = process.env.NODE_ENV === "production";
 

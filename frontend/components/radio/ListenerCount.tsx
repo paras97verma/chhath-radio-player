@@ -98,9 +98,11 @@ export default function ListenerCount({ onCountChange }: ListenerCountProps = {}
     let sseRetryTimer: ReturnType<typeof setTimeout> | null = null;
     const sseConnected = { current: false };
 
+    const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
+
     function connectSSE() {
       try {
-        sse = new EventSource(`/api/events?session_id=${sessionId.current}`);
+        sse = new EventSource(`${API_BASE}/api/events?session_id=${sessionId.current}`);
         sse.addEventListener("listener_count", (e: MessageEvent) => {
           sseConnected.current = true;
           try {
