@@ -134,6 +134,7 @@ function loadYouTubeAPI(): Promise<void> {
 
 export class YouTubeIFramePlayerAdapter implements YouTubePlayerAdapter {
   private player: YTPlayer | null = null;
+  private isReady = false;
   private currentState: PlayerState = "UNSTARTED";
   private stateListeners: Set<(state: PlayerState) => void> = new Set();
 
@@ -141,6 +142,7 @@ export class YouTubeIFramePlayerAdapter implements YouTubePlayerAdapter {
     await loadYouTubeAPI();
 
     return new Promise((resolve) => {
+      this.isReady = false;
       this.player = new window.YT.Player(container, {
         videoId,
         playerVars: {
@@ -152,7 +154,10 @@ export class YouTubeIFramePlayerAdapter implements YouTubePlayerAdapter {
           playsinline: 1,
         },
         events: {
-          onReady: () => resolve(),
+          onReady: () => {
+            this.isReady = true;
+            resolve();
+          },
           onStateChange: (event) => {
             const state = YT_STATE_MAP[event.data] ?? "UNSTARTED";
             this.currentState = state;
@@ -170,42 +175,54 @@ export class YouTubeIFramePlayerAdapter implements YouTubePlayerAdapter {
     });
   }
 
+  private _call<K extends keyof YTPlayer>(
+    methodName: K,
+    ...args: Parameters<YTPlayer[K]>
+  ): ReturnType<YTPlayer[K]> | undefined {
+    if (!this.isReady || !this.player) return undefined;
+    const fn = this.player[methodName];
+    if (typeof fn === "function") {
+      return (fn as (...a: unknown[]) => unknown).apply(this.player, args) as ReturnType<YTPlayer[K]>;
+    }
+    return undefined;
+  }
+
   async loadVideo(videoId: string): Promise<void> {
     if (!this.player) throw new Error("Player not initialized");
-    this.player.loadVideoById(videoId);
-    this.player.playVideo();
+    this._call("loadVideoById", videoId);
+    this._call("playVideo");
   }
 
   async play(): Promise<void> {
-    this.player?.playVideo();
+    this._call("playVideo");
   }
 
   async pause(): Promise<void> {
-    this.player?.pauseVideo();
+    this._call("pauseVideo");
   }
 
   mute(): void {
-    this.player?.mute();
+    this._call("mute");
   }
 
   unMute(): void {
-    this.player?.unMute();
+    this._call("unMute");
   }
 
   setVolume(volume: number): void {
-    this.player?.setVolume(volume);
+    this._call("setVolume", volume);
   }
 
   seekTo(seconds: number): void {
-    this.player?.seekTo(seconds, true);
+    this._call("seekTo", seconds, true);
   }
 
   getCurrentTime(): number {
-    return this.player?.getCurrentTime() ?? 0;
+    return this._call("getCurrentTime") ?? 0;
   }
 
   getDuration(): number {
-    return this.player?.getDuration() ?? 0;
+    return this._call("getDuration") ?? 0;
   }
 
   getState(): PlayerState {
@@ -222,8 +239,11 @@ export class YouTubeIFramePlayerAdapter implements YouTubePlayerAdapter {
 
   destroy(): void {
     // CRITICAL: Remove all listeners before destroying to prevent memory leaks
+    this.isReady = false;
     this.stateListeners.clear();
-    this.player?.destroy();
+    if (this.player && typeof this.player.destroy === "function") {
+      this.player.destroy();
+    }
     this.player = null;
   }
 }
