@@ -638,9 +638,10 @@ export default function RadioPlayer({
     const prevIdx = state.currentIndex - 1;
     const prevSong = state.queue[prevIdx];
     if (!prevSong) return;
+    triggerFlash("prev");
     useRadioStore.setState({ currentIndex: prevIdx, playState: "BUFFERING" });
     await state.adapter.loadVideo(prevSong.youtube_video_id);
-  }, []);
+  }, [triggerFlash]);
 
   const handlePlaySong = useCallback(async (index: number, song: Song) => {
     const state = useRadioStore.getState();
@@ -792,7 +793,7 @@ export default function RadioPlayer({
                 onClick={handlePrev}
                 disabled={!isReady || currentIndex <= 0}
                 aria-label="Previous song"
-                className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:cursor-not-allowed hover:scale-110"
+                className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:cursor-not-allowed hover:scale-110 active:scale-95"
                 style={{
                   color: keyFlash === "prev" || keyFlash === "seekBack" ? "#fb923c" : "rgba(255,255,255,0.5)",
                   background: keyFlash === "prev" || keyFlash === "seekBack" ? "rgba(249,115,22,0.22)" : "transparent",
@@ -832,10 +833,10 @@ export default function RadioPlayer({
 
               {/* Next */}
               <button
-                onClick={nextSong}
+                onClick={() => { triggerFlash("next"); nextSong(); }}
                 disabled={!isReady}
                 aria-label="Next song"
-                className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed hover:scale-110"
+                className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed hover:scale-110 active:scale-95"
                 style={{
                   color: keyFlash === "next" || keyFlash === "seekFwd" ? "#fb923c" : "rgba(255,255,255,0.5)",
                   background: keyFlash === "next" || keyFlash === "seekFwd" ? "rgba(249,115,22,0.22)" : "transparent",
