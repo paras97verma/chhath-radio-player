@@ -167,25 +167,38 @@ function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }
 function ProgressBar({
   adapterRef,
   isPlaying,
+  isBuffering,
 }: {
   adapterRef: React.MutableRefObject<YouTubeIFramePlayerAdapter | null>;
   isPlaying: boolean;
+  isBuffering: boolean;
 }) {
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const rafRef = useRef<number>(0);
   const isDraggingRef = useRef(false);
+  // After a seek, freeze the displayed position for a grace period so the
+  // YouTube player has time to settle before getCurrentTime() is trusted again.
+  const seekFreezeUntilRef = useRef<number>(0);
 
   useEffect(() => {
-    // Only run the rAF loop while playing — saves CPU when paused or idle
-    if (!isPlaying) {
+    // Run the rAF loop while playing OR buffering (e.g. after a seek).
+    // Stopping during buffering caused the progress bar to flash to 0 because
+    // the YouTube IFrame API briefly resets getCurrentTime() mid-seek.
+    if (!isPlaying && !isBuffering) {
       cancelAnimationFrame(rafRef.current);
       return;
     }
     const tick = () => {
       const adapter = adapterRef.current;
       if (adapter && !isDraggingRef.current) {
+        // During the seek grace period, skip reading from the adapter so the
+        // bar stays frozen at the seeked position instead of flashing to 0.
+        if (Date.now() < seekFreezeUntilRef.current) {
+          rafRef.current = requestAnimationFrame(tick);
+          return;
+        }
         const dur = adapter.getDuration();
         const cur = adapter.getCurrentTime();
         if (dur > 0) {
@@ -198,7 +211,7 @@ function ProgressBar({
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [adapterRef, isPlaying]);
+  }, [adapterRef, isPlaying, isBuffering]);
 
   const fmt = (s: number) => {
     const m = Math.floor(s / 60);
@@ -220,6 +233,10 @@ function ProgressBar({
     const seekTime = val * duration;
     const adapter = adapterRef.current;
     if (!adapter) return;
+    // Freeze the displayed position for 600 ms so the YouTube player can
+    // settle after seekTo() — prevents the bar from flashing back to 0
+    // while the player buffers the new position.
+    seekFreezeUntilRef.current = Date.now() + 600;
     adapter.seekTo(seekTime);
     if (!isPlaying) {
       setTimeout(() => { adapter.pause(); }, 150);
@@ -907,7 +924,7 @@ export default function RadioPlayer({
           </div>
 
           {/* Progress bar row — always rendered for constant height stability */}
-          <ProgressBar adapterRef={adapterRef} isPlaying={isPlaying} />
+          <ProgressBar adapterRef={adapterRef} isPlaying={isPlaying} isBuffering={isBuffering} />
         </div>
       </div>
     </>
