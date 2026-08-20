@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # ─── Cache config ─────────────────────────────────────────────────────────────
 
 QUEUE_CACHE_KEY = "chhath:queue"
-QUEUE_CACHE_TTL = 30  # seconds — short enough to reflect admin changes quickly
+QUEUE_CACHE_TTL = 2_592_000  # 30 days — safe because cache is explicitly invalidated on every admin write (create/update/delete)
 
 
 def _cache_get(key: str) -> Optional[list]:
