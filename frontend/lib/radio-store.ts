@@ -89,6 +89,8 @@ interface RadioState {
   playState: RadioPlayState;
   radioSessionId: string;
   adapter: YouTubePlayerAdapter | null;
+  /** Internal: cleanup fn returned by adapter.onStateChange — stored here to avoid hacks */
+  _adapterUnsubscribe: (() => void) | null;
 
   // Actions
   loadQueue: (songs: Song[], adapter: YouTubePlayerAdapter) => Promise<void>;
@@ -114,6 +116,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   playState: "IDLE",
   radioSessionId: uuidv4(),
   adapter: null,
+  _adapterUnsubscribe: null,
 
   currentSong: () => {
     const { queue, currentIndex } = get();
@@ -218,12 +221,19 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   },
 
   loadQueue: async (songs, adapter) => {
+    // Clean up any previous adapter subscription before replacing it
+    get()._adapterUnsubscribe?.();
+
     const newSessionId = uuidv4();
     const { activeFilter, favorites } = get();
     const activeQueue =
       activeFilter === "favorites" && favorites.length > 0
         ? songs.filter((s) => favorites.includes(s.id))
         : songs;
+
+    const unsubscribe = adapter.onStateChange((state) => {
+      get().handleAdapterStateChange(state, newSessionId);
+    });
 
     set({
       allSongs: songs,
@@ -232,13 +242,8 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       playState: "IDLE",
       radioSessionId: newSessionId,
       adapter,
+      _adapterUnsubscribe: unsubscribe,
     });
-
-    const unsubscribe = adapter.onStateChange((state) => {
-      get().handleAdapterStateChange(state, newSessionId);
-    });
-
-    (adapter as unknown as { _unsubscribe?: () => void })._unsubscribe = unsubscribe;
   },
 
   startPlayback: async () => {

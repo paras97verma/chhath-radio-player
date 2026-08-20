@@ -18,9 +18,8 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { fetchRadioQueue } from "@/lib/api";
-import { YouTubeIFramePlayerAdapter, preloadYouTubeAPI } from "@/lib/youtube-adapter";
+import { YouTubeIFramePlayerAdapter } from "@/lib/youtube-adapter";
 import { useRadioStore } from "@/lib/radio-store";
-import { useUserStore } from "@/lib/user-store";
 import type { Song } from "@/lib/api";
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -179,6 +178,11 @@ function ProgressBar({
   const isDraggingRef = useRef(false);
 
   useEffect(() => {
+    // Only run the rAF loop while playing — saves CPU when paused or idle
+    if (!isPlaying) {
+      cancelAnimationFrame(rafRef.current);
+      return;
+    }
     const tick = () => {
       const adapter = adapterRef.current;
       if (adapter && !isDraggingRef.current) {
@@ -194,7 +198,7 @@ function ProgressBar({
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [adapterRef]);
+  }, [adapterRef, isPlaying]);
 
   const fmt = (s: number) => {
     const m = Math.floor(s / 60);
@@ -266,6 +270,7 @@ function ProgressBar({
           onTouchEnd={handleSeekEnd}
           className="absolute inset-0 w-full opacity-0 cursor-pointer h-full"
           aria-label="Seek"
+          tabIndex={-1}
         />
       </div>
       <span className="text-white/50 text-[9px] w-6 shrink-0 tabular-nums">{fmt(duration)}</span>
@@ -273,78 +278,38 @@ function ProgressBar({
   );
 }
 
-// ─── Inline Volume Control ────────────────────────────────────────────────────
+// ─── Inline Volume Control (pure controlled component — no internal state) ────
 
 function VolumeControl({
   adapterRef,
-  externalMuted,
-  externalVolume,
-  onMuteChange,
+  volume,
+  isMuted,
+  onMuteToggle,
   onVolumeChange,
 }: {
   adapterRef: React.MutableRefObject<YouTubeIFramePlayerAdapter | null>;
-  externalMuted?: boolean;
-  externalVolume?: number;
-  onMuteChange?: (muted: boolean) => void;
-  onVolumeChange?: (v: number) => void;
+  volume: number;
+  isMuted: boolean;
+  onMuteToggle: () => void;
+  onVolumeChange: (v: number) => void;
 }) {
-  const [volume, setVolume] = useState(externalVolume ?? 80);
-  const [isMuted, setIsMuted] = useState(false);
-
-  useEffect(() => {
-    if (externalMuted !== undefined && externalMuted !== isMuted) {
-      setIsMuted(externalMuted);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [externalMuted]);
-
-  useEffect(() => {
-    if (externalVolume !== undefined && externalVolume !== volume) {
-      setVolume(externalVolume);
-      if (externalVolume > 0 && isMuted) {
-        setIsMuted(false);
-        onMuteChange?.(false);
-      }
-      adapterRef.current?.setVolume(externalVolume);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [externalVolume]);
+  const VolumeIcon = isMuted || volume === 0 ? IconVolumeMute : volume < 50 ? IconVolumeLow : IconVolumeHigh;
+  const displayVol = isMuted ? 0 : volume;
 
   const handleVolumeChange = (v: number) => {
-    setVolume(v);
-    onVolumeChange?.(v);
+    onVolumeChange(v);
     if (v === 0) {
-      setIsMuted(true);
-      onMuteChange?.(true);
       adapterRef.current?.mute();
     } else {
-      setIsMuted(false);
-      onMuteChange?.(false);
       adapterRef.current?.unMute();
       adapterRef.current?.setVolume(v);
     }
   };
 
-  const handleMuteToggle = () => {
-    if (isMuted) {
-      adapterRef.current?.unMute();
-      adapterRef.current?.setVolume(volume || 80);
-      setIsMuted(false);
-      onMuteChange?.(false);
-    } else {
-      adapterRef.current?.mute();
-      setIsMuted(true);
-      onMuteChange?.(true);
-    }
-  };
-
-  const VolumeIcon = isMuted || volume === 0 ? IconVolumeMute : volume < 50 ? IconVolumeLow : IconVolumeHigh;
-  const displayVol = isMuted ? 0 : volume;
-
   return (
     <div className="flex items-center gap-1 shrink-0">
       <button
-        onClick={handleMuteToggle}
+        onClick={onMuteToggle}
         aria-label={isMuted ? "Unmute" : `Volume ${volume}%`}
         className="text-white/40 hover:text-orange-400 transition-colors"
       >
@@ -369,6 +334,7 @@ function VolumeControl({
           aria-label="Volume"
           className="absolute inset-0 w-full opacity-0 cursor-pointer h-full"
           style={{ accentColor: "#f97316" }}
+          tabIndex={-1}
         />
       </div>
     </div>
@@ -534,8 +500,6 @@ export default function RadioPlayer({
 }) {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<YouTubeIFramePlayerAdapter | null>(null);
-  // Pre-fetched songs cache — seeded from SSR prop if available, otherwise populated by Effect A
-  const prefetchedSongsRef = useRef<Song[] | null>(initialSongs?.length ? initialSongs : null);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(80);
   const [isReady, setIsReady] = useState(false);
@@ -549,11 +513,12 @@ export default function RadioPlayer({
   const [keyFlash, setKeyFlash] = useState<"prev" | "next" | "seekBack" | "seekFwd" | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const triggerFlash = (btn: typeof keyFlash) => {
+  // Use a ref so the keyboard handler always calls the latest version
+  const triggerFlash = useCallback((btn: typeof keyFlash) => {
     if (flashTimer.current) clearTimeout(flashTimer.current);
     setKeyFlash(btn);
     flashTimer.current = setTimeout(() => setKeyFlash(null), 220);
-  };
+  }, []);
 
   const loadQueue = useRadioStore((s) => s.loadQueue);
   const queue = useRadioStore((s) => s.queue);
@@ -574,7 +539,14 @@ export default function RadioPlayer({
   // Keyboard controls
   useEffect(() => {
     const handleKey = async (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      // Allow keyboard shortcuts even when range inputs (seek/volume) are focused;
+      // only bail for text-entry elements.
+      const target = e.target as HTMLElement;
+      if (
+        (target instanceof HTMLInputElement && target.type !== "range") ||
+        target instanceof HTMLTextAreaElement ||
+        target.isContentEditable
+      ) return;
       const state = useRadioStore.getState();
       if (!state.adapter) return;
 
@@ -642,7 +614,7 @@ export default function RadioPlayer({
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, []);
+  }, [triggerFlash, onPlaylistToggle]);
 
   // Dynamic page title
   useEffect(() => {
@@ -678,47 +650,25 @@ export default function RadioPlayer({
     if (showPlaylistRef.current) onPlaylistToggle?.();
   }, [onPlaylistToggle]);
 
-  // ── Effect A: Pre-warm on mount ──────────────────────────────────────────────
-  // Inject the YouTube IFrame API script and, if songs were NOT already provided
-  // via the SSR `initialSongs` prop, fetch the queue now so it's ready before
-  // the user clicks "Tune In". When initialSongs is provided, prefetchedSongsRef
-  // is already populated and we skip the network round-trip entirely.
-  useEffect(() => {
-    // Kick off YT script injection (idempotent — safe to call multiple times)
-    preloadYouTubeAPI();
-
-    // Skip fetch if SSR already seeded the ref
-    if (prefetchedSongsRef.current !== null) return;
-
-    // Pre-fetch the queue and cache it; errors are silently swallowed here
-    // because Effect B will retry if the ref is still null.
-    fetchRadioQueue()
-      .then((songs) => {
-        prefetchedSongsRef.current = songs;
-      })
-      .catch(() => {
-        // Will fall back to a fresh fetch in Effect B
-      });
-  }, []); // runs once on mount
-
-  // ── Effect B: Initialize player when user tunes in ───────────────────────────
-  // By this point the YT API script is already loaded and the queue is cached,
-  // so the only remaining work is creating the YT.Player iframe (~1s, unavoidable).
+  // ── Initialize player when user tunes in ────────────────────────────────────
+  // The YouTube IFrame API script is already loaded from layout.tsx <head>,
+  // and songs are provided via the SSR initialSongs prop from page.tsx.
+  // The only remaining async work is new YT.Player() (~300–500ms, unavoidable).
   useEffect(() => {
     if (!hasTunedIn) return;
     let cancelled = false;
 
     async function init() {
       try {
-        // Use pre-fetched songs if available; otherwise fetch now (cold-start fallback)
-        const songs = prefetchedSongsRef.current ?? await fetchRadioQueue();
+        // Songs from SSR prop (fast path) or client fetch fallback
+        const songs = initialSongs?.length ? initialSongs : await fetchRadioQueue();
         if (cancelled || songs.length === 0) return;
 
         const adapter = new YouTubeIFramePlayerAdapter();
         adapterRef.current = adapter;
 
         if (playerContainerRef.current) {
-          // YT API is already loaded from Effect A — initialize() resolves fast
+          // YT API already loaded from <head> — initialize() resolves fast
           await adapter.initialize(playerContainerRef.current, songs[0].youtube_video_id);
         }
 
@@ -743,7 +693,7 @@ export default function RadioPlayer({
       const adapter = adapterRef.current;
       if (adapter) { adapter.destroy(); adapterRef.current = null; }
     };
-  }, [loadQueue, hasTunedIn]);
+  }, [loadQueue, hasTunedIn, initialSongs]);
 
   const albumArt = currentSong
     ? `https://i.ytimg.com/vi/${currentSong.youtube_video_id}/mqdefault.jpg`
@@ -917,10 +867,23 @@ export default function RadioPlayer({
               {isReady && (
                 <VolumeControl
                   adapterRef={adapterRef}
-                  externalMuted={isMuted}
-                  externalVolume={volume}
-                  onMuteChange={setIsMuted}
-                  onVolumeChange={setVolume}
+                  volume={volume}
+                  isMuted={isMuted}
+                  onMuteToggle={() => {
+                    if (isMuted) {
+                      adapterRef.current?.unMute();
+                      adapterRef.current?.setVolume(volume || 80);
+                      setIsMuted(false);
+                    } else {
+                      adapterRef.current?.mute();
+                      setIsMuted(true);
+                    }
+                  }}
+                  onVolumeChange={(v) => {
+                    setVolume(v);
+                    if (v === 0) setIsMuted(true);
+                    else if (isMuted) setIsMuted(false);
+                  }}
                 />
               )}
 

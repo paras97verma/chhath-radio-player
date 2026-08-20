@@ -101,34 +101,37 @@ interface YTPlayer {
   getPlayerState(): number;
 }
 
-let ytApiLoaded = false;
 let ytApiLoadPromise: Promise<void> | null = null;
 
 /**
  * Pre-warm the YouTube IFrame API by injecting the script tag immediately.
  * Safe to call multiple times — idempotent. Fire-and-forget.
+ * NOTE: In production the script is already loaded statically from layout.tsx <head>,
+ * so this is a no-op fast path in the common case.
  */
 export function preloadYouTubeAPI(): void {
   loadYouTubeAPI(); // result cached in ytApiLoadPromise
 }
 
 function loadYouTubeAPI(): Promise<void> {
-  if (typeof window !== "undefined" && window.YT && window.YT.Player) {
-    ytApiLoaded = true;
+  // Fast path: the static <script> in layout.tsx <head> already loaded the API.
+  // window.YT.Player is available synchronously — resolve immediately.
+  if (typeof window !== "undefined" && window.YT?.Player) {
     return Promise.resolve();
   }
-  if (ytApiLoaded) return Promise.resolve();
+
+  // Slow path: API not yet ready — wait for the onYouTubeIframeAPIReady callback.
+  // This only happens on very slow connections or if the static script hasn't fired yet.
   if (ytApiLoadPromise) return ytApiLoadPromise;
 
   ytApiLoadPromise = new Promise((resolve) => {
     const existingCallback = window.onYouTubeIframeAPIReady;
     window.onYouTubeIframeAPIReady = () => {
-      ytApiLoaded = true;
       if (existingCallback) existingCallback();
       resolve();
     };
 
-    // Only inject the script once
+    // Fallback: inject the script if somehow it wasn't loaded from <head>
     if (!document.getElementById("yt-iframe-api")) {
       const script = document.createElement("script");
       script.id = "yt-iframe-api";

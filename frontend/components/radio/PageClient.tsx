@@ -192,9 +192,9 @@ export default function PageClient({ initialSongs }: PageClientProps) {
           BOTTOM STACK
       ══════════════════════════════════════════════════════════ */}
 
-      {/* Facts ticker — always visible, elevated above player */}
+      {/* Facts ticker — always visible, elevated above player but BELOW playlist drawer */}
       <div
-        className="fixed left-0 right-0 z-30 flex justify-center px-4 pointer-events-none"
+        className={`fixed left-0 right-0 flex justify-center px-4 pointer-events-none ${showPlaylist ? "z-10" : "z-30"}`}
         style={{ bottom: "var(--facts-bottom)" }}
       >
         <ChhathFacts />
@@ -202,7 +202,7 @@ export default function PageClient({ initialSongs }: PageClientProps) {
 
       {/* Player row — always visible, pill centered */}
       <div
-        className="fixed left-0 right-0 z-20 flex items-center justify-center px-3 sm:px-4"
+        className={`fixed left-0 right-0 flex items-center justify-center px-3 sm:px-4 ${showPlaylist ? "z-40" : "z-20"}`}
         style={{ bottom: "var(--player-bottom)" }}
       >
         {/* Radio player pill */}

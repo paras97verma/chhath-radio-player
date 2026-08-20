@@ -94,6 +94,9 @@ export default function RootLayout({
         <link rel="preconnect" href="https://i.ytimg.com" crossOrigin="anonymous" />
         <link rel="dns-prefetch" href="https://www.youtube.com" />
         <link rel="dns-prefetch" href="https://i.ytimg.com" />
+        {/* Pre-load the YouTube IFrame API at page load so it's ready before the user clicks "Tune In" */}
+        {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+        <script src="https://www.youtube.com/iframe_api" async />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
