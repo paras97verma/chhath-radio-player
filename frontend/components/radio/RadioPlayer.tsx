@@ -523,16 +523,19 @@ export default function RadioPlayer({
   hasTunedIn = false,
   showPlaylist: showPlaylistProp,
   onPlaylistToggle,
+  initialSongs,
 }: {
   hasTunedIn?: boolean;
   /** Lifted state — controlled by PageClient so it can hide side elements when playlist is open */
   showPlaylist?: boolean;
   onPlaylistToggle?: () => void;
+  /** Songs pre-fetched server-side (SSR). When provided, Effect A skips the client-side fetch. */
+  initialSongs?: Song[];
 }) {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<YouTubeIFramePlayerAdapter | null>(null);
-  // Pre-fetched songs cache — populated on mount so they're ready when user clicks Tune In
-  const prefetchedSongsRef = useRef<Song[] | null>(null);
+  // Pre-fetched songs cache — seeded from SSR prop if available, otherwise populated by Effect A
+  const prefetchedSongsRef = useRef<Song[] | null>(initialSongs?.length ? initialSongs : null);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(80);
   const [isReady, setIsReady] = useState(false);
@@ -676,12 +679,16 @@ export default function RadioPlayer({
   }, [onPlaylistToggle]);
 
   // ── Effect A: Pre-warm on mount ──────────────────────────────────────────────
-  // Inject the YouTube IFrame API script and fetch the song queue immediately
-  // when the component mounts — before the user even clicks "Tune In".
-  // By the time the user clicks and the 300ms fade completes, both are ready.
+  // Inject the YouTube IFrame API script and, if songs were NOT already provided
+  // via the SSR `initialSongs` prop, fetch the queue now so it's ready before
+  // the user clicks "Tune In". When initialSongs is provided, prefetchedSongsRef
+  // is already populated and we skip the network round-trip entirely.
   useEffect(() => {
     // Kick off YT script injection (idempotent — safe to call multiple times)
     preloadYouTubeAPI();
+
+    // Skip fetch if SSR already seeded the ref
+    if (prefetchedSongsRef.current !== null) return;
 
     // Pre-fetch the queue and cache it; errors are silently swallowed here
     // because Effect B will retry if the ref is still null.

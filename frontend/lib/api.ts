@@ -54,7 +54,10 @@ export interface ChatMessage {
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export async function fetchRadioQueue(): Promise<Song[]> {
-  const res = await fetch(`${API_BASE}/api/radio/queue`, { cache: "no-store" });
+  // 7-day revalidation — safe because the backend Redis cache is explicitly
+  // invalidated on every admin write (create/update/delete). The Next.js cache
+  // will be stale at most until the next deployment or manual revalidation.
+  const res = await fetch(`${API_BASE}/api/radio/queue`, { next: { revalidate: 604_800 } });
   if (!res.ok) throw new Error("Failed to fetch radio queue");
   return res.json();
 }
