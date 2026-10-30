@@ -20,6 +20,8 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { fetchRadioQueue } from "@/lib/api";
 import { YouTubeIFramePlayerAdapter } from "@/lib/youtube-adapter";
 import { useRadioStore } from "@/lib/radio-store";
+import { updateMediaSessionPositionState } from "@/lib/media-session";
+import BackgroundPlayModal from "@/components/radio/BackgroundPlayModal";
 import type { Song } from "@/lib/api";
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -97,7 +99,7 @@ function Spectrogram({ isPlaying }: { isPlaying: boolean }) {
             height: b.h,
             "--dur": b.dur,
             "--delay": b.delay,
-            background: "linear-gradient(to top, #f97316, #fb923c88)",
+            background: "linear-gradient(to top, #ff6b35, #ffa726)",
           } as React.CSSProperties}
         />
       ))}
@@ -113,8 +115,8 @@ function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }
       className="relative w-20 h-20 shrink-0 rounded-full"
       style={{
         boxShadow: isPlaying
-          ? "0 0 32px rgba(249,115,22,0.65), 0 0 14px rgba(249,115,22,0.35)"
-          : "0 2px 14px rgba(0,0,0,0.6)",
+          ? "0 0 40px rgba(255, 107, 53, 0.7), 0 0 18px rgba(255, 138, 80, 0.4)"
+          : "0 2px 18px rgba(0,0,0,0.7)",
         transition: "box-shadow 0.6s ease",
       }}
     >
@@ -148,15 +150,15 @@ function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }
         {src ? (
           <img src={src} alt="" className="w-full h-full object-cover" />
         ) : (
-          <div className="w-full h-full bg-[#2a1005] flex items-center justify-center text-orange-400/60 text-[10px]">
+          <div className="w-full h-full bg-[#3a1a08] flex items-center justify-center text-orange-400/70 text-[10px]">
             🪔
           </div>
         )}
       </div>
       {/* Center spindle */}
       <div
-        className="absolute w-3 h-3 rounded-full bg-orange-500/90 shadow"
-        style={{ top: "50%", left: "50%", transform: "translate(-50%,-50%)" }}
+        className="absolute w-3 h-3 rounded-full bg-orange-500 shadow"
+        style={{ top: "50%", left: "50%", transform: "translate(-50%,-50%)", boxShadow: "0 0 8px rgba(255, 138, 80, 0.6)" }}
       />
     </div>
   );
@@ -205,6 +207,7 @@ function ProgressBar({
           setDuration(dur);
           setCurrentTime(cur);
           setProgress(cur / dur);
+          updateMediaSessionPositionState(cur, dur);
         }
       }
       rafRef.current = requestAnimationFrame(tick);
@@ -261,8 +264,8 @@ function ProgressBar({
             className="absolute inset-y-0 left-0 rounded-full"
             style={{
               width: `${progress * 100}%`,
-              background: "linear-gradient(90deg, #fb923c, #f97316)",
-              filter: "drop-shadow(0 0 4px rgba(249,115,22,0.6))",
+              background: "linear-gradient(90deg, #ffa726, #ff7043)",
+              filter: "drop-shadow(0 0 6px rgba(255, 112, 67, 0.7))",
             }}
           />
           {/* Thumb dot — always visible, centered on the progress percentage */}
@@ -270,7 +273,7 @@ function ProgressBar({
             className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-orange-400 shadow-sm"
             style={{
               left: `calc(${progress * 100}% - 6px)`,
-              boxShadow: "0 0 6px rgba(249,115,22,0.7)",
+              boxShadow: "0 0 8px rgba(255, 138, 80, 0.8)",
             }}
           />
         </div>
@@ -339,7 +342,7 @@ function VolumeControl({
           className="absolute inset-y-0 left-0 rounded-full"
           style={{
             width: `${displayVol}%`,
-            background: "linear-gradient(90deg, #fb923c, #f97316)",
+            background: "linear-gradient(90deg, #ffa726, #ff7043)",
           }}
         />
         <input
@@ -391,15 +394,15 @@ function PlaylistDrawer({
       <div
         className="rounded-2xl overflow-hidden border"
         style={{
-          background: "rgba(14, 7, 4, 0.95)",
-          borderColor: "rgba(251, 146, 60, 0.18)",
-          boxShadow: "0 16px 40px rgba(0,0,0,0.85), inset 0 1px 0 rgba(255,255,255,0.08)",
-          backdropFilter: "blur(24px)",
-          WebkitBackdropFilter: "blur(24px)",
+          background: "rgba(18, 10, 6, 0.96)",
+          borderColor: "rgba(255, 138, 80, 0.22)",
+          boxShadow: "0 20px 50px rgba(0,0,0,0.9), inset 0 1px 0 rgba(255,229,208,0.12)",
+          backdropFilter: "blur(32px)",
+          WebkitBackdropFilter: "blur(32px)",
         }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-orange-500/15">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-orange-500/20">
           <span className="text-orange-400 font-semibold text-xs tracking-wide">
             🎵 Playlist ({queue.length})
           </span>
@@ -410,12 +413,12 @@ function PlaylistDrawer({
 
         {/* Tab Switcher: Appears ONLY when user has favorited at least 1 song */}
         {favoritedCount > 0 && (
-          <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-orange-500/10 bg-black/40">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-orange-500/12 bg-black/50">
             <button
               onClick={() => setFilter("all")}
               className={`flex-1 py-1 px-2.5 rounded-lg text-[11px] font-semibold transition-all ${
                 activeFilter === "all"
-                  ? "bg-orange-500/20 text-orange-400 border border-orange-500/35"
+                  ? "bg-orange-500/25 text-orange-400 border border-orange-500/40"
                   : "text-amber-200/50 hover:text-amber-200 hover:bg-white/5"
               }`}
             >
@@ -425,7 +428,7 @@ function PlaylistDrawer({
               onClick={() => setFilter("favorites")}
               className={`flex-1 py-1 px-2.5 rounded-lg text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5 ${
                 activeFilter === "favorites"
-                  ? "bg-orange-500/20 text-orange-400 border border-orange-500/35"
+                  ? "bg-orange-500/25 text-orange-400 border border-orange-500/40"
                   : "text-amber-200/50 hover:text-amber-200 hover:bg-white/5"
               }`}
             >
@@ -450,7 +453,7 @@ function PlaylistDrawer({
                   key={song.id}
                   ref={isPlaying ? activeItemRef : null}
                   className={`flex items-center gap-1 transition-colors ${
-                    isPlaying ? "bg-orange-500/15" : "hover:bg-white/5"
+                    isPlaying ? "bg-orange-500/20" : "hover:bg-white/5"
                   }`}
                 >
                   <button
@@ -524,6 +527,7 @@ export default function RadioPlayer({
   const showPlaylist = showPlaylistProp ?? false;
   const showPlaylistRef = useRef(false);
   const [playlistFocusIdx, setPlaylistFocusIdx] = useState<number>(-1);
+  const [showBgModal, setShowBgModal] = useState(false);
 
   useEffect(() => { showPlaylistRef.current = showPlaylist; }, [showPlaylist]);
 
@@ -728,10 +732,19 @@ export default function RadioPlayer({
       `}</style>
 
       <div className="relative w-full" role="region" aria-label="Radio player">
-        {/* Hidden YouTube iframe */}
+        {/* Hidden YouTube iframe with valid geometry to avoid browser invisible-frame throttling */}
         <div
           ref={playerContainerRef}
-          style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none", top: 0, left: 0 }}
+          style={{
+            position: "fixed",
+            bottom: -150,
+            right: -150,
+            width: 200,
+            height: 200,
+            opacity: 0.005,
+            pointerEvents: "none",
+            zIndex: -50,
+          }}
           aria-hidden="true"
         />
 
@@ -744,17 +757,17 @@ export default function RadioPlayer({
         <div
           className="flex flex-col rounded-[26px]"
           style={{
-            background: "rgba(14, 7, 4, 0.82)",
-            backdropFilter: "blur(24px)",
-            WebkitBackdropFilter: "blur(24px)",
-            border: "1px solid rgba(251, 146, 60, 0.16)",
-            boxShadow: "0 16px 40px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.08)",
+            background: "linear-gradient(145deg, rgba(25, 14, 8, 0.94) 0%, rgba(18, 10, 6, 0.90) 100%)",
+            backdropFilter: "blur(32px)",
+            WebkitBackdropFilter: "blur(32px)",
+            border: "1px solid rgba(255, 138, 80, 0.25)",
+            boxShadow: "0 20px 50px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 167, 38, 0.08), inset 0 1px 0 rgba(255, 229, 208, 0.12), 0 0 30px rgba(255, 112, 67, 0.15)",
           }}
         >
           {/* Song name & artist strip at top of pill (both desktop and mobile) */}
           <div
             className="flex items-center justify-between px-4 sm:px-5 py-1.5 border-b h-12 shrink-0"
-            style={{ borderColor: "rgba(251,146,60,0.12)" }}
+            style={{ borderColor: "rgba(255,138,80,0.18)" }}
           >
             <div className="min-w-0 flex-1 text-center px-2 flex flex-col justify-center h-full">
               {error ? (
@@ -812,9 +825,9 @@ export default function RadioPlayer({
                 aria-label="Previous song"
                 className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:cursor-not-allowed hover:scale-110 active:scale-95"
                 style={{
-                  color: keyFlash === "prev" || keyFlash === "seekBack" ? "#fb923c" : "rgba(255,255,255,0.5)",
-                  background: keyFlash === "prev" || keyFlash === "seekBack" ? "rgba(249,115,22,0.22)" : "transparent",
-                  boxShadow: keyFlash === "prev" || keyFlash === "seekBack" ? "0 0 14px rgba(249,115,22,0.35)" : "none",
+                  color: keyFlash === "prev" || keyFlash === "seekBack" ? "#ffa726" : "rgba(255,255,255,0.5)",
+                  background: keyFlash === "prev" || keyFlash === "seekBack" ? "rgba(255, 138, 80, 0.25)" : "transparent",
+                  boxShadow: keyFlash === "prev" || keyFlash === "seekBack" ? "0 0 16px rgba(255, 138, 80, 0.45)" : "none",
                   opacity: (!isReady || currentIndex <= 0) && !keyFlash ? 0.2 : 1,
                 }}
               >
@@ -829,10 +842,10 @@ export default function RadioPlayer({
                 className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:opacity-30 disabled:cursor-not-allowed mx-0.5"
                 style={{
                   background: isReady && !isBuffering
-                    ? "linear-gradient(135deg, #fb923c, #ea580c)"
+                    ? "linear-gradient(135deg, #ffa726, #ff7043)"
                     : "rgba(255,255,255,0.08)",
                   boxShadow: isReady && !isBuffering
-                    ? "0 0 32px rgba(249,115,22,0.65), 0 4px 12px rgba(0,0,0,0.4)"
+                    ? "0 0 35px rgba(255, 112, 67, 0.7), 0 4px 14px rgba(0,0,0,0.5)"
                     : "none",
                 }}
               >
@@ -855,9 +868,9 @@ export default function RadioPlayer({
                 aria-label="Next song"
                 className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed hover:scale-110 active:scale-95"
                 style={{
-                  color: keyFlash === "next" || keyFlash === "seekFwd" ? "#fb923c" : "rgba(255,255,255,0.5)",
-                  background: keyFlash === "next" || keyFlash === "seekFwd" ? "rgba(249,115,22,0.22)" : "transparent",
-                  boxShadow: keyFlash === "next" || keyFlash === "seekFwd" ? "0 0 14px rgba(249,115,22,0.35)" : "none",
+                  color: keyFlash === "next" || keyFlash === "seekFwd" ? "#ffa726" : "rgba(255,255,255,0.5)",
+                  background: keyFlash === "next" || keyFlash === "seekFwd" ? "rgba(255, 138, 80, 0.25)" : "transparent",
+                  boxShadow: keyFlash === "next" || keyFlash === "seekFwd" ? "0 0 16px rgba(255, 138, 80, 0.45)" : "none",
                 }}
               >
                 <IconNext />
@@ -870,9 +883,9 @@ export default function RadioPlayer({
                 title={isShuffleEnabled ? "Shuffle is ON" : "Shuffle is OFF"}
                 className="w-10 h-10 flex items-center justify-center rounded-full transition-all hover:scale-110"
                 style={{
-                  color: isShuffleEnabled ? "#fb923c" : "rgba(255,255,255,0.4)",
-                  background: isShuffleEnabled ? "rgba(249,115,22,0.18)" : "transparent",
-                  boxShadow: isShuffleEnabled ? "0 0 14px rgba(249,115,22,0.35)" : "none",
+                  color: isShuffleEnabled ? "#ffa726" : "rgba(255,255,255,0.4)",
+                  background: isShuffleEnabled ? "rgba(255, 138, 80, 0.22)" : "transparent",
+                  boxShadow: isShuffleEnabled ? "0 0 16px rgba(255, 138, 80, 0.4)" : "none",
                 }}
               >
                 <IconShuffle />
@@ -913,19 +926,33 @@ export default function RadioPlayer({
                 aria-expanded={showPlaylist}
                 className={`w-8 h-8 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed ml-0.5 ${
                   showPlaylist
-                    ? "text-orange-400 bg-orange-500/15"
+                    ? "text-orange-400 bg-orange-500/20"
                     : "text-white/35 hover:text-white/70 hover:bg-white/8"
                 }`}
               >
                 <IconList />
               </button>
 
+              {/* Background Play settings button */}
+              <button
+                onClick={() => setShowBgModal(true)}
+                aria-label="Background play settings"
+                title="Background play settings & screen off guide"
+                className="w-8 h-8 flex items-center justify-center rounded-full transition-all text-white/40 hover:text-orange-400 hover:bg-white/8 ml-0.5"
+              >
+                <span className="text-xs">📱</span>
+              </button>
             </div>
           </div>
 
           {/* Progress bar row — always rendered for constant height stability */}
           <ProgressBar adapterRef={adapterRef} isPlaying={isPlaying} isBuffering={isBuffering} />
         </div>
+
+        {/* Background Play Help & Permissions Modal */}
+        {showBgModal && (
+          <BackgroundPlayModal onClose={() => setShowBgModal(false)} />
+        )}
       </div>
     </>
   );

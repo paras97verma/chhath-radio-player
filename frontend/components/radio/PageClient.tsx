@@ -123,7 +123,7 @@ export default function PageClient({ initialSongs }: PageClientProps) {
 
   return (
     <>
-    <main className="fixed inset-0 overflow-hidden bg-[#090403]">
+    <main className="fixed inset-0 overflow-hidden bg-[#0a0504]">
 
       {/* ── Layer 0: 3D Chhath Ghat scene ── */}
       <GhatSceneLoader />
@@ -131,7 +131,7 @@ export default function PageClient({ initialSongs }: PageClientProps) {
       {/* ── Layer 1: Full-canvas dark overlay for wallpaper depth ── */}
       <div
         className="absolute inset-0 z-[1] pointer-events-none"
-        style={{ background: "rgba(9,4,3,0.38)" }}
+        style={{ background: "rgba(10,5,4,0.40)" }}
         aria-hidden="true"
       />
 
@@ -139,7 +139,7 @@ export default function PageClient({ initialSongs }: PageClientProps) {
       <div
         className="absolute inset-0 z-[2] pointer-events-none"
         style={{
-          background: "linear-gradient(to bottom, rgba(9,4,3,0.70) 0%, rgba(9,4,3,0.15) 30%, transparent 55%, rgba(9,4,3,0.85) 100%)",
+          background: "linear-gradient(to bottom, rgba(10,5,4,0.75) 0%, rgba(10,5,4,0.18) 30%, transparent 55%, rgba(10,5,4,0.88) 100%)",
         }}
         aria-hidden="true"
       />
@@ -148,7 +148,7 @@ export default function PageClient({ initialSongs }: PageClientProps) {
       <div
         className="absolute inset-0 z-10 pointer-events-none"
         style={{
-          background: "linear-gradient(to top, rgba(9,4,3,0.95) 0%, rgba(9,4,3,0.50) 30%, transparent 55%)",
+          background: "linear-gradient(to top, rgba(10,5,4,0.96) 0%, rgba(10,5,4,0.55) 30%, transparent 55%)",
         }}
         aria-hidden="true"
       />
@@ -247,26 +247,26 @@ export default function PageClient({ initialSongs }: PageClientProps) {
             aria-label="Open live chat"
             className="relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-full cursor-pointer select-none"
             style={{
-              background: "rgba(14,7,2,0.92)",
-              border: "1px solid rgba(249,115,22,0.40)",
-              boxShadow: "4px 4px 10px rgba(0,0,0,0.65), -2px -2px 6px rgba(60,30,10,0.22), 0 0 10px rgba(249,115,22,0.18)",
-              backdropFilter: "blur(8px)",
-              WebkitBackdropFilter: "blur(8px)",
+              background: "rgba(18,10,6,0.94)",
+              border: "1px solid rgba(255,138,80,0.45)",
+              boxShadow: "4px 4px 12px rgba(0,0,0,0.75), -2px -2px 8px rgba(255,138,80,0.15), 0 0 15px rgba(255,112,67,0.25)",
+              backdropFilter: "blur(12px)",
+              WebkitBackdropFilter: "blur(12px)",
             }}
           >
             {/* Chat icon */}
             <svg viewBox="0 0 24 24" fill="none" className="w-4 h-4 shrink-0">
               <path
                 d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
-                fill="rgba(249,115,22,0.18)"
-                stroke="rgba(249,115,22,0.80)"
+                fill="rgba(255,138,80,0.22)"
+                stroke="rgba(255,138,80,0.85)"
                 strokeWidth="1.5"
                 strokeLinejoin="round"
               />
-              <rect x="7"  y="10" width="1.5" height="4" rx="0.75" fill="#fb923c"/>
-              <rect x="10" y="8"  width="1.5" height="6" rx="0.75" fill="#fb923c"/>
-              <rect x="13" y="9"  width="1.5" height="5" rx="0.75" fill="#fb923c"/>
-              <rect x="16" y="11" width="1.5" height="3" rx="0.75" fill="#fb923c"/>
+              <rect x="7"  y="10" width="1.5" height="4" rx="0.75" fill="#ffa726"/>
+              <rect x="10" y="8"  width="1.5" height="6" rx="0.75" fill="#ffa726"/>
+              <rect x="13" y="9"  width="1.5" height="5" rx="0.75" fill="#ffa726"/>
+              <rect x="16" y="11" width="1.5" height="3" rx="0.75" fill="#ffa726"/>
             </svg>
             {/* Live pulse dot */}
             <span className="relative flex shrink-0 w-1.5 h-1.5">
@@ -300,11 +300,11 @@ export default function PageClient({ initialSongs }: PageClientProps) {
       <div
         className="fixed bottom-0 left-0 right-0 z-20 h-11 sm:h-12 border-t"
         style={{
-          background: "rgba(10, 5, 2, 0.90)",
-          borderColor: "rgba(251, 146, 60, 0.14)",
-          boxShadow: "0 -4px 20px rgba(0,0,0,0.60)",
-          backdropFilter: "blur(20px)",
-          WebkitBackdropFilter: "blur(20px)",
+          background: "rgba(15, 8, 4, 0.94)",
+          borderColor: "rgba(255, 138, 80, 0.20)",
+          boxShadow: "0 -4px 25px rgba(0,0,0,0.75)",
+          backdropFilter: "blur(24px)",
+          WebkitBackdropFilter: "blur(24px)",
         }}
       >
         <div className="flex items-center justify-between h-full px-4 sm:px-5 gap-3">
@@ -356,8 +356,8 @@ export default function PageClient({ initialSongs }: PageClientProps) {
               className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold
                          text-orange-500/90 hover:text-orange-400 transition-all duration-150"
               style={{
-                background: "rgba(15, 8, 4, 0.88)",
-                boxShadow: "3px 3px 8px rgba(0,0,0,0.6), -1px -1px 4px rgba(60,30,10,0.25), inset 0 1px 0 rgba(255,255,255,0.03)",
+                background: "rgba(25, 14, 8, 0.92)",
+                boxShadow: "3px 3px 10px rgba(0,0,0,0.7), -1px -1px 5px rgba(255,138,80,0.18), inset 0 1px 0 rgba(255,229,208,0.08)",
               }}
             >
               <IconHeart />

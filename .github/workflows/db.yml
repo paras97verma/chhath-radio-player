@@ -37,6 +37,14 @@ on:
           - seed-songs
           - rollback
           - status
+      admin_email:
+        description: 'Admin email (optional: overrides ADMIN_EMAIL secret)'
+        required: false
+        default: ''
+      admin_password:
+        description: 'Admin password (optional: overrides ADMIN_PASSWORD secret)'
+        required: false
+        default: ''
       confirm:
         description: 'Type "yes" to confirm destructive operations (rollback)'
         required: false
@@ -88,13 +96,13 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
-          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          ADMIN_EMAIL: ${{ github.event.inputs.admin_email != '' && github.event.inputs.admin_email || secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ github.event.inputs.admin_password != '' && github.event.inputs.admin_password || secrets.ADMIN_PASSWORD }}
         run: |
           echo "Running: alembic upgrade head (ensure schema is current)"
           alembic upgrade head
           echo ""
-          echo "Seeding admin user: ${{ secrets.ADMIN_EMAIL }}"
+          echo "Seeding admin user: $ADMIN_EMAIL"
           python seed_admin.py
           echo "✓ Admin seed complete"
 

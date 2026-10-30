@@ -11,6 +11,8 @@
  */
 
 import { useState } from "react";
+import { startAudioKeepAlive } from "@/lib/audio-keep-alive";
+import { requestWakeLock } from "@/lib/wake-lock";
 
 interface TuneInSplashProps {
   onTuneIn: () => void;
@@ -24,6 +26,9 @@ export default function TuneInSplash({ onTuneIn, onEarlyStart }: TuneInSplashPro
 
   const handleClick = () => {
     if (fading) return;
+    // Prime audio keepalive and wake lock directly from user tap
+    startAudioKeepAlive();
+    requestWakeLock();
     onEarlyStart?.(); // fire immediately — runs during the 300ms fade window
     setFading(true);
   };

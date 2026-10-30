@@ -80,3 +80,5 @@ frontend/next-env.d.ts
 
 # Lyzo AI assistant memory (local only — never commit)
 .lyzo/
+.aider*
+.claude/

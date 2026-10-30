@@ -3,7 +3,9 @@
  *
  * Central Zustand store that manages:
  * - The song queue and current index
- * - Play state machine
+ * - Play state machine & user intent tracking
+ * - Background audio keep-alive & Screen Wake Lock
+ * - System Media Session (Lock screen, Control Center, Bluetooth controls)
  * - Continuous auto-progression & loop repeating when queue ends
  * - Favorites management with localStorage persistence
  * - Queue filtering ("all" vs "favorites")
@@ -14,6 +16,13 @@ import { create } from "zustand";
 const uuidv4 = () => crypto.randomUUID();
 import type { Song } from "./api";
 import type { YouTubePlayerAdapter, PlayerState } from "./youtube-adapter";
+import { startAudioKeepAlive, stopAudioKeepAlive } from "./audio-keep-alive";
+import { onPlaybackStateChange } from "./wake-lock";
+import {
+  updateMediaSessionMetadata,
+  registerMediaSessionHandlers,
+  setMediaSessionPlaybackState,
+} from "./media-session";
 
 const FAVORITES_STORAGE_KEY = "chhath_radio_favorites_v1";
 const SHUFFLE_STORAGE_KEY = "chhath_radio_shuffle_v1";
@@ -76,6 +85,8 @@ export type RadioPlayState =
 
 export type PlaylistFilter = "all" | "favorites";
 
+export type UserPlayIntent = "idle" | "playing" | "paused";
+
 interface RadioState {
   // Queue & Song data
   allSongs: Song[];
@@ -87,6 +98,7 @@ interface RadioState {
 
   // Play state
   playState: RadioPlayState;
+  userIntent: UserPlayIntent;
   radioSessionId: string;
   adapter: YouTubePlayerAdapter | null;
   /** Internal: cleanup fn returned by adapter.onStateChange — stored here to avoid hacks */
@@ -97,6 +109,7 @@ interface RadioState {
   startPlayback: () => Promise<void>;
   pausePlayback: () => Promise<void>;
   nextSong: () => Promise<void>;
+  prevSong: () => Promise<void>;
   handleAdapterStateChange: (state: PlayerState, sessionId: string) => Promise<void>;
   currentSong: () => Song | null;
   upNextSongs: (count?: number) => Song[];
@@ -114,6 +127,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   activeFilter: "all",
   isShuffleEnabled: loadShuffleFromStorage(),
   playState: "IDLE",
+  userIntent: "idle",
   radioSessionId: uuidv4(),
   adapter: null,
   _adapterUnsubscribe: null,
@@ -235,11 +249,29 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       get().handleAdapterStateChange(state, newSessionId);
     });
 
+    // Register OS Media Session controls (Lock screen, Control Center, Bluetooth headsets)
+    registerMediaSessionHandlers({
+      onPlay: () => get().startPlayback(),
+      onPause: () => get().pausePlayback(),
+      onNext: () => get().nextSong(),
+      onPrev: () => get().prevSong(),
+      onSeekTo: (time) => get().adapter?.seekTo(time),
+      onSeekBack: (offset) => {
+        const ad = get().adapter;
+        if (ad) ad.seekTo(Math.max(0, ad.getCurrentTime() - offset));
+      },
+      onSeekFwd: (offset) => {
+        const ad = get().adapter;
+        if (ad) ad.seekTo(ad.getCurrentTime() + offset);
+      },
+    });
+
     set({
       allSongs: songs,
       queue: activeQueue.length > 0 ? activeQueue : songs,
       currentIndex: 0,
       playState: "IDLE",
+      userIntent: "idle",
       radioSessionId: newSessionId,
       adapter,
       _adapterUnsubscribe: unsubscribe,
@@ -250,13 +282,19 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const { adapter, queue, currentIndex } = get();
     if (!adapter || queue.length === 0) return;
 
+    set({ userIntent: "playing" });
+    startAudioKeepAlive();
+    onPlaybackStateChange(true);
+
+    const song = queue[currentIndex];
+    updateMediaSessionMetadata(song, true);
+
     const currentState = adapter.getState();
     if (currentState === "PAUSED" || currentState === "CUED") {
       await adapter.play();
       return;
     }
 
-    const song = queue[currentIndex];
     set({ playState: "BUFFERING" });
     await adapter.loadVideo(song.youtube_video_id);
     await adapter.play();
@@ -264,6 +302,10 @@ export const useRadioStore = create<RadioState>((set, get) => ({
 
   pausePlayback: async () => {
     const { adapter } = get();
+    set({ userIntent: "paused" });
+    stopAudioKeepAlive();
+    onPlaybackStateChange(false);
+    setMediaSessionPlaybackState("paused");
     if (!adapter) return;
     await adapter.pause();
     set({ playState: "PAUSED" });
@@ -275,23 +317,52 @@ export const useRadioStore = create<RadioState>((set, get) => ({
 
     const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
 
-    set({ currentIndex: nextIndex, playState: "BUFFERING" });
+    set({ currentIndex: nextIndex, playState: "BUFFERING", userIntent: "playing" });
+    updateMediaSessionMetadata(queue[nextIndex], true);
     await adapter.loadVideo(queue[nextIndex].youtube_video_id);
   },
 
+  prevSong: async () => {
+    const { queue, currentIndex, adapter } = get();
+    if (!adapter || queue.length === 0 || currentIndex <= 0) return;
+
+    const prevIndex = currentIndex - 1;
+    set({ currentIndex: prevIndex, playState: "BUFFERING", userIntent: "playing" });
+    updateMediaSessionMetadata(queue[prevIndex], true);
+    await adapter.loadVideo(queue[prevIndex].youtube_video_id);
+  },
+
   handleAdapterStateChange: async (state, sessionId) => {
-    const { radioSessionId, queue, currentIndex, adapter } = get();
+    const { radioSessionId, queue, currentIndex, adapter, userIntent } = get();
 
     if (sessionId !== radioSessionId) return;
 
     switch (state) {
       case "PLAYING":
-        set({ playState: "PLAYING" });
+        set({ playState: "PLAYING", userIntent: "playing" });
+        startAudioKeepAlive();
+        updateMediaSessionMetadata(queue[currentIndex], true);
+        onPlaybackStateChange(true);
         break;
 
-      case "PAUSED":
+      case "PAUSED": {
         set({ playState: "PAUSED" });
+        setMediaSessionPlaybackState("paused");
+        onPlaybackStateChange(false);
+
+        // If the browser/OS suspended the player while the user was actively listening
+        // (common when screen locks or tab goes to background on mobile),
+        // attempt an immediate graceful resume.
+        if (userIntent === "playing" && typeof document !== "undefined" && document.hidden) {
+          setTimeout(() => {
+            const current = get();
+            if (current.userIntent === "playing" && current.playState === "PAUSED") {
+              current.adapter?.play();
+            }
+          }, 300);
+        }
         break;
+      }
 
       case "BUFFERING":
         set({ playState: "BUFFERING" });
@@ -301,10 +372,14 @@ export const useRadioStore = create<RadioState>((set, get) => ({
         if (queue.length > 0) {
           const { isShuffleEnabled } = get();
           const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
-          set({ currentIndex: nextIndex, playState: "BUFFERING" });
+          set({ currentIndex: nextIndex, playState: "BUFFERING", userIntent: "playing" });
+          updateMediaSessionMetadata(queue[nextIndex], true);
           await adapter?.loadVideo(queue[nextIndex].youtube_video_id);
         } else {
-          set({ currentIndex: 0, playState: "IDLE" });
+          set({ currentIndex: 0, playState: "IDLE", userIntent: "idle" });
+          stopAudioKeepAlive();
+          onPlaybackStateChange(false);
+          setMediaSessionPlaybackState("none");
         }
         break;
       }
@@ -316,13 +391,42 @@ export const useRadioStore = create<RadioState>((set, get) => ({
         if (queue.length > 1) {
           const { isShuffleEnabled } = get();
           const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
-          set({ currentIndex: nextIndex, playState: "BUFFERING" });
+          set({ currentIndex: nextIndex, playState: "BUFFERING", userIntent: "playing" });
+          updateMediaSessionMetadata(queue[nextIndex], true);
           await adapter?.loadVideo(queue[nextIndex].youtube_video_id);
         } else {
-          set({ playState: "ERROR" });
+          set({ playState: "ERROR", userIntent: "idle" });
+          stopAudioKeepAlive();
+          onPlaybackStateChange(false);
+          setMediaSessionPlaybackState("none");
         }
         break;
       }
     }
   },
 }));
+
+// Background resilience: handles screen off/on and tab switching
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    const state = useRadioStore.getState();
+    if (document.hidden) {
+      if (state.userIntent === "playing") {
+        startAudioKeepAlive();
+        setTimeout(() => {
+          const s = useRadioStore.getState();
+          if (s.userIntent === "playing" && s.playState === "PAUSED") {
+            s.adapter?.play();
+          }
+        }, 200);
+      }
+    } else {
+      if (state.userIntent === "playing" && state.playState === "PAUSED" && state.adapter) {
+        state.adapter.play();
+      }
+      if (state.userIntent === "playing") {
+        onPlaybackStateChange(true);
+      }
+    }
+  });
+}
