@@ -73,9 +73,8 @@ export default function PWAInstallPrompt() {
   const deferredPrompt = useRef<BeforeInstallPromptEvent | null>(null);
 
   useEffect(() => {
-    // Don't show if already installed, dismissed, or on mobile
+    // Don't show if already installed or dismissed
     if (isInStandaloneMode()) return;
-    if (!isDesktop()) return;
     if (isDismissed()) return;
 
     const ios = isIOS();

@@ -18,8 +18,8 @@ const POLL_INTERVAL_MS = 5_000;
 const SSE_RETRY_DELAY_MS = 3_000;
 const HOT_THRESHOLD = 50;
 
-const NM_PILL = "6px 6px 18px rgba(0,0,0,0.82), -3px -3px 10px rgba(90,40,15,0.22), inset 0 1px 0 rgba(254,215,170,0.12)";
-const NM_HOT  = "6px 6px 18px rgba(0,0,0,0.85), -3px -3px 10px rgba(160,30,20,0.25), inset 0 1px 0 rgba(254,215,170,0.12)";
+const NM_PILL = "6px 6px 22px rgba(0,0,0,0.85), -3px -3px 12px rgba(255,138,80,0.18), inset 0 1px 0 rgba(255,229,208,0.14)";
+const NM_HOT  = "6px 6px 22px rgba(0,0,0,0.88), -3px -3px 12px rgba(255,107,53,0.28), inset 0 1px 0 rgba(255,229,208,0.14)";
 
 function formatCount(n: number): string {
   return new Intl.NumberFormat("en-IN").format(n);
@@ -53,7 +53,7 @@ function Spectrogram({ muted = false }: { muted?: boolean }) {
           width={3}
           height={bar.height}
           rx={1.5}
-          fill={muted ? "rgba(249,115,22,0.20)" : "#fb923c"}
+          fill={muted ? "rgba(255,138,80,0.25)" : "#ffa726"}
           style={muted ? {} : ({ "--dur": bar.duration, "--delay": bar.delay } as React.CSSProperties)}
         />
       ))}
@@ -142,7 +142,7 @@ export default function ListenerCount({ onCountChange }: ListenerCountProps = {}
     return (
       <div
         className="flex items-center gap-1.5 opacity-50 rounded-full px-2.5 py-1"
-        style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_PILL }}
+        style={{ background: "rgba(25,14,8,0.90)", boxShadow: NM_PILL }}
         aria-hidden="true"
       >
         <OnlineDot muted />
@@ -160,7 +160,7 @@ export default function ListenerCount({ onCountChange }: ListenerCountProps = {}
     return (
       <div
         className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-white font-semibold text-sm"
-        style={{ background: "rgba(30,8,8,0.92)", boxShadow: NM_HOT }}
+        style={{ background: "rgba(40,16,10,0.94)", boxShadow: NM_HOT }}
         aria-live="polite"
         aria-label={`${formatted} people listening right now`}
       >
@@ -176,11 +176,11 @@ export default function ListenerCount({ onCountChange }: ListenerCountProps = {}
     <div
       className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 border"
       style={{
-        background: "rgba(14,7,4,0.82)",
-        borderColor: "rgba(251,146,60,0.16)",
-        boxShadow: "0 8px 24px rgba(0,0,0,0.60), inset 0 1px 0 rgba(255,255,255,0.08)",
-        backdropFilter: "blur(20px)",
-        WebkitBackdropFilter: "blur(20px)",
+        background: "rgba(18,10,6,0.86)",
+        borderColor: "rgba(255,138,80,0.22)",
+        boxShadow: "0 10px 30px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,229,208,0.12)",
+        backdropFilter: "blur(24px)",
+        WebkitBackdropFilter: "blur(24px)",
       }}
       aria-live="polite"
       aria-label={`${formatted} ${count !== 1 ? "people" : "person"} listening`}
@@ -188,11 +188,11 @@ export default function ListenerCount({ onCountChange }: ListenerCountProps = {}
       <OnlineDot />
       <Spectrogram />
       <span
-        className="tabular-nums text-xs font-bold text-[#fff7ed] tracking-wide"
+        className="tabular-nums text-xs font-bold text-[#fff9f0] tracking-wide"
       >
         {formatted}
       </span>
-      <span className="text-[11px] font-medium text-amber-200/60 tracking-wide">listening</span>
+      <span className="text-[11px] font-medium text-amber-200/65 tracking-wide">listening</span>
     </div>
   );
 }

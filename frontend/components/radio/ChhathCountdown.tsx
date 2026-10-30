@@ -48,9 +48,9 @@ function computeCountdown(dateIso: string) {
 
 // ─── Neumorphic shadow constant ───────────────────────────────────────────────
 
-const NM_CARD = "8px 8px 24px rgba(0,0,0,0.85), -4px -4px 12px rgba(90,40,15,0.22), inset 0 1px 0 rgba(254,215,170,0.12)";
-const NM_BTN  = "4px 4px 12px rgba(0,0,0,0.75), -2px -2px 6px rgba(90,40,15,0.20)";
-const NM_BTN_PRESSED = "inset 3px 3px 8px rgba(0,0,0,0.70), inset -1px -1px 4px rgba(90,40,15,0.20)";
+const NM_CARD = "10px 10px 30px rgba(0,0,0,0.90), -4px -4px 14px rgba(255,138,80,0.18), inset 0 1px 0 rgba(255,229,208,0.14)";
+const NM_BTN  = "5px 5px 16px rgba(0,0,0,0.80), -2px -2px 8px rgba(255,138,80,0.15)";
+const NM_BTN_PRESSED = "inset 4px 4px 10px rgba(0,0,0,0.75), inset -1px -1px 5px rgba(255,138,80,0.12)";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -110,9 +110,9 @@ export default function ChhathCountdown() {
     return (
       <div
         className="min-w-[140px] text-center rounded-2xl px-3 py-2"
-        style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_CARD }}
+        style={{ background: "rgba(25,14,8,0.90)", boxShadow: NM_CARD }}
       >
-        <p className="text-[11px] tracking-[0.1em] text-orange-500/55">Loading…</p>
+        <p className="text-[11px] tracking-[0.1em] text-orange-500/60">Loading…</p>
       </div>
     );
   }
@@ -122,9 +122,9 @@ export default function ChhathCountdown() {
     return (
       <div
         className="min-w-[140px] text-center rounded-2xl px-3 py-2"
-        style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_CARD }}
+        style={{ background: "rgba(25,14,8,0.90)", boxShadow: NM_CARD }}
       >
-        <p className="text-[11px] text-orange-500/55">🪔 Unavailable</p>
+        <p className="text-[11px] text-orange-500/60">🪔 Unavailable</p>
       </div>
     );
   }
@@ -145,11 +145,11 @@ export default function ChhathCountdown() {
     <div
       className="flex flex-col items-center gap-2 text-center select-none w-[190px] rounded-2xl px-3.5 py-2 border"
       style={{
-        background: "rgba(14,7,4,0.82)",
-        borderColor: "rgba(251,146,60,0.16)",
-        boxShadow: "0 8px 24px rgba(0,0,0,0.60), inset 0 1px 0 rgba(255,255,255,0.08)",
-        backdropFilter: "blur(20px)",
-        WebkitBackdropFilter: "blur(20px)",
+        background: "rgba(18,10,6,0.86)",
+        borderColor: "rgba(255,138,80,0.22)",
+        boxShadow: "0 10px 30px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,229,208,0.12)",
+        backdropFilter: "blur(24px)",
+        WebkitBackdropFilter: "blur(24px)",
       }}
     >
       {/* Header */}
@@ -163,7 +163,7 @@ export default function ChhathCountdown() {
         title={`Click to see next day — ${days[(activeDayIndex + 1) % days.length]?.name}`}
         className="flex flex-col items-center gap-0.5 rounded-[18px] px-3.5 py-1.5 cursor-pointer
                    transition-all duration-200 w-full"
-        style={{ background: "rgba(15,8,4,0.88)", boxShadow: NM_BTN }}
+        style={{ background: "rgba(25,14,8,0.90)", boxShadow: NM_BTN }}
         onMouseDown={(e) => { e.currentTarget.style.boxShadow = NM_BTN_PRESSED; }}
         onMouseUp={(e) => { e.currentTarget.style.boxShadow = NM_BTN; }}
         onMouseLeave={(e) => { e.currentTarget.style.boxShadow = NM_BTN; }}
