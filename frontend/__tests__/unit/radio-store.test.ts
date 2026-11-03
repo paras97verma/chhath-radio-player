@@ -360,3 +360,64 @@ describe("TestHandleAdapterStateChange", () => {
     expect(getStore().playState).toBe(stateBeforeStaleEvent);
   });
 });
+
+// ─── TestFavoritesPersistence ──────────────────────────────────────────────────
+
+describe("TestFavoritesPersistence", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useRadioStore.setState({ favorites: [], activeFilter: "all" });
+  });
+
+  it("persists favorited song to localStorage and toggles state", async () => {
+    const adapter = new MockYouTubePlayerAdapter();
+    const songs = makeSongs(3);
+    await getStore().loadQueue(songs, adapter);
+
+    // Toggle song 0 as favorite
+    getStore().toggleFavorite(songs[0].id);
+
+    expect(getStore().isFavorite(songs[0].id)).toBe(true);
+    const stored = JSON.parse(localStorage.getItem("chhath_radio_favorites_v1") || "[]");
+    expect(stored).toContain(songs[0].id);
+    expect(stored).toContain(songs[0].youtube_video_id);
+
+    // Toggle song 0 off
+    getStore().toggleFavorite(songs[0].id);
+    expect(getStore().isFavorite(songs[0].id)).toBe(false);
+    const storedAfter = JSON.parse(localStorage.getItem("chhath_radio_favorites_v1") || "[]");
+    expect(storedAfter).not.toContain(songs[0].id);
+    expect(storedAfter).not.toContain(songs[0].youtube_video_id);
+  });
+
+  it("persists favorites across simulated redeployment where database UUIDs changed", async () => {
+    const adapter = new MockYouTubePlayerAdapter();
+    const originalSong = makeSong({
+      id: "db-uuid-old",
+      title: "Pahile Pahil Chhathi Maiya",
+      youtube_video_id: "yt-video-permanent-123",
+    });
+
+    await getStore().loadQueue([originalSong], adapter);
+    getStore().toggleFavorite(originalSong.id);
+
+    expect(getStore().isFavorite(originalSong.id)).toBe(true);
+
+    // Simulate redeployment: new database generated a fresh UUID for the same YouTube track
+    const redeployedSong = makeSong({
+      id: "db-uuid-new-after-deploy",
+      title: "Pahile Pahil Chhathi Maiya",
+      youtube_video_id: "yt-video-permanent-123",
+    });
+
+    await getStore().loadQueue([redeployedSong], adapter);
+
+    // Even with the new database UUID, the song is still recognized as favorited!
+    expect(getStore().isFavorite(redeployedSong.id)).toBe(true);
+
+    // Switching to favorites filter retains the song in the queue
+    await getStore().setFilter("favorites");
+    expect(getStore().queue.length).toBe(1);
+    expect(getStore().queue[0].id).toBe(redeployedSong.id);
+  });
+});

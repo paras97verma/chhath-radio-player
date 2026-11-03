@@ -219,8 +219,15 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     return result;
   },
 
-  isFavorite: (songId: string) => {
-    return get().favorites.includes(songId);
+  isFavorite: (songIdOrVideoId: string) => {
+    const { favorites, allSongs } = get();
+    if (!songIdOrVideoId) return false;
+    if (favorites.includes(songIdOrVideoId)) return true;
+    const song = allSongs.find((s) => s.id === songIdOrVideoId || s.youtube_video_id === songIdOrVideoId);
+    if (song) {
+      return favorites.includes(song.id) || (Boolean(song.youtube_video_id) && favorites.includes(song.youtube_video_id));
+    }
+    return false;
   },
 
   toggleShuffle: () => {
@@ -230,18 +237,36 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     set({ isShuffleEnabled: nextVal });
   },
 
-  toggleFavorite: (songId: string) => {
-    const { favorites, activeFilter, allSongs, queue, currentIndex, adapter } = get();
-    const isFav = favorites.includes(songId);
-    const updatedFavs = isFav
-      ? favorites.filter((id) => id !== songId)
-      : [...favorites, songId];
+  toggleFavorite: (songIdOrVideoId: string) => {
+    const { favorites, activeFilter, allSongs, queue, currentIndex, adapter, isFavorite } = get();
+    const targetSong = allSongs.find((s) => s.id === songIdOrVideoId || s.youtube_video_id === songIdOrVideoId);
+    const idToToggle = targetSong?.id ?? songIdOrVideoId;
+    const ytIdToToggle = targetSong?.youtube_video_id;
+
+    const isFav = isFavorite(songIdOrVideoId);
+    let updatedFavs: string[];
+
+    if (isFav) {
+      // Remove all matching identifiers (both DB UUID and YouTube video ID)
+      updatedFavs = favorites.filter(
+        (id) => id !== idToToggle && id !== ytIdToToggle && id !== songIdOrVideoId
+      );
+    } else {
+      // Save both DB UUID and permanent YouTube video ID so favorites survive across DB redeployments/reseeds
+      const newItems = [idToToggle];
+      if (ytIdToToggle && ytIdToToggle !== idToToggle) {
+        newItems.push(ytIdToToggle);
+      }
+      updatedFavs = Array.from(new Set([...favorites, ...newItems]));
+    }
 
     saveFavoritesToStorage(updatedFavs);
 
     if (activeFilter === "favorites") {
       const currentPlayingSong = queue[currentIndex];
-      const newFavQueue = allSongs.filter((s) => updatedFavs.includes(s.id));
+      const isSongFav = (s: Song) =>
+        updatedFavs.includes(s.id) || (Boolean(s.youtube_video_id) && updatedFavs.includes(s.youtube_video_id));
+      const newFavQueue = allSongs.filter(isSongFav);
 
       if (newFavQueue.length === 0) {
         set({
@@ -275,7 +300,9 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const curSong = currentSong();
 
     if (filter === "favorites") {
-      const favQueue = allSongs.filter((s) => favorites.includes(s.id));
+      const isSongFav = (s: Song) =>
+        favorites.includes(s.id) || (Boolean(s.youtube_video_id) && favorites.includes(s.youtube_video_id));
+      const favQueue = allSongs.filter(isSongFav);
       if (favQueue.length === 0) return;
 
       const matchIdx = curSong ? favQueue.findIndex((s) => s.id === curSong.id) : 0;
@@ -308,10 +335,16 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     get()._adapterUnsubscribe?.();
 
     const newSessionId = uuidv4();
-    const { activeFilter, favorites } = get();
+    const storedFavs = loadFavoritesFromStorage();
+    const favorites = storedFavs.length > 0 ? storedFavs : get().favorites;
+    const { activeFilter } = get();
+
+    const isSongFav = (s: Song) =>
+      favorites.includes(s.id) || (Boolean(s.youtube_video_id) && favorites.includes(s.youtube_video_id));
+
     const activeQueue =
-      activeFilter === "favorites" && favorites.length > 0
-        ? songs.filter((s) => favorites.includes(s.id))
+      activeFilter === "favorites" && songs.some(isSongFav)
+        ? songs.filter(isSongFav)
         : songs;
 
     const unsubscribeState = adapter.onStateChange((state) => {

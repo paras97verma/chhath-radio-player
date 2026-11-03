@@ -366,7 +366,7 @@ function PlaylistDrawer({
   const isFavorite = useRadioStore((s) => s.isFavorite);
   const setFilter = useRadioStore((s) => s.setFilter);
 
-  const favoritedCount = favorites.length;
+  const favoritedCount = allSongs.filter((s) => isFavorite(s.id)).length;
   const activeItemRef = useRef<HTMLDivElement | null>(null);
 
   // Auto-scroll active song into view when playlist opens
