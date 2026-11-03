@@ -232,6 +232,54 @@ describe("TestNextSong", () => {
   });
 });
 
+// ─── TestPrevSong ─────────────────────────────────────────────────────────────
+
+describe("TestPrevSong", () => {
+  it("restarts current song if played for more than 3 seconds", async () => {
+    const adapter = new MockYouTubePlayerAdapter();
+    const songs = makeSongs(3);
+    await getStore().loadQueue(songs, adapter);
+
+    // Set to index 1 and currentTime 10s
+    useRadioStore.setState({ currentIndex: 1, currentTime: 10 });
+    const seekSpy = vi.spyOn(adapter, "seekTo");
+
+    await getStore().prevSong();
+
+    expect(seekSpy).toHaveBeenCalledWith(0);
+    expect(getStore().currentIndex).toBe(1);
+    expect(getStore().currentTime).toBe(0);
+  });
+
+  it("navigates to previous song if within first 3 seconds", async () => {
+    const adapter = new MockYouTubePlayerAdapter();
+    const songs = makeSongs(3);
+    await getStore().loadQueue(songs, adapter);
+
+    useRadioStore.setState({ currentIndex: 2, currentTime: 1 });
+    const loadVideoSpy = vi.spyOn(adapter, "loadVideo");
+
+    await getStore().prevSong();
+
+    expect(getStore().currentIndex).toBe(1);
+    expect(loadVideoSpy).toHaveBeenCalledWith(songs[1].youtube_video_id);
+  });
+
+  it("wraps around to last song if at index 0 and within first 3 seconds", async () => {
+    const adapter = new MockYouTubePlayerAdapter();
+    const songs = makeSongs(3);
+    await getStore().loadQueue(songs, adapter);
+
+    useRadioStore.setState({ currentIndex: 0, currentTime: 1 });
+    const loadVideoSpy = vi.spyOn(adapter, "loadVideo");
+
+    await getStore().prevSong();
+
+    expect(getStore().currentIndex).toBe(2);
+    expect(loadVideoSpy).toHaveBeenCalledWith(songs[2].youtube_video_id);
+  });
+});
+
 // ─── TestHandleAdapterStateChange ─────────────────────────────────────────────
 
 describe("TestHandleAdapterStateChange", () => {

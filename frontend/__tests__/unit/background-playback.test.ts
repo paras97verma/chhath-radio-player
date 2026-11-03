@@ -18,6 +18,7 @@ import {
   isMediaSessionSupported,
   updateMediaSessionMetadata,
   registerMediaSessionHandlers,
+  reassertMediaSessionHandlers,
   setMediaSessionPlaybackState,
 } from "../../lib/media-session";
 import type { Song } from "../../lib/api";
@@ -65,7 +66,20 @@ describe("MediaSession Module", () => {
     expect(typeof isMediaSessionSupported()).toBe("boolean");
   });
 
-  it("can register action handlers without errors", () => {
+  it("can register action handlers without errors and disables relative skips", () => {
+    const fakeMediaSession = {
+      setActionHandler: vi.fn(),
+      metadata: null,
+      playbackState: "none",
+    };
+    Object.defineProperty(navigator, "mediaSession", {
+      value: fakeMediaSession,
+      configurable: true,
+      writable: true,
+    });
+
+    const setActionHandlerSpy = vi.spyOn(navigator.mediaSession, "setActionHandler");
+
     expect(() => {
       registerMediaSessionHandlers({
         onPlay: vi.fn(),
@@ -74,6 +88,13 @@ describe("MediaSession Module", () => {
         onPrev: vi.fn(),
       });
     }).not.toThrow();
+
+    expect(setActionHandlerSpy).toHaveBeenCalledWith("previoustrack", expect.any(Function));
+    expect(setActionHandlerSpy).toHaveBeenCalledWith("nexttrack", expect.any(Function));
+    expect(setActionHandlerSpy).toHaveBeenCalledWith("seekbackward", null);
+    expect(setActionHandlerSpy).toHaveBeenCalledWith("seekforward", null);
+
+    expect(() => reassertMediaSessionHandlers()).not.toThrow();
   });
 
   it("can update metadata with a valid song and null", () => {

@@ -371,7 +371,7 @@ function PlaylistDrawer({
 
   // Auto-scroll active song into view when playlist opens
   useEffect(() => {
-    if (activeItemRef.current) {
+    if (activeItemRef.current && typeof activeItemRef.current.scrollIntoView === "function") {
       activeItemRef.current.scrollIntoView({ block: "center", behavior: "auto" });
     }
   }, []);
@@ -642,8 +642,7 @@ export default function RadioPlayer({
         useRadioStore.setState({ playState: "ERROR", error: "Could not play track" });
       }
     }
-    if (showPlaylistRef.current) onPlaylistToggle?.();
-  }, [onPlaylistToggle]);
+  }, []);
 
   const albumArt = currentSong
     ? `https://i.ytimg.com/vi/${currentSong.youtube_video_id}/mqdefault.jpg`

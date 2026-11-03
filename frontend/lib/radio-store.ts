@@ -20,6 +20,7 @@ import { onPlaybackStateChange } from "./wake-lock";
 import {
   updateMediaSessionMetadata,
   registerMediaSessionHandlers,
+  reassertMediaSessionHandlers,
   setMediaSessionPlaybackState,
   updateMediaSessionPositionState,
 } from "./media-session";
@@ -522,10 +523,17 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   },
 
   prevSong: async () => {
-    const { queue, currentIndex, adapter } = get();
-    if (!adapter || queue.length === 0 || currentIndex <= 0) return;
+    const { queue, currentIndex, adapter, currentTime } = get();
+    if (!adapter || queue.length === 0) return;
 
-    const prevIndex = currentIndex - 1;
+    // If current song has played more than 3 seconds, restart the song from beginning
+    if (currentTime > 3) {
+      adapter.seekTo(0);
+      set({ currentTime: 0 });
+      return;
+    }
+
+    const prevIndex = currentIndex > 0 ? currentIndex - 1 : queue.length - 1;
     set({ currentIndex: prevIndex, playState: "BUFFERING", userIntent: "playing", error: null });
     updateMediaSessionMetadata(queue[prevIndex], true);
     try {
@@ -544,6 +552,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       case "PLAYING":
         set({ playState: "PLAYING", userIntent: "playing", error: null });
         updateMediaSessionMetadata(queue[currentIndex], true);
+        reassertMediaSessionHandlers();
         onPlaybackStateChange(true);
         break;
 

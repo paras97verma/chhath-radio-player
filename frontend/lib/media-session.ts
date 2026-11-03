@@ -16,8 +16,6 @@ export interface MediaSessionCallbacks {
   onNext: () => Promise<void> | void;
   onPrev: () => Promise<void> | void;
   onSeekTo?: (time: number) => void;
-  onSeekBack?: (offset: number) => void;
-  onSeekFwd?: (offset: number) => void;
 }
 
 let registeredCallbacks: MediaSessionCallbacks | null = null;
@@ -27,11 +25,14 @@ export function isMediaSessionSupported(): boolean {
 }
 
 /**
- * Register OS media action handlers (Lock screen, Control Center, Bluetooth controls).
+ * Re-assert OS media action handlers (Lock screen, Control Center, Bluetooth controls).
+ * On iOS Safari / WebKit, action handlers must be active when playback starts and updates,
+ * otherwise WebKit defaults to 10s/15s relative skip buttons.
+ * Explicitly setting 'seekbackward' and 'seekforward' to null forces iOS to display
+ * the Previous Track (⏮) and Next Track (⏭) buttons.
  */
-export function registerMediaSessionHandlers(callbacks: MediaSessionCallbacks): void {
-  if (!isMediaSessionSupported()) return;
-  registeredCallbacks = callbacks;
+export function reassertMediaSessionHandlers(): void {
+  if (!isMediaSessionSupported() || !registeredCallbacks) return;
 
   const ms = navigator.mediaSession;
 
@@ -79,26 +80,19 @@ export function registerMediaSessionHandlers(callbacks: MediaSessionCallbacks): 
     }
   });
 
-  // Only register relative skip buttons if explicitly requested.
-  // When omitted (null), mobile OS lock screens (iOS/Android) display Previous (⏮) and Next (⏭) track buttons
-  // instead of replacing them with 10s skip buttons.
-  if (registeredCallbacks?.onSeekBack) {
-    safeSetHandler("seekbackward", (details) => {
-      const offset = details.seekOffset || 10;
-      registeredCallbacks?.onSeekBack?.(offset);
-    });
-  } else {
-    safeSetHandler("seekbackward", null);
-  }
+  // Explicitly disable seek backward / forward buttons on lock screen so iOS WebKit
+  // forces track navigation buttons (⏮ / ⏭) instead of ±10s/15s relative skip buttons.
+  safeSetHandler("seekbackward", null);
+  safeSetHandler("seekforward", null);
+}
 
-  if (registeredCallbacks?.onSeekFwd) {
-    safeSetHandler("seekforward", (details) => {
-      const offset = details.seekOffset || 10;
-      registeredCallbacks?.onSeekFwd?.(offset);
-    });
-  } else {
-    safeSetHandler("seekforward", null);
-  }
+/**
+ * Register OS media action handlers (Lock screen, Control Center, Bluetooth controls).
+ */
+export function registerMediaSessionHandlers(callbacks: MediaSessionCallbacks): void {
+  if (!isMediaSessionSupported()) return;
+  registeredCallbacks = callbacks;
+  reassertMediaSessionHandlers();
 }
 
 /**
@@ -115,6 +109,7 @@ export function updateMediaSessionMetadata(song: Song | null, isPlaying = true):
     return;
   }
 
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
   const videoId = song.youtube_video_id;
   const artwork = [
     {
@@ -133,12 +128,12 @@ export function updateMediaSessionMetadata(song: Song | null, isPlaying = true):
       type: "image/jpeg",
     },
     {
-      src: "/icons/icon-192.png",
+      src: origin ? `${origin}/icons/icon-192.png` : "/icons/icon-192.png",
       sizes: "192x192",
       type: "image/png",
     },
     {
-      src: "/icons/icon-512.png",
+      src: origin ? `${origin}/icons/icon-512.png` : "/icons/icon-512.png",
       sizes: "512x512",
       type: "image/png",
     },
@@ -156,6 +151,10 @@ export function updateMediaSessionMetadata(song: Song | null, isPlaying = true):
   }
 
   ms.playbackState = isPlaying ? "playing" : "paused";
+
+  // Re-assert action handlers whenever metadata updates so WebKit/iOS Lock Screen
+  // binds previoustrack and nexttrack to the newly active media item
+  reassertMediaSessionHandlers();
 }
 
 /**

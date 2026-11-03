@@ -189,4 +189,28 @@ describe("Persistent Player Lifecycle & Navigation Persistence", () => {
     expect(useRadioStore.getState().playState).toBe("PLAYING");
     expect(screen.getByLabelText("Pause")).toBeDefined();
   });
+
+  it("keeps the playlist drawer open when a song is selected by the user", async () => {
+    const onPlaylistToggle = vi.fn();
+    useRadioStore.setState({ isReady: true, adapter });
+
+    render(
+      <RadioPlayer
+        hasTunedIn={true}
+        showPlaylist={true}
+        onPlaylistToggle={onPlaylistToggle}
+      />
+    );
+
+    const songButtons = screen.getAllByRole("button").filter((b) => b.textContent?.includes("Kelwa Ke Paat Par"));
+    expect(songButtons.length).toBeGreaterThan(0);
+
+    await act(async () => {
+      fireEvent.click(songButtons[0]);
+    });
+
+    // onPlaylistToggle must NOT be called — drawer stays open for the user
+    expect(onPlaylistToggle).not.toHaveBeenCalled();
+    expect(useRadioStore.getState().currentIndex).toBe(1);
+  });
 });
