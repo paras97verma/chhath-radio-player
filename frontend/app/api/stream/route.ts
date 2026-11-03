@@ -116,8 +116,13 @@ export async function GET(request: NextRequest) {
         );
 
         if (adaptive.length > 0) {
-          const m4a = adaptive.find((f: any) => (f.type || "").includes("mp4"));
-          const best = m4a || adaptive[0];
+          // Prioritize AAC-LC (mp4a.40.2 / itag 140) to prevent iOS Safari 2x duration inflation
+          const m4aStreams = adaptive
+            .filter((f: any) => (f.type || "").includes("mp4"))
+            .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+
+          const aacLc = m4aStreams.find((f: any) => (f.type || "").includes("mp4a.40.2"));
+          const best = aacLc || m4aStreams[0] || adaptive[0];
 
           const result: CachedStreamResult = {
             url: best.url,
@@ -136,8 +141,12 @@ export async function GET(request: NextRequest) {
       } else if (candidate.type === "piped") {
         const audioStreams = data.audioStreams || [];
         if (audioStreams.length > 0) {
-          const m4a = audioStreams.find((s: any) => (s.mimeType || "").includes("mp4") || s.format === "M4A");
-          const best = m4a || audioStreams[0];
+          const m4aStreams = audioStreams
+            .filter((s: any) => (s.mimeType || "").includes("mp4") || s.format === "M4A")
+            .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+
+          const aacLc = m4aStreams.find((s: any) => (s.mimeType || "").includes("mp4a.40.2"));
+          const best = aacLc || m4aStreams[0] || audioStreams[0];
 
           const result: CachedStreamResult = {
             url: best.url,

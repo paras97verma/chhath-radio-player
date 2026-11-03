@@ -514,8 +514,12 @@ export default function RadioPlayer({
   const showPlaylist = showPlaylistProp ?? false;
   const showPlaylistRef = useRef(false);
   const [playlistFocusIdx, setPlaylistFocusIdx] = useState<number>(-1);
+  const [mounted, setMounted] = useState(false);
 
-  useEffect(() => { showPlaylistRef.current = showPlaylist; }, [showPlaylist]);
+  useEffect(() => {
+    setMounted(true);
+    showPlaylistRef.current = showPlaylist;
+  }, [showPlaylist]);
 
   const [keyFlash, setKeyFlash] = useState<"prev" | "next" | "seekBack" | "seekFwd" | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -782,19 +786,25 @@ export default function RadioPlayer({
               </button>
 
               {/* Shuffle button */}
-              <button
-                onClick={toggleShuffle}
-                aria-label={isShuffleEnabled ? "Disable shuffle" : "Enable shuffle"}
-                title={isShuffleEnabled ? "Shuffle is ON" : "Shuffle is OFF"}
-                className="w-10 h-10 flex items-center justify-center rounded-full transition-all hover:scale-110"
-                style={{
-                  color: isShuffleEnabled ? "#ffa726" : "rgba(255,255,255,0.4)",
-                  background: isShuffleEnabled ? "rgba(255, 138, 80, 0.22)" : "transparent",
-                  boxShadow: isShuffleEnabled ? "0 0 16px rgba(255, 138, 80, 0.4)" : "none",
-                }}
-              >
-                <IconShuffle />
-              </button>
+              {(() => {
+                const shuffleActive = mounted && isShuffleEnabled;
+                return (
+                  <button
+                    onClick={toggleShuffle}
+                    suppressHydrationWarning
+                    aria-label={shuffleActive ? "Disable shuffle" : "Enable shuffle"}
+                    title={shuffleActive ? "Shuffle is ON" : "Shuffle is OFF"}
+                    className="w-10 h-10 flex items-center justify-center rounded-full transition-all hover:scale-110"
+                    style={{
+                      color: shuffleActive ? "#ffa726" : "rgba(255,255,255,0.4)",
+                      background: shuffleActive ? "rgba(255, 138, 80, 0.22)" : "transparent",
+                      boxShadow: shuffleActive ? "0 0 16px rgba(255, 138, 80, 0.4)" : "none",
+                    }}
+                  >
+                    <IconShuffle />
+                  </button>
+                );
+              })()}
 
               {/* Divider */}
               <div className="w-px h-5 bg-white/8 mx-1" />

@@ -265,9 +265,15 @@ class StreamCacheService:
                                 if "audio" in f.get("type", "") and f.get("url")
                             ]
                             if adaptive:
-                                # Prefer AAC / M4A for iOS & Android universal compatibility
-                                m4a = next((f for f in adaptive if "mp4" in f.get("type", "")), None)
-                                best = m4a or adaptive[0]
+                                # CRITICAL FOR iOS SAFARI / APPLE WEBKIT:
+                                # Prioritize AAC-LC (mp4a.40.2 / itag 140, 128kbps) over HE-AAC (mp4a.40.5 / itag 139, 48kbps).
+                                # Due to an Apple AVPlayer timescale bug with HE-AAC (mp4a.40.5), iOS Safari
+                                # calculates exactly 2x the true duration and plays silence for the second half!
+                                m4a_streams = [f for f in adaptive if "mp4" in f.get("type", "")]
+                                m4a_streams.sort(key=lambda x: int(x.get("bitrate") or 0), reverse=True)
+
+                                aac_lc = next((f for f in m4a_streams if "mp4a.40.2" in f.get("type", "")), None)
+                                best = aac_lc or (m4a_streams[0] if m4a_streams else adaptive[0])
 
                                 cls._record_success(ext_name, latency_ms, redis_client)
                                 return {
@@ -283,8 +289,11 @@ class StreamCacheService:
                         elif extractor["type"] == "piped":
                             audio_streams = data.get("audioStreams", [])
                             if audio_streams:
-                                m4a = next((s for s in audio_streams if "mp4" in s.get("mimeType", "") or s.get("format") == "M4A"), None)
-                                best = m4a or audio_streams[0]
+                                # Prioritize 128kbps AAC-LC over 48kbps HE-AAC
+                                m4a_streams = [s for s in audio_streams if "mp4" in s.get("mimeType", "") or s.get("format") == "M4A"]
+                                m4a_streams.sort(key=lambda s: int(s.get("bitrate") or 0), reverse=True)
+                                aac_lc = next((s for s in m4a_streams if "mp4a.40.2" in s.get("mimeType", "")), None)
+                                best = aac_lc or (m4a_streams[0] if m4a_streams else audio_streams[0])
 
                                 cls._record_success(ext_name, latency_ms, redis_client)
                                 return {

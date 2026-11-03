@@ -58,7 +58,9 @@ export function selectBestAudioStream(
         s.mimeType.includes("aac")
     );
     if (m4aStreams.length > 0) {
-      // Sort by bitrate descending
+      // Prioritize AAC-LC (mp4a.40.2 / itag 140) to prevent iOS Safari 2x duration inflation
+      const aacLc = m4aStreams.find((s) => s.mimeType.includes("mp4a.40.2"));
+      if (aacLc) return aacLc;
       return m4aStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
     }
   }
