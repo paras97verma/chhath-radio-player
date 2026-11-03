@@ -1,0 +1,93 @@
+# =============================================================================
+# Chhath Radio — Seed Songs Pipeline
+#
+# Dedicated on-demand workflow to seed songs into the database.
+# Triggered manually from GitHub Actions → "Database — Seed Songs" → Run workflow.
+#
+# Options:
+#   1. delete entire and then seed: Wipes the songs table first, then seeds
+#   2. append to the list:          Keeps existing songs, adds new songs
+#
+# Required GitHub Secrets:
+#   DATABASE_URL — Supabase PostgreSQL connection string
+#   REDIS_URL    — Upstash Redis URL (cache invalidated after seed)
+#   SECRET_KEY   — JWT secret
+# =============================================================================
+
+name: Database — Seed Songs
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed_mode:
+        description: 'Choose seed option:'
+        required: true
+        type: choice
+        default: 'append to the list'
+        options:
+          - 'append to the list'
+          - 'delete entire and then seed'
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  seed-songs:
+    name: Seed Songs (${{ github.event.inputs.seed_mode }})
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Ensure DB schema is up to date
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: |
+          echo "Running: alembic upgrade head"
+          alembic upgrade head
+
+      - name: Seed songs
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: |
+          SONGS_FILE=""
+          if [ -f "data/songs.txt" ]; then
+            SONGS_FILE="data/songs.txt"
+          elif [ -f "../scripts/songs.txt" ]; then
+            SONGS_FILE="../scripts/songs.txt"
+          elif [ -f "app/data/songs.txt" ]; then
+            SONGS_FILE="app/data/songs.txt"
+          fi
+
+          CLEAR_FLAG=""
+          if [ "${{ github.event.inputs.seed_mode }}" = "delete entire and then seed" ]; then
+            CLEAR_FLAG="--clear"
+            echo "🗑  Mode: Delete entire table and seed..."
+          else
+            echo "➕  Mode: Append to list (idempotent, skips existing songs)..."
+          fi
+
+          if [ -n "$SONGS_FILE" ]; then
+            python seed_songs.py --file "$SONGS_FILE" $CLEAR_FLAG
+          else
+            python seed_songs.py $CLEAR_FLAG
+          fi
+          echo "✓ Song seed complete"
+

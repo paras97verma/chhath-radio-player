@@ -112,46 +112,30 @@ cmd_seed_songs() {
   step "Seeding songs"
   check_backend_running
 
-  if ! docker compose -f "$COMPOSE_FILE" exec backend test -f data/songs.txt 2>/dev/null; then
-    warn "No backend/data/songs.txt found."
-    info "Create it with format: Title|Artist|YouTubeVideoID (one per line)"
-    info "Lines starting with # are comments."
-    exit 0
+  local mode="${2:-}"
+  if [ -z "$mode" ]; then
+    echo ""
+    echo -e "  ${BOLD}Select song seeding option:${NC}"
+    echo -e "  ${CYAN}1)${NC} ${BOLD}Delete entire and then seed${NC} (clears songs table first)"
+    echo -e "  ${CYAN}2)${NC} ${BOLD}Append to the list${NC} (keeps existing songs, adds new ones)"
+    echo ""
+    read -r -p "  Enter choice [1-2, default=2]: " choice
+    case "${choice:-2}" in
+      1) mode="clear" ;;
+      *) mode="append" ;;
+    esac
   fi
 
-  info "Seeding songs from data/songs.txt..."
-  run_in_backend python -c "
-import sys
-sys.path.insert(0, '.')
-from app.db.database import SessionLocal
-from app.models.song import Song
-from sqlalchemy import select
-import uuid
+  local extra_flag=""
+  if [ "$mode" = "clear" ] || [ "$mode" = "--clear" ]; then
+    extra_flag="--clear"
+    info "Seeding mode: Delete entire and then seed"
+  else
+    info "Seeding mode: Append to the list"
+  fi
 
-db = SessionLocal()
-try:
-    with open('data/songs.txt') as f:
-        lines = [l.strip() for l in f if l.strip() and not l.startswith('#')]
-    count = 0
-    for i, line in enumerate(lines):
-        parts = line.split('|')
-        if len(parts) < 3:
-            print(f'  Skipping malformed line: {line}')
-            continue
-        title, artist, yt_id = parts[0].strip(), parts[1].strip(), parts[2].strip()
-        existing = db.scalar(select(Song).where(Song.youtube_video_id == yt_id))
-        if not existing:
-            db.add(Song(id=uuid.uuid4(), title=title, artist=artist,
-                        youtube_video_id=yt_id, sort_order=i, enabled=True))
-            count += 1
-            print(f'  + {title} — {artist}')
-        else:
-            print(f'  ~ {title} (already exists, skipped)')
-    db.commit()
-    print(f'Done: {count} new songs added')
-finally:
-    db.close()
-"
+  info "Running seed_songs.py with /scripts/songs.txt..."
+  run_in_backend python seed_songs.py --file /scripts/songs.txt $extra_flag
   success "Song seed complete"
 }
 
@@ -209,7 +193,7 @@ COMMAND="${1:-help}"
 case "$COMMAND" in
   migrate)    cmd_migrate ;;
   seed-admin) cmd_seed_admin ;;
-  seed-songs) cmd_seed_songs ;;
+  seed-songs) cmd_seed_songs "$@" ;;
   rollback)   cmd_rollback ;;
   status)     cmd_status ;;
   shell)      cmd_shell ;;
@@ -221,7 +205,7 @@ case "$COMMAND" in
     echo ""
     echo -e "  ${CYAN}migrate${NC}      Run Alembic migrations (alembic upgrade head)"
     echo -e "  ${CYAN}seed-admin${NC}   Create/update admin user (idempotent)"
-    echo -e "  ${CYAN}seed-songs${NC}   Seed songs from backend/data/songs.txt"
+    echo -e "  ${CYAN}seed-songs${NC}   Seed songs from scripts/songs.txt (delete & seed or append)"
     echo -e "  ${CYAN}rollback${NC}     Roll back last migration (with confirmation)"
     echo -e "  ${CYAN}status${NC}       Show current migration state"
     echo -e "  ${CYAN}shell${NC}        Open psql shell in local DB"

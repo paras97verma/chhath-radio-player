@@ -2,24 +2,20 @@
 # Chhath Radio — Database Operations Pipeline
 #
 # On-demand workflow for database management tasks.
-# Triggered manually from GitHub Actions → Run workflow.
+# Triggered manually from GitHub Actions → "Database Operations" → Run workflow.
 #
 # Operations:
-#   migrate      — Run Alembic migrations (alembic upgrade head)
-#   seed-admin   — Create/update the admin user (idempotent)
-#   seed-songs   — Seed songs from backend/data/songs.txt (if it exists)
-#   rollback     — Roll back the last Alembic migration (alembic downgrade -1)
-#   status       — Show current migration status (alembic current)
+#   migrate                                — Run Alembic migrations (alembic upgrade head)
+#   seed-songs (append to list)            — Append songs from scripts/songs.txt
+#   seed-songs (delete entire and then seed) — Wipe songs table and re-seed
+#   seed-admin                             — Seed admin user using repo secrets
+#   rollback                               — Roll back the last migration (alembic downgrade -1)
+#   status                                 — Show current migration status (alembic current)
 #
-# Required GitHub Secrets:
-#   DATABASE_URL   — Supabase PostgreSQL connection string
-#   REDIS_URL      — Upstash Redis URL (needed for app imports)
-#   SECRET_KEY     — JWT signing secret
-#   ADMIN_EMAIL    — Admin account email (for seed-admin)
-#   ADMIN_PASSWORD — Admin account password (for seed-admin)
-#
-# Usage:
-#   GitHub → Actions → Database Operations → Run workflow → select operation
+# Note:
+#   For interactive custom admin credentials, use the dedicated
+#   "Database — Seed Admin" workflow.
+#   For dedicated song seeding, use the "Database — Seed Songs" workflow.
 # =============================================================================
 
 name: Database Operations
@@ -33,20 +29,13 @@ on:
         type: choice
         options:
           - migrate
+          - seed-songs (append to list)
+          - seed-songs (delete entire and then seed)
           - seed-admin
-          - seed-songs
           - rollback
           - status
-      admin_email:
-        description: 'Admin email (optional: overrides ADMIN_EMAIL secret)'
-        required: false
-        default: ''
-      admin_password:
-        description: 'Admin password (optional: overrides ADMIN_PASSWORD secret)'
-        required: false
-        default: ''
       confirm:
-        description: 'Type "yes" to confirm destructive operations (rollback)'
+        description: 'Type "yes" to confirm destructive operations (rollback / delete entire)'
         required: false
         default: 'no'
 
@@ -88,6 +77,58 @@ jobs:
           alembic current
           echo "✓ Migrations complete"
 
+      # ── seed-songs (append to list) ─────────────────────────────────────────
+      - name: Seed songs (append to list)
+        if: github.event.inputs.operation == 'seed-songs (append to list)' || github.event.inputs.operation == 'seed-songs'
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: |
+          echo "Running: alembic upgrade head (ensure schema is current)"
+          alembic upgrade head
+          echo ""
+          SONGS_FILE=""
+          if [ -f "data/songs.txt" ]; then
+            SONGS_FILE="data/songs.txt"
+          elif [ -f "../scripts/songs.txt" ]; then
+            SONGS_FILE="../scripts/songs.txt"
+          fi
+          echo "➕ Appending songs (idempotent, skipping duplicates)..."
+          if [ -n "$SONGS_FILE" ]; then
+            python seed_songs.py --file "$SONGS_FILE"
+          else
+            python seed_songs.py
+          fi
+          echo "✓ Song seed complete"
+
+      # ── seed-songs (delete entire and then seed) ───────────────────────────
+      - name: Seed songs (delete entire and then seed)
+        if: github.event.inputs.operation == 'seed-songs (delete entire and then seed)'
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: |
+          echo "Running: alembic upgrade head (ensure schema is current)"
+          alembic upgrade head
+          echo ""
+          SONGS_FILE=""
+          if [ -f "data/songs.txt" ]; then
+            SONGS_FILE="data/songs.txt"
+          elif [ -f "../scripts/songs.txt" ]; then
+            SONGS_FILE="../scripts/songs.txt"
+          fi
+          echo "🗑 Deleting entire songs table and re-seeding..."
+          if [ -n "$SONGS_FILE" ]; then
+            python seed_songs.py --file "$SONGS_FILE" --clear
+          else
+            python seed_songs.py --clear
+          fi
+          echo "✓ Song seed complete"
+
       # ── seed-admin ──────────────────────────────────────────────────────────
       - name: Seed admin user
         if: github.event.inputs.operation == 'seed-admin'
@@ -96,38 +137,20 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
-          ADMIN_EMAIL: ${{ github.event.inputs.admin_email != '' && github.event.inputs.admin_email || secrets.ADMIN_EMAIL }}
-          ADMIN_PASSWORD: ${{ github.event.inputs.admin_password != '' && github.event.inputs.admin_password || secrets.ADMIN_PASSWORD }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
         run: |
-          echo "Running: alembic upgrade head (ensure schema is current)"
-          alembic upgrade head
-          echo ""
-          echo "Seeding admin user: $ADMIN_EMAIL"
-          python seed_admin.py
-          echo "✓ Admin seed complete"
-
-      # ── seed-songs ──────────────────────────────────────────────────────────
-      - name: Seed songs
-        if: github.event.inputs.operation == 'seed-songs'
-        working-directory: backend
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          REDIS_URL: ${{ secrets.REDIS_URL }}
-          SECRET_KEY: ${{ secrets.SECRET_KEY }}
-        run: |
-          echo "Running: alembic upgrade head (ensure schema is current)"
-          alembic upgrade head
-          echo ""
-          SONGS_FILE="../scripts/songs.txt"
-          if [ -f "$SONGS_FILE" ]; then
-            echo "Seeding songs from $SONGS_FILE..."
-            python seed_songs.py --file "$SONGS_FILE"
-            echo "✓ Song seed complete"
-          else
-            echo "ERROR: songs file not found at $SONGS_FILE"
-            echo "Expected: scripts/songs.txt in the repository root"
+          if [ -z "$ADMIN_EMAIL" ] || [ -z "$ADMIN_PASSWORD" ]; then
+            echo "ERROR: ADMIN_EMAIL or ADMIN_PASSWORD secret is not set."
+            echo "To supply custom email and password via form, use the dedicated 'Database — Seed Admin' workflow."
             exit 1
           fi
+          echo "Running: alembic upgrade head (ensure schema is current)"
+          alembic upgrade head
+          echo ""
+          echo "Seeding admin user from secrets: $ADMIN_EMAIL"
+          python seed_admin.py
+          echo "✓ Admin seed complete"
 
       # ── rollback ────────────────────────────────────────────────────────────
       - name: Rollback last migration

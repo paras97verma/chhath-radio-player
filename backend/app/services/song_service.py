@@ -10,6 +10,7 @@ Scale additions:
 
 import json
 import logging
+import os
 import urllib.parse
 import urllib.request
 import uuid
@@ -27,7 +28,8 @@ logger = logging.getLogger(__name__)
 # ─── Cache config ─────────────────────────────────────────────────────────────
 
 QUEUE_CACHE_KEY = "chhath:queue"
-QUEUE_CACHE_TTL = 2_592_000  # 30 days — safe because cache is explicitly invalidated on every admin write (create/update/delete)
+# Cache TTL in seconds (default: 30 days). Set to 0 to bypass caching (e.g. for instant DB updates in dev).
+QUEUE_CACHE_TTL = int(os.getenv("QUEUE_CACHE_TTL", "2592000"))
 
 
 def _cache_get(key: str) -> Optional[list]:
@@ -221,17 +223,19 @@ class SongService:
         Note: cache hit returns plain dicts, not ORM objects. Callers that
         need ORM relationships should use get_all_enabled() directly.
         """
-        # Try cache first
-        cached = _cache_get(QUEUE_CACHE_KEY)
-        if cached is not None:
-            # Return lightweight Song-like objects from cache
-            # (sufficient for the radio queue endpoint which serialises to JSON)
-            return cached  # type: ignore[return-value]
+        # Try cache first (when caching is enabled)
+        if QUEUE_CACHE_TTL > 0:
+            cached = _cache_get(QUEUE_CACHE_KEY)
+            if cached is not None:
+                # Return lightweight Song-like objects from cache
+                # (sufficient for the radio queue endpoint which serialises to JSON)
+                return cached  # type: ignore[return-value]
 
         # Cache miss — hit the DB
         songs = SongService.get_all_enabled(db)
 
-        # Populate cache
-        _cache_set(QUEUE_CACHE_KEY, [_song_to_dict(s) for s in songs], QUEUE_CACHE_TTL)
+        # Populate cache (when caching is enabled)
+        if QUEUE_CACHE_TTL > 0:
+            _cache_set(QUEUE_CACHE_KEY, [_song_to_dict(s) for s in songs], QUEUE_CACHE_TTL)
 
         return songs

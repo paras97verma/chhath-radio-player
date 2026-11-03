@@ -11,7 +11,7 @@
 # =============================================================================
 
 .DEFAULT_GOAL := help
-.PHONY: help start stop restart logs logs-backend logs-frontend \
+.PHONY: help start dev start-all stop restart logs logs-backend logs-frontend \
         shell-backend shell-frontend \
         migrate migrate-auto migrate-local migrate-auto-local \
         seed seed-songs seed-songs-clear seed-songs-fast \
@@ -58,6 +58,8 @@ help:
 	@echo "$(BOLD)🪔  Chhath Radio — Makefile$(NC)"
 	@echo ""
 	@echo "$(CYAN)  Infrastructure$(NC)"
+	@echo "    make start-all          One-shot startup: infra, migrations, admin, songs, browser"
+	@echo "    make dev                Alias for make start-all"
 	@echo "    make start              Start all services (Docker Compose)"
 	@echo "    make stop               Stop all services"
 	@echo "    make restart            Restart all services"
@@ -100,6 +102,11 @@ help:
 	@echo ""
 
 # ─── Infrastructure ───────────────────────────────────────────────────────────
+
+start-all:
+	@bash scripts/start-local.sh
+
+dev: start-all
 
 start:
 	docker compose up -d

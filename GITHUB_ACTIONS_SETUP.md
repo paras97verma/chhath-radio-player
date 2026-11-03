@@ -10,10 +10,12 @@ folder contains the pipeline files). You just need to make sure it's enabled:
 3. If you see a yellow banner saying "Workflows aren't being run on this forked
    repository" or "Actions are disabled", click **Enable GitHub Actions** or
    **I understand my workflows, go ahead and enable them**
-4. You should now see three workflows listed on the left:
+4. You should now see workflows listed on the left:
    - **Backend CI/CD** (from `.github/workflows/backend.yml`)
    - **Frontend CI/CD** (from `.github/workflows/frontend.yml`)
    - **Database Operations** (from `.github/workflows/db.yml`)
+   - **Database — Seed Songs** (from `.github/workflows/db-seed-songs.yml`)
+   - **Database — Seed Admin** (from `.github/workflows/db-seed-admin.yml`)
 
 That's it — Actions is now active. The workflows run automatically on every push
 to `main`. No other configuration needed to enable them.
@@ -248,11 +250,18 @@ git push origin main
 After the backend is deployed and healthy:
 
 1. Go to your repo → **Actions** tab
-2. Click **Database Operations** in the left sidebar
-3. Click **Run workflow**
-4. Select operation: `seed-admin` → click **Run workflow**
-5. Wait for it to complete (creates your admin user)
-6. Optionally run `seed-songs` to add songs to the queue
+2. **Seed Admin User:**
+   - Click **Database — Seed Admin** in the left sidebar
+   - Click **Run workflow**
+   - Enter your `admin_email` and `admin_password` (or leave blank to use `ADMIN_EMAIL` and `ADMIN_PASSWORD` repository secrets)
+   - Click **Run workflow**
+3. **Seed Songs:**
+   - Click **Database — Seed Songs** in the left sidebar
+   - Click **Run workflow**
+   - Choose seed option:
+     - `append to the list`: Keeps existing songs and appends any new ones from `scripts/songs.txt`
+     - `delete entire and then seed`: Clears the songs table completely and re-seeds from `scripts/songs.txt`
+   - Click **Run workflow**
 
 ---
 

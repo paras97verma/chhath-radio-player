@@ -82,3 +82,8 @@ frontend/next-env.d.ts
 .lyzo/
 .aider*
 .claude/
+
+# Backup files
+*.bak
+*.bak.*
+scripts/bak.*

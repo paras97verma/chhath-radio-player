@@ -65,6 +65,8 @@ services:
     environment:
       DATABASE_URL: postgresql://chhath:chhath@postgres:5432/chhath_radio
       REDIS_URL: redis://redis:6379/0
+      QUEUE_CACHE_TTL: "0"
+      CALENDARIFIC_API_KEY: ${CALENDARIFIC_API_KEY:-tasaJ8hlEPGg6TMNJXi1yg9f3e50mdv0}
     ports:
       - "8000:8000"
     # Mount source so --reload picks up changes immediately
