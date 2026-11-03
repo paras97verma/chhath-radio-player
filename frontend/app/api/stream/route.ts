@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { extractDurationFromUrl } from "@/lib/piped/stream-selector";
 
 interface CachedStreamResult {
   url: string;
   format: string;
   mimeType: string;
   bitrate: number;
+  duration?: number;
   title?: string;
   timestamp: number;
   cached?: boolean;
@@ -46,11 +48,17 @@ export async function GET(request: NextRequest) {
     if (backendRes.ok) {
       const data = await backendRes.json();
       if (data && data.url) {
+        const streamDuration =
+          typeof data.duration === "number" && data.duration > 0
+            ? data.duration
+            : extractDurationFromUrl(data.url) || undefined;
+
         const result: CachedStreamResult = {
           url: data.url,
           format: data.format || "M4A",
           mimeType: data.mimeType || 'audio/mp4; codecs="mp4a.40.2"',
           bitrate: data.bitrate || 128000,
+          duration: streamDuration,
           title: data.title,
           timestamp: Date.now(),
           cached: data.cached,
@@ -124,11 +132,18 @@ export async function GET(request: NextRequest) {
           const aacLc = m4aStreams.find((f: any) => (f.type || "").includes("mp4a.40.2"));
           const best = aacLc || m4aStreams[0] || adaptive[0];
 
+          const streamDuration =
+            Number(data.lengthSeconds || 0) ||
+            (best.approxDurationMs ? Number(best.approxDurationMs) / 1000 : 0) ||
+            extractDurationFromUrl(best.url) ||
+            undefined;
+
           const result: CachedStreamResult = {
             url: best.url,
             format: (best.type || "").includes("mp4") ? "M4A" : "WEBM_OPUS",
             mimeType: best.type || 'audio/mp4; codecs="mp4a.40.2"',
             bitrate: best.bitrate || 128000,
+            duration: streamDuration,
             title: data.title,
             timestamp: Date.now(),
             cached: false,
@@ -148,11 +163,17 @@ export async function GET(request: NextRequest) {
           const aacLc = m4aStreams.find((s: any) => (s.mimeType || "").includes("mp4a.40.2"));
           const best = aacLc || m4aStreams[0] || audioStreams[0];
 
+          const streamDuration =
+            Number(data.duration || 0) ||
+            extractDurationFromUrl(best.url) ||
+            undefined;
+
           const result: CachedStreamResult = {
             url: best.url,
             format: best.format || "M4A",
             mimeType: best.mimeType || 'audio/mp4; codecs="mp4a.40.2"',
             bitrate: best.bitrate || 128000,
+            duration: streamDuration,
             title: data.title,
             timestamp: Date.now(),
             cached: false,

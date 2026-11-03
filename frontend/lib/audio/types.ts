@@ -23,6 +23,7 @@ export interface AudioStreamInfo {
   mimeType: string; // e.g. 'audio/webm; codecs="opus"', 'audio/mp4; codecs="mp4a.40.2"'
   codec: string;
   bitrate: number;
+  duration?: number; // Authoritative duration in seconds from CDN/extractor metadata
 }
 
 export interface PipedInstance {
@@ -33,6 +34,8 @@ export interface PipedInstance {
 }
 
 export interface AudioPlayerAdapter {
+  /** Optional WebKit user-gesture priming to unlock iOS mobile autoplay */
+  primeAudio?(): void;
   /** Initialize the player with DOM container/elements and initial song or videoId */
   initialize(container: HTMLElement | null, initial?: Song | string): Promise<void>;
   /** Load and play a new song */

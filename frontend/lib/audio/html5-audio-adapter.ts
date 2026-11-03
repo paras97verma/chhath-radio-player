@@ -12,6 +12,7 @@
 import type { Song } from "../api";
 import type { AudioPlayerAdapter, PlayerState } from "./types";
 import { fetchPipedStream } from "../piped/piped-client";
+import { extractDurationFromUrl } from "../piped/stream-selector";
 
 export class Html5AudioAdapter implements AudioPlayerAdapter {
   private primaryAudio: HTMLAudioElement | null = null;
@@ -24,6 +25,10 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   private isMuted = false;
   private volumeLevel = 80; // 0-100
 
+  // Authoritative duration tracking & user gesture priming
+  private streamDuration: number | null = null;
+  private hasUserInteracted = false;
+
   // Request sequencing and cooperative cancellation
   private activeRequestId = 0;
   private activeAbortController: AbortController | null = null;
@@ -35,6 +40,32 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   constructor(primary?: HTMLAudioElement, secondary?: HTMLAudioElement) {
     if (primary) this.primaryAudio = primary;
     if (secondary) this.secondaryAudio = secondary;
+  }
+
+  /**
+   * Synchronously primes both primary and secondary audio elements on user touch/click.
+   * This permanently unlocks WebKit autoplay restrictions on iOS Safari across
+   * all subsequent asynchronous stream resolution fetches and background transitions.
+   */
+  primeAudio(): void {
+    this.hasUserInteracted = true;
+    const silentSrc =
+      "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+
+    [this.primaryAudio, this.secondaryAudio].forEach((audio) => {
+      if (!audio) return;
+      if (!audio.src) {
+        audio.src = silentSrc;
+        const p = audio.play();
+        if (p !== undefined) {
+          p.then(() => {
+            audio.pause();
+          }).catch(() => {
+            /* ignore priming abort */
+          });
+        }
+      }
+    });
   }
 
   async initialize(container: HTMLElement | null, initial?: Song | string): Promise<void> {
@@ -55,9 +86,9 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
         this.secondaryAudio.id = "chhath-audio-secondary";
       }
 
-      this.primaryAudio.preload = "auto";
+      this.primaryAudio.preload = "none";
       this.primaryAudio.setAttribute("playsinline", "true");
-      this.secondaryAudio.preload = "auto";
+      this.secondaryAudio.preload = "none";
       this.secondaryAudio.setAttribute("playsinline", "true");
 
       // If elements are not yet mounted in container or document body, attach them
@@ -71,13 +102,13 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     this._applyVolume(this.primaryAudio);
     this._applyVolume(this.secondaryAudio);
 
-    // Warm up initial song if provided
+    // Warm up initial song metadata in cache if provided (without assigning unprimed src on mobile)
     const videoId = typeof initial === "string" ? initial : initial?.youtube_video_id;
     if (videoId) {
       try {
         const stream = await fetchPipedStream(videoId, this.primaryAudio);
-        if (this.primaryAudio && !this.primaryAudio.src) {
-          this.primaryAudio.src = stream.url;
+        if (stream.duration) {
+          this.streamDuration = stream.duration;
         }
       } catch (err) {
         console.warn("[Html5AudioAdapter] Could not pre-warm initial song stream:", err);
@@ -91,7 +122,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     const onPlay = () => this._emitState("PLAYING");
     const onPlaying = () => {
       this._emitState("PLAYING");
-      const dur = audio.duration;
+      const dur = this.getDuration() || audio.duration;
       if (Number.isFinite(dur) && dur > 0) {
         this._emitProgress(audio.currentTime, dur);
       }
@@ -106,20 +137,27 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     const onError = () => {
       // If a newer load request is active or audio element was reset, ignore stale errors
       if (this.activeAbortController?.signal.aborted || this.isDestroyed) return;
+      // If user has not interacted yet, or error is MEDIA_ERR_ABORTED (code 1), ignore
+      if (!this.hasUserInteracted || audio.error?.code === 1) return;
       console.warn("[Html5AudioAdapter] Audio playback error:", audio.error);
       this._emitState("ERROR");
     };
 
     const onTimeUpdate = () => {
-      const dur = audio.duration;
+      const dur = this.getDuration() || audio.duration;
       const cur = audio.currentTime;
       if (Number.isFinite(dur) && dur > 0 && Number.isFinite(cur)) {
         this._emitProgress(cur, dur);
+        // If authoritative duration is known, end song when within 0.4s of the end
+        // to prevent iOS Safari CoreAudio from playing 5 minutes of trailing silence!
+        if (this.streamDuration && cur >= this.streamDuration - 0.4 && !audio.paused && !audio.ended) {
+          onEnded();
+        }
       }
     };
 
     const onMetadata = () => {
-      const dur = audio.duration;
+      const dur = this.getDuration() || audio.duration;
       const cur = audio.currentTime;
       if (Number.isFinite(dur) && dur > 0) {
         this._emitProgress(Number.isFinite(cur) ? cur : 0, dur);
@@ -209,6 +247,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       this.primaryAudio = newPrimary;
       this.secondaryAudio = oldPrimary;
       this.preloadedSongId = null;
+      this.streamDuration = extractDurationFromUrl(this.primaryAudio.src);
 
       // Rebind events for the active primary
       this.cleanupFns.forEach((fn) => fn());
@@ -233,12 +272,24 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
       if (!this.primaryAudio) throw new Error("Audio element not initialized");
 
+      this.hasUserInteracted = true;
+      this.streamDuration = stream.duration ?? extractDurationFromUrl(stream.url) ?? null;
       this.primaryAudio.src = stream.url;
+      this.primaryAudio.preload = "auto";
       this._applyVolume(this.primaryAudio);
-      await this.primaryAudio.play();
 
-      if (this.activeRequestId === requestId && !this.isDestroyed) {
-        this._emitState("PLAYING");
+      try {
+        await this.primaryAudio.play();
+        if (this.activeRequestId === requestId && !this.isDestroyed) {
+          this._emitState("PLAYING");
+        }
+      } catch (playErr: any) {
+        if (playErr?.name === "NotAllowedError") {
+          console.warn("[Html5AudioAdapter] Autoplay restricted by browser, waiting for user gesture:", playErr);
+          this._emitState("PAUSED");
+          return;
+        }
+        throw playErr;
       }
     } catch (err: any) {
       // If request was aborted by user switching tracks or superseded by a newer request, suppress error
@@ -275,10 +326,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
         this.secondaryAudio.preload = "auto";
         this.preloadedSongId = song.youtube_video_id;
       }
-    } catch (err: any) {
-      if (err?.name !== "AbortError") {
-        console.warn(`[Html5AudioAdapter] Preload failed for song ${song.title}:`, err);
-      }
+    } catch {
+      // Safely swallow all preload errors/aborts so no unhandled rejections reach the console/overlay
     }
   }
 
@@ -322,7 +371,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   seekTo(seconds: number): void {
     if (this.primaryAudio && Number.isFinite(seconds)) {
       this.primaryAudio.currentTime = Math.max(0, seconds);
-      const dur = this.primaryAudio.duration;
+      const dur = this.getDuration();
       if (Number.isFinite(dur) && dur > 0) {
         this._emitProgress(this.primaryAudio.currentTime, dur);
       }
@@ -334,6 +383,9 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   }
 
   getDuration(): number {
+    if (this.streamDuration && Number.isFinite(this.streamDuration) && this.streamDuration > 0) {
+      return this.streamDuration;
+    }
     return this.primaryAudio?.duration && !isNaN(this.primaryAudio.duration)
       ? this.primaryAudio.duration
       : 0;

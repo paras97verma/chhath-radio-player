@@ -632,6 +632,7 @@ export default function RadioPlayer({
   const handlePlaySong = useCallback(async (index: number, song: Song) => {
     const state = useRadioStore.getState();
     if (!state.adapter) return;
+    state.adapter.primeAudio?.();
     useRadioStore.setState({ currentIndex: index, playState: "BUFFERING", userIntent: "playing", error: null });
     updateMediaSessionMetadata(song, true);
     try {

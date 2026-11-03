@@ -10,7 +10,7 @@
 
 import type { AudioStreamInfo } from "../audio/types";
 import { getHealthyInstances, markInstanceFailed, markInstanceSuccess } from "./instance-discovery";
-import { selectBestAudioStream } from "./stream-selector";
+import { selectBestAudioStream, extractDurationFromUrl } from "./stream-selector";
 
 interface CachedStream {
   stream: AudioStreamInfo;
@@ -65,6 +65,11 @@ export async function fetchPipedStream(
       if (res.ok) {
         const data = await res.json();
         if (data && data.url) {
+          const durationVal =
+            typeof data.duration === "number" && data.duration > 0
+              ? data.duration
+              : extractDurationFromUrl(data.url) || undefined;
+
           const stream: AudioStreamInfo = {
             url: data.url,
             format: data.format || "M4A",
@@ -72,6 +77,7 @@ export async function fetchPipedStream(
             mimeType: data.mimeType || 'audio/mp4; codecs="mp4a.40.2"',
             codec: data.codec || "mp4a.40.2",
             bitrate: data.bitrate || 128000,
+            duration: durationVal,
           };
 
           streamCache.set(cleanId, {
@@ -81,6 +87,11 @@ export async function fetchPipedStream(
           return stream;
         } else if (data && data.audioStreams && data.audioStreams.length > 0) {
           const best = data.audioStreams[0];
+          const durationVal =
+            typeof data.duration === "number" && data.duration > 0
+              ? data.duration
+              : extractDurationFromUrl(best.url) || undefined;
+
           const stream: AudioStreamInfo = {
             url: best.url,
             format: best.format || "M4A",
@@ -88,6 +99,7 @@ export async function fetchPipedStream(
             mimeType: best.mimeType || 'audio/mp4; codecs="mp4a.40.2"',
             codec: best.codec || "mp4a.40.2",
             bitrate: best.bitrate || 128000,
+            duration: durationVal,
           };
           streamCache.set(cleanId, {
             stream,
@@ -203,6 +215,13 @@ export async function fetchPipedStream(
       if (!bestStream) {
         markInstanceFailed(instance.apiUrl);
         continue;
+      }
+
+      if (!bestStream.duration) {
+        bestStream.duration =
+          Number(data.lengthSeconds || data.duration || 0) ||
+          extractDurationFromUrl(bestStream.url) ||
+          undefined;
       }
 
       markInstanceSuccess(instance.apiUrl);

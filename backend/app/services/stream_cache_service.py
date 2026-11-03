@@ -14,6 +14,7 @@ Integrates Redis for high-scalability audio stream resolution:
 import asyncio
 import json
 import logging
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -91,6 +92,48 @@ def _clean_l1_cache() -> None:
     for k in expired:
         _l1_cache.pop(k, None)
         _l1_cache_ts.pop(k, None)
+
+
+def _extract_duration(data: Dict[str, Any], best: Dict[str, Any]) -> float:
+    """Extract authoritative duration in seconds from API response or YouTube CDN URL."""
+    # 1. Invidious lengthSeconds
+    length_sec = data.get("lengthSeconds")
+    if length_sec is not None:
+        try:
+            val = float(length_sec)
+            if val > 0:
+                return round(val, 2)
+        except (ValueError, TypeError):
+            pass
+    # 2. Piped duration
+    dur = data.get("duration")
+    if dur is not None:
+        try:
+            val = float(dur)
+            if val > 0:
+                return round(val, 2)
+        except (ValueError, TypeError):
+            pass
+    # 3. approxDurationMs
+    approx_ms = best.get("approxDurationMs")
+    if approx_ms is not None:
+        try:
+            val = float(approx_ms) / 1000.0
+            if val > 0:
+                return round(val, 2)
+        except (ValueError, TypeError):
+            pass
+    # 4. &dur= query parameter in YouTube CDN URL
+    url = best.get("url") or ""
+    match = re.search(r"[?&]dur=([0-9.]+)", url)
+    if match:
+        try:
+            val = float(match.group(1))
+            if val > 0:
+                return round(val, 2)
+        except (ValueError, TypeError):
+            pass
+    return 0.0
 
 
 class StreamCacheService:
@@ -274,6 +317,7 @@ class StreamCacheService:
 
                                 aac_lc = next((f for f in m4a_streams if "mp4a.40.2" in f.get("type", "")), None)
                                 best = aac_lc or (m4a_streams[0] if m4a_streams else adaptive[0])
+                                duration = _extract_duration(data, best)
 
                                 cls._record_success(ext_name, latency_ms, redis_client)
                                 return {
@@ -281,6 +325,7 @@ class StreamCacheService:
                                     "format": "M4A" if "mp4" in best.get("type", "") else "WEBM_OPUS",
                                     "mimeType": best.get("type") or 'audio/mp4; codecs="mp4a.40.2"',
                                     "bitrate": best.get("bitrate") or 128000,
+                                    "duration": duration,
                                     "title": data.get("title", f"Chhath Song ({video_id})"),
                                     "extractor": ext_name,
                                 }
@@ -294,6 +339,7 @@ class StreamCacheService:
                                 m4a_streams.sort(key=lambda s: int(s.get("bitrate") or 0), reverse=True)
                                 aac_lc = next((s for s in m4a_streams if "mp4a.40.2" in s.get("mimeType", "")), None)
                                 best = aac_lc or (m4a_streams[0] if m4a_streams else audio_streams[0])
+                                duration = _extract_duration(data, best)
 
                                 cls._record_success(ext_name, latency_ms, redis_client)
                                 return {
@@ -301,6 +347,7 @@ class StreamCacheService:
                                     "format": best.get("format", "M4A"),
                                     "mimeType": best.get("mimeType") or 'audio/mp4; codecs="mp4a.40.2"',
                                     "bitrate": best.get("bitrate") or 128000,
+                                    "duration": duration,
                                     "title": data.get("title", f"Chhath Song ({video_id})"),
                                     "extractor": ext_name,
                                 }
@@ -312,12 +359,14 @@ class StreamCacheService:
                             ]
                             if video_streams:
                                 best = video_streams[0]
+                                duration = _extract_duration(data, best)
                                 cls._record_success(ext_name, latency_ms, redis_client)
                                 return {
                                     "url": best["url"],
                                     "format": best.get("format", "MP4"),
                                     "mimeType": best.get("mimeType") or "video/mp4",
                                     "bitrate": best.get("bitrate") or 128000,
+                                    "duration": duration,
                                     "title": data.get("title", f"Chhath Song ({video_id})"),
                                     "extractor": ext_name,
                                 }

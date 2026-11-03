@@ -13,6 +13,7 @@ except ImportError:
 
 from app.services.stream_cache_service import (
     StreamCacheService,
+    _extract_duration,
     _l1_cache,
     _l1_cache_ts,
     STREAM_CACHE_PREFIX,
@@ -177,3 +178,26 @@ class TestStreamCacheService:
         assert "vid123" not in _l1_cache
         assert "vid123" not in _l1_cache_ts
         mock_redis.delete.assert_called_once_with(f"{STREAM_CACHE_PREFIX}vid123")
+
+    def test_extract_duration_prefers_explicit_metadata_or_url_dur(self):
+        # 1. From Invidious lengthSeconds
+        data = {"lengthSeconds": 308}
+        best = {"url": "https://googlevideo.com/videoplayback?itag=140"}
+        assert _extract_duration(data, best) == 308.0
+
+        # 2. From Piped duration
+        data = {"duration": 245}
+        assert _extract_duration(data, best) == 245.0
+
+        # 3. From approxDurationMs
+        data = {}
+        best = {"approxDurationMs": "308686", "url": "https://googlevideo.com/videoplayback?itag=140"}
+        assert _extract_duration(data, best) == 308.69
+
+        # 4. From YouTube CDN URL query param &dur=
+        data = {}
+        best = {"url": "https://googlevideo.com/videoplayback?itag=140&dur=195.42&expire=123"}
+        assert _extract_duration(data, best) == 195.42
+
+        # 5. Fallback zero
+        assert _extract_duration({}, {}) == 0.0

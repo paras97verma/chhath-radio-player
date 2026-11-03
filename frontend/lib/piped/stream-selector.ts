@@ -19,6 +19,25 @@ export function isAppleWebKit(): boolean {
 }
 
 /**
+ * Extracts authoritative duration in seconds from YouTube CDN stream URL (&dur=...)
+ */
+export function extractDurationFromUrl(url?: string | null): number | null {
+  if (!url) return null;
+  try {
+    const match = url.match(/[?&]dur=([0-9.]+)/);
+    if (match && match[1]) {
+      const parsed = parseFloat(match[1]);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return Math.round(parsed * 100) / 100;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/**
  * Filter and rank audio streams by browser compatibility and quality
  */
 export function selectBestAudioStream(

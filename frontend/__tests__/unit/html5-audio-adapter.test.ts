@@ -19,8 +19,8 @@ describe("Html5AudioAdapter", () => {
   });
 
   it("initializes audio elements with playsinline and preload", () => {
-    expect(primaryAudio.preload).toBe("auto");
-    expect(secondaryAudio.preload).toBe("auto");
+    expect(primaryAudio.preload).toBe("none");
+    expect(secondaryAudio.preload).toBe("none");
     expect(primaryAudio.getAttribute("playsinline")).toBe("true");
     expect(secondaryAudio.getAttribute("playsinline")).toBe("true");
   });
@@ -166,5 +166,31 @@ describe("Html5AudioAdapter", () => {
 
     await p1; // Should resolve quietly without throwing or emitting ERROR
     expect(states).not.toContain("ERROR");
+  });
+
+  it("primeAudio unlocks audio elements with silent audio payload", () => {
+    const playSpy = vi.spyOn(primaryAudio, "play").mockResolvedValue(undefined);
+    adapter.primeAudio();
+    expect(primaryAudio.src).toContain("data:audio/wav;base64");
+    expect(playSpy).toHaveBeenCalled();
+  });
+
+  it("getDuration prefers authoritative stream duration over native audio.duration", async () => {
+    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchPipedStream).mockResolvedValue({
+      url: "https://audio.example.com/song.m4a?dur=298.50",
+      format: "M4A",
+      quality: "128kbps",
+      mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+      codec: "mp4a.40.2",
+      bitrate: 128000,
+      duration: 298.5,
+    });
+
+    // Native audio.duration falsely reporting 597s (2x CoreAudio bug)
+    Object.defineProperty(primaryAudio, "duration", { value: 597.0, configurable: true });
+
+    await adapter.loadVideo("song_dur_test");
+    expect(adapter.getDuration()).toBe(298.5);
   });
 });

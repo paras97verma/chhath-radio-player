@@ -13,7 +13,7 @@
  */
 
 import { create } from "zustand";
-const uuidv4 = () => crypto.randomUUID();
+import { generateUUID as uuidv4 } from "./uuid";
 import type { Song } from "./api";
 import type { AudioPlayerAdapter, PlayerState } from "./audio/types";
 import { onPlaybackStateChange } from "./wake-lock";
@@ -441,6 +441,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const { adapter, queue, currentIndex } = get();
     if (!adapter || queue.length === 0) return;
 
+    adapter.primeAudio?.();
     set({ userIntent: "playing", error: null });
     onPlaybackStateChange(true);
 
