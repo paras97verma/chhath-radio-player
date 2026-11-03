@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
       `${BACKEND_URL}/api/stream?v=${encodeURIComponent(videoId)}`,
       {
         headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(6000),
+        signal: AbortSignal.timeout(12000),
       }
     );
 

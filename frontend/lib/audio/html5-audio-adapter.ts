@@ -24,6 +24,11 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   private isMuted = false;
   private volumeLevel = 80; // 0-100
 
+  // Request sequencing and cooperative cancellation
+  private activeRequestId = 0;
+  private activeAbortController: AbortController | null = null;
+  private preloadAbortController: AbortController | null = null;
+
   // Active event listener cleanup callbacks
   private cleanupFns: Array<() => void> = [];
 
@@ -99,6 +104,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     const onWaiting = () => this._emitState("BUFFERING");
     const onEnded = () => this._emitState("ENDED");
     const onError = () => {
+      // If a newer load request is active or audio element was reset, ignore stale errors
+      if (this.activeAbortController?.signal.aborted || this.isDestroyed) return;
       console.warn("[Html5AudioAdapter] Audio playback error:", audio.error);
       this._emitState("ERROR");
     };
@@ -158,6 +165,30 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   async loadVideo(videoId: string): Promise<void> {
     if (!videoId) return;
 
+    // 1. Cancel any in-flight background preload so it does not contend with live playback
+    if (this.preloadAbortController) {
+      try {
+        this.preloadAbortController.abort();
+      } catch {
+        /* ignore */
+      }
+      this.preloadAbortController = null;
+    }
+
+    // 2. Cancel previous load request if in flight
+    if (this.activeAbortController) {
+      try {
+        this.activeAbortController.abort();
+      } catch {
+        /* ignore */
+      }
+      this.activeAbortController = null;
+    }
+
+    const requestId = ++this.activeRequestId;
+    const controller = new AbortController();
+    this.activeAbortController = controller;
+
     // Check if the secondary audio element already has this song pre-buffered
     if (
       this.preloadedSongId === videoId &&
@@ -193,14 +224,27 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     // Standard resolution path
     this._emitState("BUFFERING");
     try {
-      const stream = await fetchPipedStream(videoId, this.primaryAudio);
+      const stream = await fetchPipedStream(videoId, this.primaryAudio, controller.signal);
+
+      // Check if superseded or destroyed while fetching
+      if (this.activeRequestId !== requestId || this.isDestroyed || controller.signal.aborted) {
+        return;
+      }
+
       if (!this.primaryAudio) throw new Error("Audio element not initialized");
 
       this.primaryAudio.src = stream.url;
       this._applyVolume(this.primaryAudio);
       await this.primaryAudio.play();
-      this._emitState("PLAYING");
-    } catch (err) {
+
+      if (this.activeRequestId === requestId && !this.isDestroyed) {
+        this._emitState("PLAYING");
+      }
+    } catch (err: any) {
+      // If request was aborted by user switching tracks or superseded by a newer request, suppress error
+      if (err?.name === "AbortError" || this.activeRequestId !== requestId || this.isDestroyed) {
+        return;
+      }
       console.error(`[Html5AudioAdapter] Failed to play video ${videoId}:`, err);
       this._emitState("ERROR");
       throw err;
@@ -210,16 +254,31 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   async preloadNextSong(song: Song): Promise<void> {
     if (!song?.youtube_video_id || !this.secondaryAudio) return;
     if (this.preloadedSongId === song.youtube_video_id) return; // already preloaded
+    if (this.currentState === "BUFFERING") return; // do not compete during active track load
+
+    if (this.preloadAbortController) {
+      try {
+        this.preloadAbortController.abort();
+      } catch {
+        /* ignore */
+      }
+    }
+    const controller = new AbortController();
+    this.preloadAbortController = controller;
 
     try {
-      const stream = await fetchPipedStream(song.youtube_video_id, this.secondaryAudio);
+      const stream = await fetchPipedStream(song.youtube_video_id, this.secondaryAudio, controller.signal);
+      if (controller.signal.aborted || this.isDestroyed) return;
+
       if (this.secondaryAudio) {
         this.secondaryAudio.src = stream.url;
         this.secondaryAudio.preload = "auto";
         this.preloadedSongId = song.youtube_video_id;
       }
-    } catch (err) {
-      console.warn(`[Html5AudioAdapter] Preload failed for song ${song.title}:`, err);
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        console.warn(`[Html5AudioAdapter] Preload failed for song ${song.title}:`, err);
+      }
     }
   }
 
@@ -300,6 +359,22 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
   destroy(): void {
     this.isDestroyed = true;
+    if (this.activeAbortController) {
+      try {
+        this.activeAbortController.abort();
+      } catch {
+        /* ignore */
+      }
+      this.activeAbortController = null;
+    }
+    if (this.preloadAbortController) {
+      try {
+        this.preloadAbortController.abort();
+      } catch {
+        /* ignore */
+      }
+      this.preloadAbortController = null;
+    }
     this.cleanupFns.forEach((fn) => fn());
     this.cleanupFns = [];
     this.stateListeners.clear();

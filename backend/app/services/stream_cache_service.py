@@ -197,7 +197,7 @@ class StreamCacheService:
 
     @classmethod
     def _poll_for_result(
-        cls, video_id: str, redis_client: Any, max_wait_sec: float = 3.5
+        cls, video_id: str, redis_client: Any, max_wait_sec: float = 6.0
     ) -> Optional[Dict[str, Any]]:
         """Follower workers poll Redis for the winning worker's resolved stream."""
         cache_key = f"{STREAM_CACHE_PREFIX}{video_id}"

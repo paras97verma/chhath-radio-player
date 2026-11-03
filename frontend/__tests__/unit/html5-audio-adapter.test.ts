@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Html5AudioAdapter } from "@/lib/audio/html5-audio-adapter";
 
+vi.mock("@/lib/piped/piped-client", () => ({
+  fetchPipedStream: vi.fn(),
+}));
+
 describe("Html5AudioAdapter", () => {
   let primaryAudio: HTMLAudioElement;
   let secondaryAudio: HTMLAudioElement;
@@ -83,5 +87,84 @@ describe("Html5AudioAdapter", () => {
     adapter.seekTo(90);
     expect(primaryAudio.currentTime).toBe(90);
     expect(recordedCur).toBe(90);
+  });
+
+  it("discards out-of-order resolved streams from previous loadVideo calls", async () => {
+    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
+    let resolveSong1: any;
+    let resolveSong2: any;
+
+    vi.mocked(fetchPipedStream).mockImplementation(((videoId: string) => {
+      if (videoId === "song1") {
+        return new Promise((resolve) => {
+          resolveSong1 = () =>
+            resolve({
+              url: "https://audio.example.com/song1.m4a",
+              format: "M4A",
+              quality: "128kbps",
+              mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+              codec: "mp4a.40.2",
+              bitrate: 128000,
+            });
+        });
+      }
+      if (videoId === "song2") {
+        return new Promise((resolve) => {
+          resolveSong2 = () =>
+            resolve({
+              url: "https://audio.example.com/song2.m4a",
+              format: "M4A",
+              quality: "128kbps",
+              mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+              codec: "mp4a.40.2",
+              bitrate: 128000,
+            });
+        });
+      }
+      return Promise.reject(new Error("Unknown song"));
+    }) as any);
+
+    primaryAudio.play = vi.fn().mockResolvedValue(undefined);
+
+    // Call loadVideo for song 1 first
+    const p1 = adapter.loadVideo("song1");
+    // User quickly clicks song 2
+    const p2 = adapter.loadVideo("song2");
+
+    // Song 2 finishes first
+    resolveSong2();
+    await p2;
+    expect(primaryAudio.src).toBe("https://audio.example.com/song2.m4a");
+
+    // Now older song 1 finishes later
+    resolveSong1();
+    await p1;
+
+    // Must still be song 2! Older song 1 must NOT overwrite song 2!
+    expect(primaryAudio.src).toBe("https://audio.example.com/song2.m4a");
+  });
+
+  it("suppresses AbortError and does not emit ERROR state when load is aborted", async () => {
+    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchPipedStream).mockImplementation(((_id: string, _el: any, signal?: AbortSignal) => {
+      return new Promise((_, reject) => {
+        if (signal) {
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("The user aborted a request.", "AbortError"));
+          });
+        }
+      });
+    }) as any);
+
+    const states: string[] = [];
+    adapter.onStateChange((s) => states.push(s));
+
+    // Start loading song 1
+    const p1 = adapter.loadVideo("song1");
+    // Start loading song 2, which aborts song 1
+    adapter.loadVideo("song2");
+
+    await p1; // Should resolve quietly without throwing or emitting ERROR
+    expect(states).not.toContain("ERROR");
   });
 });

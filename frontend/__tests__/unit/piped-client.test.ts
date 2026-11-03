@@ -109,4 +109,11 @@ describe("Piped Stream Client", () => {
     expect(streamCalls).toBe(2);
     expect(stream.url).toBe("https://instance2.example.com/audio.m4a");
   });
+
+  it("immediately stops and rejects with AbortError when AbortSignal is triggered", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(fetchPipedStream("vidAbort", null, controller.signal)).rejects.toThrow();
+  });
 });

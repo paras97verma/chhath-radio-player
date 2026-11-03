@@ -410,8 +410,8 @@ export const useRadioStore = create<RadioState>((set, get) => ({
 
     // Pre-buffer next track when remaining duration is under 25s or progress >= 75%
     if (duration > 0 && (currentTime >= duration - 25 || currentTime / duration >= 0.75)) {
-      const { queue, currentIndex, adapter, isShuffleEnabled } = get();
-      if (adapter && queue.length > 1) {
+      const { queue, currentIndex, adapter, isShuffleEnabled, playState } = get();
+      if (adapter && queue.length > 1 && playState === "PLAYING") {
         const nextIdx = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
         const nextSong = queue[nextIdx];
         if (nextSong) {

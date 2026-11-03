@@ -636,8 +636,10 @@ export default function RadioPlayer({
     updateMediaSessionMetadata(song, true);
     try {
       await state.adapter.loadVideo(song.youtube_video_id);
-    } catch {
-      useRadioStore.setState({ playState: "ERROR", error: "Could not play track" });
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        useRadioStore.setState({ playState: "ERROR", error: "Could not play track" });
+      }
     }
     if (showPlaylistRef.current) onPlaylistToggle?.();
   }, [onPlaylistToggle]);

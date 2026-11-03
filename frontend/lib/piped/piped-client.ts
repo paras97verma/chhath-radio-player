@@ -33,11 +33,16 @@ export function clearStreamCache(videoId?: string): void {
  */
 export async function fetchPipedStream(
   videoId: string,
-  audioElement?: HTMLAudioElement | null
+  audioElement?: HTMLAudioElement | null,
+  signal?: AbortSignal
 ): Promise<AudioStreamInfo> {
   const cleanId = videoId.trim();
   if (!cleanId) {
     throw new Error("Invalid videoId provided");
+  }
+
+  if (signal?.aborted) {
+    throw new DOMException("The user aborted a request.", "AbortError");
   }
 
   // Check in-memory cache
@@ -49,8 +54,12 @@ export async function fetchPipedStream(
   // 1. Primary path: query same-origin /api/stream if running in browser
   if (typeof window !== "undefined") {
     try {
+      if (signal?.aborted) {
+        throw new DOMException("The user aborted a request.", "AbortError");
+      }
       const res = await fetch(`/api/stream?v=${encodeURIComponent(cleanId)}`, {
         headers: { Accept: "application/json" },
+        signal,
       });
 
       if (res.ok) {
@@ -87,9 +96,16 @@ export async function fetchPipedStream(
           return stream;
         }
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === "AbortError" || signal?.aborted) {
+        throw err;
+      }
       console.warn("[StreamClient] Same-origin /api/stream fallback to direct instances:", err);
     }
+  }
+
+  if (signal?.aborted) {
+    throw new DOMException("The user aborted a request.", "AbortError");
   }
 
   // 2. Fallback path: query instances directly (supports test env or offline server route)
@@ -98,6 +114,9 @@ export async function fetchPipedStream(
   const attempts = Math.min(4, instances.length);
 
   for (let i = 0; i < attempts; i++) {
+    if (signal?.aborted) {
+      throw new DOMException("The user aborted a request.", "AbortError");
+    }
     const instance = instances[i];
     const isPiped = instance.apiUrl.includes("piped");
     const streamEndpoint = isPiped
@@ -106,6 +125,12 @@ export async function fetchPipedStream(
 
     try {
       const controller = new AbortController();
+      const onAbort = () => {
+        try { controller.abort(); } catch { /* ignore */ }
+      };
+      if (signal) {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
       const timeoutId = setTimeout(() => {
         try { controller.abort(); } catch { /* ignore */ }
       }, 5000);
@@ -115,6 +140,13 @@ export async function fetchPipedStream(
         headers: { Accept: "application/json" },
       });
       clearTimeout(timeoutId);
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+
+      if (signal?.aborted) {
+        throw new DOMException("The user aborted a request.", "AbortError");
+      }
 
       if (!response.ok) {
         markInstanceFailed(instance.apiUrl);
@@ -181,6 +213,9 @@ export async function fetchPipedStream(
 
       return bestStream;
     } catch (err: any) {
+      if (signal?.aborted || err?.name === "AbortError") {
+        throw err;
+      }
       markInstanceFailed(instance.apiUrl);
       lastError = err instanceof Error ? err : new Error(String(err));
     }
