@@ -3,23 +3,25 @@
 /**
  * GlobalRadioProvider
  *
- * Persistent application-wide owner of the YouTube IFrame player.
+ * Persistent application-wide owner of the native HTML5 audio player.
  * Mounted in app/layout.tsx to persist audio playback seamlessly across
  * all route transitions (/ -> /admin -> /share -> /).
  *
  * Guarantees:
- * 1. Single YouTube player instance across entire app lifetime.
- * 2. Unmounting page-level UI (e.g. RadioPlayer) NEVER destroys or interrupts the player.
- * 3. Safe against React Strict Mode double-invocation & initialization races.
- * 4. Centralized store synchronization for queue, playback state, and volume.
+ * 1. Single audio adapter instance across entire app lifetime.
+ * 2. Unmounting page-level UI (e.g. RadioPlayer) NEVER destroys or interrupts playback.
+ * 3. Dual-pipeline native <audio> elements for zero-gap background transitions.
+ * 4. Safe against React Strict Mode double-invocation & initialization races.
+ * 5. Centralized store synchronization for queue, playback state, and volume.
  */
 
 import React, { useEffect, useRef } from "react";
 import { fetchRadioQueue } from "@/lib/api";
-import { YouTubeIFramePlayerAdapter } from "@/lib/youtube-adapter";
+import { Html5AudioAdapter } from "@/lib/audio/html5-audio-adapter";
+import type { AudioPlayerAdapter } from "@/lib/audio/types";
 import { useRadioStore } from "@/lib/radio-store";
 
-let activeAdapter: YouTubeIFramePlayerAdapter | null = null;
+let activeAdapter: AudioPlayerAdapter | null = null;
 let initPromise: Promise<void> | null = null;
 let isProviderMounted = false;
 let destroyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -30,6 +32,8 @@ export default function GlobalRadioProvider({
   children: React.ReactNode;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const primaryAudioRef = useRef<HTMLAudioElement>(null);
+  const secondaryAudioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
     isProviderMounted = true;
@@ -57,13 +61,14 @@ export default function GlobalRadioProvider({
             return;
           }
 
+          const primary = primaryAudioRef.current || undefined;
+          const secondary = secondaryAudioRef.current || undefined;
           const container = containerRef.current;
-          if (!container) return;
 
-          const adapter = new YouTubeIFramePlayerAdapter();
+          const adapter = new Html5AudioAdapter(primary, secondary);
           activeAdapter = adapter;
 
-          await adapter.initialize(container, songs[0].youtube_video_id);
+          await adapter.initialize(container, songs[0]);
 
           const { volume, isMuted, userIntent } = useRadioStore.getState();
           adapter.setVolume(volume);
@@ -125,22 +130,35 @@ export default function GlobalRadioProvider({
 
   return (
     <>
-      {/* Hidden YouTube iframe with valid geometry to avoid browser invisible-frame throttling */}
+      {/* Persistent native HTML5 dual audio pipeline — rendered in DOM off-screen to preserve background playback when screen locks */}
       <div
         ref={containerRef}
-        id="yt-player-container"
+        id="chhath-audio-container"
         style={{
           position: "fixed",
-          bottom: -150,
-          right: -150,
-          width: 200,
-          height: 200,
-          opacity: 0.005,
+          bottom: 0,
+          left: 0,
+          width: "1px",
+          height: "1px",
+          opacity: 0.001,
           pointerEvents: "none",
-          zIndex: -50,
+          zIndex: -1,
         }}
         aria-hidden="true"
-      />
+      >
+        <audio
+          ref={primaryAudioRef}
+          id="chhath-audio-primary"
+          preload="auto"
+          playsInline
+        />
+        <audio
+          ref={secondaryAudioRef}
+          id="chhath-audio-secondary"
+          preload="auto"
+          playsInline
+        />
+      </div>
       {children}
     </>
   );

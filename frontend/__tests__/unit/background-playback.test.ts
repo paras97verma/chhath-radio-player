@@ -18,6 +18,7 @@ import {
   isMediaSessionSupported,
   updateMediaSessionMetadata,
   registerMediaSessionHandlers,
+  reassertMediaSessionHandlers,
   setMediaSessionPlaybackState,
 } from "../../lib/media-session";
 import type { Song } from "../../lib/api";
@@ -65,7 +66,20 @@ describe("MediaSession Module", () => {
     expect(typeof isMediaSessionSupported()).toBe("boolean");
   });
 
-  it("can register action handlers without errors", () => {
+  it("can register action handlers without errors and disables relative skips", () => {
+    const fakeMediaSession = {
+      setActionHandler: vi.fn(),
+      metadata: null,
+      playbackState: "none",
+    };
+    Object.defineProperty(navigator, "mediaSession", {
+      value: fakeMediaSession,
+      configurable: true,
+      writable: true,
+    });
+
+    const setActionHandlerSpy = vi.spyOn(navigator.mediaSession, "setActionHandler");
+
     expect(() => {
       registerMediaSessionHandlers({
         onPlay: vi.fn(),
@@ -74,11 +88,39 @@ describe("MediaSession Module", () => {
         onPrev: vi.fn(),
       });
     }).not.toThrow();
+
+    expect(setActionHandlerSpy).toHaveBeenCalledWith("previoustrack", expect.any(Function));
+    expect(setActionHandlerSpy).toHaveBeenCalledWith("nexttrack", expect.any(Function));
+    expect(setActionHandlerSpy).toHaveBeenCalledWith("seekbackward", null);
+    expect(setActionHandlerSpy).toHaveBeenCalledWith("seekforward", null);
+
+    expect(() => reassertMediaSessionHandlers()).not.toThrow();
   });
 
   it("can update metadata with a valid song and null", () => {
     expect(() => updateMediaSessionMetadata(dummySong, true)).not.toThrow();
     expect(() => updateMediaSessionMetadata(null, false)).not.toThrow();
+  });
+
+  it("uses the song's thumbnail for artwork and never substitutes the app icon", () => {
+    let capturedInit: any = null;
+    (globalThis as any).MediaMetadata = class MockMediaMetadata {
+      constructor(init?: any) {
+        capturedInit = init || null;
+      }
+    };
+
+    updateMediaSessionMetadata(dummySong, true);
+
+    expect(capturedInit).not.toBeNull();
+    const artwork = (capturedInit?.artwork as any[]) || [];
+    expect(artwork.length).toBeGreaterThan(0);
+    // Every artwork entry must point to the song's thumbnail or proxy, NOT the app icon
+    for (const img of artwork) {
+      expect(img.src).toContain(dummySong.youtube_video_id);
+      expect(img.src).not.toContain("icon-512.png");
+      expect(img.src).not.toContain("icon-192.png");
+    }
   });
 
   it("can set playback state without errors", () => {

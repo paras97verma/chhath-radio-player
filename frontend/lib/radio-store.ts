@@ -13,13 +13,14 @@
  */
 
 import { create } from "zustand";
-const uuidv4 = () => crypto.randomUUID();
+import { generateUUID as uuidv4 } from "./uuid";
 import type { Song } from "./api";
-import type { YouTubePlayerAdapter, PlayerState } from "./youtube-adapter";
+import type { AudioPlayerAdapter, PlayerState } from "./audio/types";
 import { onPlaybackStateChange } from "./wake-lock";
 import {
   updateMediaSessionMetadata,
   registerMediaSessionHandlers,
+  reassertMediaSessionHandlers,
   setMediaSessionPlaybackState,
   updateMediaSessionPositionState,
 } from "./media-session";
@@ -143,7 +144,7 @@ interface RadioState {
   playState: RadioPlayState;
   userIntent: UserPlayIntent;
   radioSessionId: string;
-  adapter: YouTubePlayerAdapter | null;
+  adapter: AudioPlayerAdapter | null;
   /** Internal: cleanup fn returned by adapter.onStateChange — stored here to avoid hacks */
   _adapterUnsubscribe: (() => void) | null;
 
@@ -157,7 +158,7 @@ interface RadioState {
   hasTunedIn: boolean;
 
   // Actions
-  loadQueue: (songs: Song[], adapter: YouTubePlayerAdapter) => Promise<void>;
+  loadQueue: (songs: Song[], adapter: AudioPlayerAdapter) => Promise<void>;
   startPlayback: () => Promise<void>;
   pausePlayback: () => Promise<void>;
   nextSong: () => Promise<void>;
@@ -261,7 +262,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
           currentIndex: newIdx,
         });
         if (!isFav && adapter && currentPlayingSong && newFavQueue[newIdx]?.id !== currentPlayingSong.id) {
-          adapter.loadVideo(newFavQueue[newIdx].youtube_video_id);
+          adapter.loadSong(newFavQueue[newIdx]);
         }
       }
     } else {
@@ -288,7 +289,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
 
       if (adapter && favQueue[targetIdx]) {
         set({ playState: "BUFFERING" });
-        await adapter.loadVideo(favQueue[targetIdx].youtube_video_id);
+        await adapter.loadSong(favQueue[targetIdx]);
       }
     } else {
       const matchIdx = curSong ? allSongs.findIndex((s) => s.id === curSong.id) : 0;
@@ -313,24 +314,41 @@ export const useRadioStore = create<RadioState>((set, get) => ({
         ? songs.filter((s) => favorites.includes(s.id))
         : songs;
 
-    const unsubscribe = adapter.onStateChange((state) => {
+    const unsubscribeState = adapter.onStateChange((state) => {
       get().handleAdapterStateChange(state, newSessionId);
     });
 
-    // Register OS Media Session controls (Lock screen, Control Center, Bluetooth headsets)
+    const unsubscribeProgress = adapter.onProgress?.((cur, dur) => {
+      get().setProgress(cur, dur);
+    });
+
+    const unsubscribe = () => {
+      unsubscribeState();
+      unsubscribeProgress?.();
+    };
+
+    // Register OS Media Session controls (Lock screen, Control Center, Bluetooth headsets).
+    // Omitting onSeekBack/onSeekFwd preserves [⏮ Previous Track] and [⏭ Next Track] buttons on mobile OS lock screens.
+    // Seeking is performed exclusively via the lock screen scrubber progress bar (onSeekTo).
     registerMediaSessionHandlers({
-      onPlay: () => get().startPlayback(),
+      onPlay: async () => {
+        const { adapter, startPlayback } = get();
+        // Immediate direct resume within the lockscreen user-action window
+        if (adapter && (adapter.getState() === "PAUSED" || adapter.getState() === "CUED")) {
+          try {
+            await adapter.play();
+            return;
+          } catch {
+            /* fallback to full startPlayback if direct resume fails */
+          }
+        }
+        await startPlayback();
+      },
       onPause: () => get().pausePlayback(),
       onNext: () => get().nextSong(),
       onPrev: () => get().prevSong(),
-      onSeekTo: (time) => get().adapter?.seekTo(time),
-      onSeekBack: (offset) => {
-        const ad = get().adapter;
-        if (ad) ad.seekTo(Math.max(0, ad.getCurrentTime() - offset));
-      },
-      onSeekFwd: (offset) => {
-        const ad = get().adapter;
-        if (ad) ad.seekTo(ad.getCurrentTime() + offset);
+      onSeekTo: (time) => {
+        get().seekTo(time);
       },
     });
 
@@ -402,14 +420,29 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   setProgress: (currentTime: number, duration: number) => {
     set({ currentTime, duration });
     updateMediaSessionPositionState(currentTime, duration);
+
+    // Pre-buffer next track when remaining duration is under 25s or progress >= 75%
+    if (duration > 0 && (currentTime >= duration - 25 || currentTime / duration >= 0.75)) {
+      const { queue, currentIndex, adapter, isShuffleEnabled, playState } = get();
+      if (adapter && queue.length > 1 && playState === "PLAYING") {
+        const nextIdx = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
+        const nextSong = queue[nextIdx];
+        if (nextSong) {
+          adapter.preloadNextSong(nextSong);
+        }
+      }
+    }
   },
 
   seekTo: (seconds: number) => {
     const { adapter, duration } = get();
     if (adapter) {
       adapter.seekTo(seconds);
+      const dur = duration || adapter.getDuration();
       set({ currentTime: seconds });
-      updateMediaSessionPositionState(seconds, duration || adapter.getDuration());
+      if (dur > 0) {
+        updateMediaSessionPositionState(seconds, dur);
+      }
     }
   },
 
@@ -427,8 +460,15 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const song = queue[currentIndex];
     updateMediaSessionMetadata(song, true);
 
+    const dur = adapter.getDuration();
+    const cur = adapter.getCurrentTime();
+    if (dur > 0) {
+      updateMediaSessionPositionState(cur, dur);
+    }
+
     const currentState = adapter.getState();
-    if (currentState === "PAUSED" || currentState === "CUED") {
+    const isLoaded = adapter.isSongLoaded ? adapter.isSongLoaded(song.youtube_video_id) : true;
+    if ((currentState === "PAUSED" || currentState === "CUED") && isLoaded) {
       try {
         await adapter.play();
       } catch (err) {
@@ -449,13 +489,18 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   },
 
   pausePlayback: async () => {
-    const { adapter } = get();
+    const { adapter, duration, currentTime } = get();
     set({ userIntent: "paused" });
     onPlaybackStateChange(false);
     setMediaSessionPlaybackState("paused");
     if (!adapter) return;
     try {
       await adapter.pause();
+      const dur = duration || adapter.getDuration();
+      const cur = adapter.getCurrentTime() || currentTime;
+      if (dur > 0) {
+        updateMediaSessionPositionState(cur, dur, 0);
+      }
     } catch {
       /* ignore */
     }
@@ -478,10 +523,17 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   },
 
   prevSong: async () => {
-    const { queue, currentIndex, adapter } = get();
-    if (!adapter || queue.length === 0 || currentIndex <= 0) return;
+    const { queue, currentIndex, adapter, currentTime } = get();
+    if (!adapter || queue.length === 0) return;
 
-    const prevIndex = currentIndex - 1;
+    // If current song has played more than 3 seconds, restart the song from beginning
+    if (currentTime > 3) {
+      adapter.seekTo(0);
+      set({ currentTime: 0 });
+      return;
+    }
+
+    const prevIndex = currentIndex > 0 ? currentIndex - 1 : queue.length - 1;
     set({ currentIndex: prevIndex, playState: "BUFFERING", userIntent: "playing", error: null });
     updateMediaSessionMetadata(queue[prevIndex], true);
     try {
@@ -500,6 +552,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       case "PLAYING":
         set({ playState: "PLAYING", userIntent: "playing", error: null });
         updateMediaSessionMetadata(queue[currentIndex], true);
+        reassertMediaSessionHandlers();
         onPlaybackStateChange(true);
         break;
 
@@ -535,7 +588,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
 
       case "ERROR": {
         console.warn(
-          `[RadioController] Video error for song at index ${currentIndex}. Skipping.`
+          `[RadioController] Audio error for song at index ${currentIndex}. Skipping.`
         );
         if (queue.length > 1) {
           const { isShuffleEnabled } = get();

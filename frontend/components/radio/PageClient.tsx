@@ -395,9 +395,15 @@ export default function PageClient({ initialSongs }: PageClientProps) {
       <TuneInSplash
         onTuneIn={() => {
           setHasTunedIn(true);
+          const state = useRadioStore.getState();
+          state.adapter?.primeAudio?.();
+          state.startPlayback();
         }}
         onEarlyStart={() => {
           setHasTunedIn(true);
+          const state = useRadioStore.getState();
+          state.adapter?.primeAudio?.();
+          state.startPlayback();
         }}
       />
     )}

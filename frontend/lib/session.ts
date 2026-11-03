@@ -11,6 +11,8 @@
  * Format: UUID v4
  */
 
+import { generateUUID } from "./uuid";
+
 const SESSION_KEY = "chhath_radio_session_id";
 
 /**
@@ -23,7 +25,7 @@ const SESSION_KEY = "chhath_radio_session_id";
 export function getOrCreateSessionId(): string {
   let id = localStorage.getItem(SESSION_KEY);
   if (!id) {
-    id = crypto.randomUUID();
+    id = generateUUID();
     localStorage.setItem(SESSION_KEY, id);
   }
   return id;

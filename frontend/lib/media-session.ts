@@ -16,8 +16,6 @@ export interface MediaSessionCallbacks {
   onNext: () => Promise<void> | void;
   onPrev: () => Promise<void> | void;
   onSeekTo?: (time: number) => void;
-  onSeekBack?: (offset: number) => void;
-  onSeekFwd?: (offset: number) => void;
 }
 
 let registeredCallbacks: MediaSessionCallbacks | null = null;
@@ -27,11 +25,14 @@ export function isMediaSessionSupported(): boolean {
 }
 
 /**
- * Register OS media action handlers (Lock screen, Control Center, Bluetooth controls).
+ * Re-assert OS media action handlers (Lock screen, Control Center, Bluetooth controls).
+ * On iOS Safari / WebKit, action handlers must be active when playback starts and updates,
+ * otherwise WebKit defaults to 10s/15s relative skip buttons.
+ * Explicitly setting 'seekbackward' and 'seekforward' to null forces iOS to display
+ * the Previous Track (⏮) and Next Track (⏭) buttons.
  */
-export function registerMediaSessionHandlers(callbacks: MediaSessionCallbacks): void {
-  if (!isMediaSessionSupported()) return;
-  registeredCallbacks = callbacks;
+export function reassertMediaSessionHandlers(): void {
+  if (!isMediaSessionSupported() || !registeredCallbacks) return;
 
   const ms = navigator.mediaSession;
 
@@ -79,19 +80,19 @@ export function registerMediaSessionHandlers(callbacks: MediaSessionCallbacks): 
     }
   });
 
-  safeSetHandler("seekbackward", (details) => {
-    const offset = details.seekOffset || 10;
-    if (registeredCallbacks?.onSeekBack) {
-      registeredCallbacks.onSeekBack(offset);
-    }
-  });
+  // Explicitly disable seek backward / forward buttons on lock screen so iOS WebKit
+  // forces track navigation buttons (⏮ / ⏭) instead of ±10s/15s relative skip buttons.
+  safeSetHandler("seekbackward", null);
+  safeSetHandler("seekforward", null);
+}
 
-  safeSetHandler("seekforward", (details) => {
-    const offset = details.seekOffset || 10;
-    if (registeredCallbacks?.onSeekFwd) {
-      registeredCallbacks.onSeekFwd(offset);
-    }
-  });
+/**
+ * Register OS media action handlers (Lock screen, Control Center, Bluetooth controls).
+ */
+export function registerMediaSessionHandlers(callbacks: MediaSessionCallbacks): void {
+  if (!isMediaSessionSupported()) return;
+  registeredCallbacks = callbacks;
+  reassertMediaSessionHandlers();
 }
 
 /**
@@ -108,32 +109,63 @@ export function updateMediaSessionMetadata(song: Song | null, isPlaying = true):
     return;
   }
 
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
   const videoId = song.youtube_video_id;
-  const artwork = [
+
+  // The rotating vinyl in the UI displays: https://i.ytimg.com/vi/${videoId}/mqdefault.jpg
+  // For the lock screen and notification centers, provide high-quality album art
+  // across all requested standard dimensions (512x512, 384x384, 256x256, 192x192, 128x128, 96x96).
+  // Strictly omit the app icons (/icons/icon-512.png) so iOS never picks the app icon
+  // over the song's real album art.
+  const hqUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+  const mqUrl = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
+  const proxyHqUrl = origin ? `${origin}/yt-thumb?v=${videoId}` : hqUrl;
+
+  const artwork: MediaImage[] = [
     {
-      src: `https://i.ytimg.com/vi/${videoId}/default.jpg`,
-      sizes: "120x90",
+      src: hqUrl,
+      sizes: "512x512",
       type: "image/jpeg",
     },
     {
-      src: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
-      sizes: "320x180",
+      src: hqUrl,
+      sizes: "384x384",
       type: "image/jpeg",
     },
     {
-      src: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      src: hqUrl,
+      sizes: "256x256",
+      type: "image/jpeg",
+    },
+    {
+      src: mqUrl,
+      sizes: "192x192",
+      type: "image/jpeg",
+    },
+    {
+      src: mqUrl,
+      sizes: "128x128",
+      type: "image/jpeg",
+    },
+    {
+      src: mqUrl,
+      sizes: "96x96",
+      type: "image/jpeg",
+    },
+    {
+      src: hqUrl,
       sizes: "480x360",
       type: "image/jpeg",
     },
     {
-      src: "/icons/icon-192.png",
-      sizes: "192x192",
-      type: "image/png",
+      src: mqUrl,
+      sizes: "320x180",
+      type: "image/jpeg",
     },
     {
-      src: "/icons/icon-512.png",
+      src: proxyHqUrl,
       sizes: "512x512",
-      type: "image/png",
+      type: "image/jpeg",
     },
   ];
 
@@ -149,24 +181,38 @@ export function updateMediaSessionMetadata(song: Song | null, isPlaying = true):
   }
 
   ms.playbackState = isPlaying ? "playing" : "paused";
+
+  // Re-assert action handlers whenever metadata updates so WebKit/iOS Lock Screen
+  // binds previoustrack and nexttrack to the newly active media item
+  reassertMediaSessionHandlers();
 }
 
 /**
  * Update playback position state for scrubber display in lock screen / notifications.
  */
-export function updateMediaSessionPositionState(currentTime: number, duration: number): void {
+export function updateMediaSessionPositionState(currentTime: number, duration: number, playbackRate = 1): void {
   if (!isMediaSessionSupported()) return;
   const ms = navigator.mediaSession;
 
-  if ("setPositionState" in ms && duration > 0 && currentTime >= 0) {
+  if (
+    "setPositionState" in ms &&
+    typeof ms.setPositionState === "function" &&
+    Number.isFinite(duration) &&
+    duration > 0 &&
+    Number.isFinite(currentTime) &&
+    currentTime >= 0
+  ) {
     try {
+      const safeDuration = Math.max(0.1, duration);
+      // WebKit throws if position > duration even by a fraction of a millisecond
+      const safePosition = Math.min(Math.max(0, currentTime), safeDuration);
       ms.setPositionState({
-        duration: Math.max(0, duration),
-        playbackRate: 1,
-        position: Math.min(Math.max(0, currentTime), duration),
+        duration: safeDuration,
+        playbackRate: Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1,
+        position: safePosition,
       });
-    } catch {
-      // Ignore invalid range or state errors
+    } catch (err) {
+      // Ignore invalid range or state errors gracefully
     }
   }
 }
