@@ -13,12 +13,11 @@ const isProd = process.env.NODE_ENV === "production";
 
 // script-src: remove 'unsafe-eval' in production (only needed by Next.js dev HMR)
 const scriptSrc = isProd
-  ? "'self' 'unsafe-inline' https://www.youtube.com https://s.ytimg.com"
-  : "'self' 'unsafe-eval' 'unsafe-inline' https://www.youtube.com https://s.ytimg.com";
+  ? "'self' 'unsafe-inline'"
+  : "'self' 'unsafe-eval' 'unsafe-inline'";
 
-// connect-src: must include the backend URL so SSE (EventSource) and heartbeat
-// POST requests are not blocked by CSP in production.
-const connectSrcParts = ["'self'", "blob:"];
+// connect-src: must include https: for Piped API instances and the backend URL
+const connectSrcParts = ["'self'", "blob:", "https:", "wss:", "ws:"];
 
 if (PUBLIC_API_URL) {
   // Production: include the backend HTTP URL and its WebSocket equivalent.
@@ -40,6 +39,17 @@ const connectSrc = connectSrcParts.join(" ");
 const nextConfig: NextConfig = {
   // Produce a self-contained build for Docker (copies only what's needed)
   output: "standalone",
+
+  // Allow cross-origin dev access from tunnels and LAN devices
+  allowedDevOrigins: [
+    "*.trycloudflare.com",
+    "**.trycloudflare.com",
+    "*.ngrok-free.app",
+    "*.ngrok.io",
+    "*.loca.lt",
+    "192.168.1.249",
+    "192.168.1.249:3000",
+  ],
 
   // Proxy /api/* to the FastAPI backend
   async rewrites() {
@@ -90,11 +100,11 @@ const nextConfig: NextConfig = {
             value: [
               "default-src 'self'",
               `script-src ${scriptSrc}`,
-              "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
+              "frame-src 'self'",
               // blob: and data: required for canvas-generated images (share card, QR)
               "img-src 'self' data: blob: https://i.ytimg.com https://img.youtube.com https://api.qrserver.com",
               `connect-src ${connectSrc}`,
-              "media-src 'self' blob:",
+              "media-src 'self' blob: https:",
               "style-src 'self' 'unsafe-inline'",
               // worker-src: 'self' for service worker; blob: for audio worklets
               "worker-src 'self' blob:",

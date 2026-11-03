@@ -90,14 +90,10 @@ export default function RootLayout({
     <html lang="hi">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://www.youtube.com" crossOrigin="anonymous" />
-        <link rel="preconnect" href="https://www.youtube-nocookie.com" crossOrigin="anonymous" />
         <link rel="preconnect" href="https://i.ytimg.com" crossOrigin="anonymous" />
-        <link rel="dns-prefetch" href="https://www.youtube.com" />
         <link rel="dns-prefetch" href="https://i.ytimg.com" />
-        {/* Pre-load the YouTube IFrame API at page load so it's ready before the user clicks "Tune In" */}
-        {/* eslint-disable-next-line @next/next/no-sync-scripts */}
-        <script src="https://www.youtube.com/iframe_api" async />
+        <link rel="preconnect" href="https://raw.githubusercontent.com" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://pipedapi.kavin.rocks" crossOrigin="anonymous" />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}

@@ -29,6 +29,10 @@ export default function TuneInSplash({ onTuneIn, onEarlyStart }: TuneInSplashPro
     requestWakeLock();
     onEarlyStart?.(); // fire immediately — runs during the 300ms fade window
     setFading(true);
+    // Safety fallback: ensure dismissal even if onTransitionEnd event is dropped on mobile
+    setTimeout(() => {
+      onTuneIn();
+    }, 350);
   };
 
   const handleTransitionEnd = () => {

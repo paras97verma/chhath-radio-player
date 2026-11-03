@@ -18,8 +18,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useRadioStore } from "@/lib/radio-store";
-import { updateMediaSessionPositionState } from "@/lib/media-session";
-import BackgroundPlayModal from "@/components/radio/BackgroundPlayModal";
+import { updateMediaSessionPositionState, updateMediaSessionMetadata } from "@/lib/media-session";
 import type { Song } from "@/lib/api";
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -78,10 +77,10 @@ const IconShuffle = () => (
 // ─── Spectrogram Bars ─────────────────────────────────────────────────────────
 
 const SPEC_BARS = [
-  { dur: "0.7s", delay: "0s",    h: 14 },
+  { dur: "0.7s", delay: "0s", h: 14 },
   { dur: "0.9s", delay: "0.15s", h: 20 },
-  { dur: "0.6s", delay: "0.3s",  h: 16 },
-  { dur: "1.1s", delay: "0.1s",  h: 22 },
+  { dur: "0.6s", delay: "0.3s", h: 16 },
+  { dur: "1.1s", delay: "0.1s", h: 22 },
   { dur: "0.8s", delay: "0.25s", h: 12 },
 ];
 
@@ -404,21 +403,19 @@ function PlaylistDrawer({
           <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-orange-500/12 bg-black/50">
             <button
               onClick={() => setFilter("all")}
-              className={`flex-1 py-1 px-2.5 rounded-lg text-[11px] font-semibold transition-all ${
-                activeFilter === "all"
-                  ? "bg-orange-500/25 text-orange-400 border border-orange-500/40"
-                  : "text-amber-200/50 hover:text-amber-200 hover:bg-white/5"
-              }`}
+              className={`flex-1 py-1 px-2.5 rounded-lg text-[11px] font-semibold transition-all ${activeFilter === "all"
+                ? "bg-orange-500/25 text-orange-400 border border-orange-500/40"
+                : "text-amber-200/50 hover:text-amber-200 hover:bg-white/5"
+                }`}
             >
               All Songs ({allSongs.length})
             </button>
             <button
               onClick={() => setFilter("favorites")}
-              className={`flex-1 py-1 px-2.5 rounded-lg text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5 ${
-                activeFilter === "favorites"
-                  ? "bg-orange-500/25 text-orange-400 border border-orange-500/40"
-                  : "text-amber-200/50 hover:text-amber-200 hover:bg-white/5"
-              }`}
+              className={`flex-1 py-1 px-2.5 rounded-lg text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5 ${activeFilter === "favorites"
+                ? "bg-orange-500/25 text-orange-400 border border-orange-500/40"
+                : "text-amber-200/50 hover:text-amber-200 hover:bg-white/5"
+                }`}
             >
               <span>❤️ Favorites</span>
               <span>({favoritedCount})</span>
@@ -440,9 +437,8 @@ function PlaylistDrawer({
                 <div
                   key={song.id}
                   ref={isPlaying ? activeItemRef : null}
-                  className={`flex items-center gap-1 transition-colors ${
-                    isPlaying ? "bg-orange-500/20" : "hover:bg-white/5"
-                  }`}
+                  className={`flex items-center gap-1 transition-colors ${isPlaying ? "bg-orange-500/20" : "hover:bg-white/5"
+                    }`}
                 >
                   <button
                     onClick={() => onPlaySong(i, song)}
@@ -518,7 +514,6 @@ export default function RadioPlayer({
   const showPlaylist = showPlaylistProp ?? false;
   const showPlaylistRef = useRef(false);
   const [playlistFocusIdx, setPlaylistFocusIdx] = useState<number>(-1);
-  const [showBgModal, setShowBgModal] = useState(false);
 
   useEffect(() => { showPlaylistRef.current = showPlaylist; }, [showPlaylist]);
 
@@ -634,6 +629,7 @@ export default function RadioPlayer({
     const state = useRadioStore.getState();
     if (!state.adapter) return;
     useRadioStore.setState({ currentIndex: index, playState: "BUFFERING", userIntent: "playing", error: null });
+    updateMediaSessionMetadata(song, true);
     try {
       await state.adapter.loadVideo(song.youtube_video_id);
     } catch {
@@ -812,23 +808,12 @@ export default function RadioPlayer({
                 disabled={!isReady}
                 aria-label="Toggle playlist"
                 aria-expanded={showPlaylist}
-                className={`w-8 h-8 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed ml-0.5 ${
-                  showPlaylist
-                    ? "text-orange-400 bg-orange-500/20"
-                    : "text-white/35 hover:text-white/70 hover:bg-white/8"
-                }`}
+                className={`w-8 h-8 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed ml-0.5 ${showPlaylist
+                  ? "text-orange-400 bg-orange-500/20"
+                  : "text-white/35 hover:text-white/70 hover:bg-white/8"
+                  }`}
               >
                 <IconList />
-              </button>
-
-              {/* Background Play settings button */}
-              <button
-                onClick={() => setShowBgModal(true)}
-                aria-label="Background play settings"
-                title="Background play settings & screen off guide"
-                className="w-8 h-8 flex items-center justify-center rounded-full transition-all text-white/40 hover:text-orange-400 hover:bg-white/8 ml-0.5"
-              >
-                <span className="text-xs">📱</span>
               </button>
             </div>
           </div>
@@ -836,11 +821,6 @@ export default function RadioPlayer({
           {/* Progress bar row — always rendered for constant height stability */}
           <ProgressBar isPlaying={isPlaying} isBuffering={isBuffering} />
         </div>
-
-        {/* Background Play Help & Permissions Modal */}
-        {showBgModal && (
-          <BackgroundPlayModal onClose={() => setShowBgModal(false)} />
-        )}
       </div>
     </>
   );

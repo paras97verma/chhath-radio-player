@@ -300,7 +300,8 @@ class TestGetRadioQueue:
              "sort_order": 0, "enabled": True},
         ]
 
-        with patch("app.services.song_service._cache_get", return_value=cached_data):
+        with patch("app.services.song_service.QUEUE_CACHE_TTL", 3600), \
+             patch("app.services.song_service._cache_get", return_value=cached_data):
             result = SongService.get_radio_queue(db)
 
         assert result == cached_data
@@ -312,17 +313,18 @@ class TestGetRadioQueue:
         songs = [make_song_model("Song A"), make_song_model("Song B")]
         db.scalars.return_value.all.return_value = songs
 
-        with patch("app.services.song_service._cache_get", return_value=None), \
+        with patch("app.services.song_service.QUEUE_CACHE_TTL", 3600), \
+             patch("app.services.song_service._cache_get", return_value=None), \
              patch("app.services.song_service._cache_set") as mock_cache_set:
             result = SongService.get_radio_queue(db)
 
         assert result == songs
         mock_cache_set.assert_called_once()
         # Verify the cache key and TTL
-        from app.services.song_service import QUEUE_CACHE_KEY, QUEUE_CACHE_TTL
+        from app.services.song_service import QUEUE_CACHE_KEY
         call_args = mock_cache_set.call_args[0]
         assert call_args[0] == QUEUE_CACHE_KEY
-        assert call_args[2] == QUEUE_CACHE_TTL
+        assert call_args[2] == 3600
 
     def test_cache_unavailable_falls_through_to_db(self):
         """When Redis is None, _cache_get returns None and DB is used transparently."""

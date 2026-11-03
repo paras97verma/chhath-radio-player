@@ -79,19 +79,26 @@ export function registerMediaSessionHandlers(callbacks: MediaSessionCallbacks): 
     }
   });
 
-  safeSetHandler("seekbackward", (details) => {
-    const offset = details.seekOffset || 10;
-    if (registeredCallbacks?.onSeekBack) {
-      registeredCallbacks.onSeekBack(offset);
-    }
-  });
+  // Only register relative skip buttons if explicitly requested.
+  // When omitted (null), mobile OS lock screens (iOS/Android) display Previous (⏮) and Next (⏭) track buttons
+  // instead of replacing them with 10s skip buttons.
+  if (registeredCallbacks?.onSeekBack) {
+    safeSetHandler("seekbackward", (details) => {
+      const offset = details.seekOffset || 10;
+      registeredCallbacks?.onSeekBack?.(offset);
+    });
+  } else {
+    safeSetHandler("seekbackward", null);
+  }
 
-  safeSetHandler("seekforward", (details) => {
-    const offset = details.seekOffset || 10;
-    if (registeredCallbacks?.onSeekFwd) {
-      registeredCallbacks.onSeekFwd(offset);
-    }
-  });
+  if (registeredCallbacks?.onSeekFwd) {
+    safeSetHandler("seekforward", (details) => {
+      const offset = details.seekOffset || 10;
+      registeredCallbacks?.onSeekFwd?.(offset);
+    });
+  } else {
+    safeSetHandler("seekforward", null);
+  }
 }
 
 /**
@@ -154,19 +161,29 @@ export function updateMediaSessionMetadata(song: Song | null, isPlaying = true):
 /**
  * Update playback position state for scrubber display in lock screen / notifications.
  */
-export function updateMediaSessionPositionState(currentTime: number, duration: number): void {
+export function updateMediaSessionPositionState(currentTime: number, duration: number, playbackRate = 1): void {
   if (!isMediaSessionSupported()) return;
   const ms = navigator.mediaSession;
 
-  if ("setPositionState" in ms && duration > 0 && currentTime >= 0) {
+  if (
+    "setPositionState" in ms &&
+    typeof ms.setPositionState === "function" &&
+    Number.isFinite(duration) &&
+    duration > 0 &&
+    Number.isFinite(currentTime) &&
+    currentTime >= 0
+  ) {
     try {
+      const safeDuration = Math.max(0.1, duration);
+      // WebKit throws if position > duration even by a fraction of a millisecond
+      const safePosition = Math.min(Math.max(0, currentTime), safeDuration);
       ms.setPositionState({
-        duration: Math.max(0, duration),
-        playbackRate: 1,
-        position: Math.min(Math.max(0, currentTime), duration),
+        duration: safeDuration,
+        playbackRate: Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1,
+        position: safePosition,
       });
-    } catch {
-      // Ignore invalid range or state errors
+    } catch (err) {
+      // Ignore invalid range or state errors gracefully
     }
   }
 }

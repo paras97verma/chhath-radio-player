@@ -18,8 +18,10 @@ from app.api.ws_chat import router as ws_chat_router
 from app.api.admin.auth import router as admin_auth_router
 from app.api.admin.songs import router as admin_songs_router
 from app.api.chhath_dates import router as chhath_dates_router
+from app.api.stream import router as stream_router
 from app.core.config import settings
 from app.core.redis import init_redis, close_redis
+from app.services.queue_prewarmer import start_prewarmer, stop_prewarmer
 
 
 @asynccontextmanager
@@ -31,12 +33,16 @@ async def lifespan(app: FastAPI):
       - Eagerly initialise the shared Redis connection pool with retries.
         This prevents the lru_cache-poison bug where a transient failure at
         cold-start permanently disables Redis for the process lifetime.
+      - Spawn the background Queue Stream Pre-warmer to keep songs warm in Redis.
 
     Shutdown:
+      - Stop background pre-warmer task cleanly.
       - Cleanly disconnect the Redis pool.
     """
     await init_redis(settings.REDIS_URL, retries=5, delay=1.5)
+    start_prewarmer()
     yield
+    stop_prewarmer()
     close_redis()
 
 
@@ -80,6 +86,7 @@ app.include_router(ws_chat_router)
 app.include_router(admin_auth_router)
 app.include_router(admin_songs_router)
 app.include_router(chhath_dates_router)
+app.include_router(stream_router)
 
 
 @app.get("/api/health", tags=["health"])
