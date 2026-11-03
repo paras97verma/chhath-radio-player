@@ -513,7 +513,6 @@ export default function RadioPlayer({
 
   const showPlaylist = showPlaylistProp ?? false;
   const showPlaylistRef = useRef(false);
-  const [playlistFocusIdx, setPlaylistFocusIdx] = useState<number>(-1);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -567,18 +566,10 @@ export default function RadioPlayer({
         else state.startPlayback();
       } else if (e.code === "ArrowUp") {
         e.preventDefault();
-        if (showPlaylistRef.current) {
-          setPlaylistFocusIdx((prev) => Math.max(0, prev <= 0 ? state.currentIndex - 1 : prev - 1));
-        } else {
-          state.setVolume(Math.min(100, state.volume + 5));
-        }
+        state.setVolume(Math.min(100, state.volume + 5));
       } else if (e.code === "ArrowDown") {
         e.preventDefault();
-        if (showPlaylistRef.current) {
-          setPlaylistFocusIdx((prev) => Math.min(state.queue.length - 1, prev < 0 ? state.currentIndex + 1 : prev + 1));
-        } else {
-          state.setVolume(Math.max(0, state.volume - 5));
-        }
+        state.setVolume(Math.max(0, state.volume - 5));
       } else if (e.code === "ArrowRight") {
         e.preventDefault();
         if (e.shiftKey) { state.nextSong(); triggerFlash("next"); }

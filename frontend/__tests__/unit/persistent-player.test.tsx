@@ -213,4 +213,27 @@ describe("Persistent Player Lifecycle & Navigation Persistence", () => {
     expect(onPlaylistToggle).not.toHaveBeenCalled();
     expect(useRadioStore.getState().currentIndex).toBe(1);
   });
+
+  it("changes volume with ArrowUp and ArrowDown keys even when playlist is open", async () => {
+    useRadioStore.setState({ isReady: true, adapter, volume: 50 });
+
+    render(
+      <RadioPlayer
+        hasTunedIn={true}
+        showPlaylist={true}
+      />
+    );
+
+    // Press ArrowUp when playlist is open
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { code: "ArrowUp" }));
+    });
+    expect(useRadioStore.getState().volume).toBe(55);
+
+    // Press ArrowDown when playlist is open
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { code: "ArrowDown" }));
+    });
+    expect(useRadioStore.getState().volume).toBe(50);
+  });
 });
