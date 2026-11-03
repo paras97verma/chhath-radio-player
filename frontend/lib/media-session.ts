@@ -111,31 +111,61 @@ export function updateMediaSessionMetadata(song: Song | null, isPlaying = true):
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const videoId = song.youtube_video_id;
-  const artwork = [
+
+  // The rotating vinyl in the UI displays: https://i.ytimg.com/vi/${videoId}/mqdefault.jpg
+  // For the lock screen and notification centers, provide high-quality album art
+  // across all requested standard dimensions (512x512, 384x384, 256x256, 192x192, 128x128, 96x96).
+  // Strictly omit the app icons (/icons/icon-512.png) so iOS never picks the app icon
+  // over the song's real album art.
+  const hqUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+  const mqUrl = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
+  const proxyHqUrl = origin ? `${origin}/yt-thumb?v=${videoId}` : hqUrl;
+
+  const artwork: MediaImage[] = [
     {
-      src: `https://i.ytimg.com/vi/${videoId}/default.jpg`,
-      sizes: "120x90",
+      src: hqUrl,
+      sizes: "512x512",
       type: "image/jpeg",
     },
     {
-      src: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
-      sizes: "320x180",
+      src: hqUrl,
+      sizes: "384x384",
       type: "image/jpeg",
     },
     {
-      src: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      src: hqUrl,
+      sizes: "256x256",
+      type: "image/jpeg",
+    },
+    {
+      src: mqUrl,
+      sizes: "192x192",
+      type: "image/jpeg",
+    },
+    {
+      src: mqUrl,
+      sizes: "128x128",
+      type: "image/jpeg",
+    },
+    {
+      src: mqUrl,
+      sizes: "96x96",
+      type: "image/jpeg",
+    },
+    {
+      src: hqUrl,
       sizes: "480x360",
       type: "image/jpeg",
     },
     {
-      src: origin ? `${origin}/icons/icon-192.png` : "/icons/icon-192.png",
-      sizes: "192x192",
-      type: "image/png",
+      src: mqUrl,
+      sizes: "320x180",
+      type: "image/jpeg",
     },
     {
-      src: origin ? `${origin}/icons/icon-512.png` : "/icons/icon-512.png",
+      src: proxyHqUrl,
       sizes: "512x512",
-      type: "image/png",
+      type: "image/jpeg",
     },
   ];
 

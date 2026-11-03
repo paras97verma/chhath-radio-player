@@ -102,6 +102,27 @@ describe("MediaSession Module", () => {
     expect(() => updateMediaSessionMetadata(null, false)).not.toThrow();
   });
 
+  it("uses the song's thumbnail for artwork and never substitutes the app icon", () => {
+    let capturedInit: any = null;
+    (globalThis as any).MediaMetadata = class MockMediaMetadata {
+      constructor(init?: any) {
+        capturedInit = init || null;
+      }
+    };
+
+    updateMediaSessionMetadata(dummySong, true);
+
+    expect(capturedInit).not.toBeNull();
+    const artwork = (capturedInit?.artwork as any[]) || [];
+    expect(artwork.length).toBeGreaterThan(0);
+    // Every artwork entry must point to the song's thumbnail or proxy, NOT the app icon
+    for (const img of artwork) {
+      expect(img.src).toContain(dummySong.youtube_video_id);
+      expect(img.src).not.toContain("icon-512.png");
+      expect(img.src).not.toContain("icon-192.png");
+    }
+  });
+
   it("can set playback state without errors", () => {
     expect(() => setMediaSessionPlaybackState("playing")).not.toThrow();
     expect(() => setMediaSessionPlaybackState("paused")).not.toThrow();
