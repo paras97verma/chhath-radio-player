@@ -166,4 +166,27 @@ describe("Persistent Player Lifecycle & Navigation Persistence", () => {
     expect(playBtn).toBeDefined();
     expect(playBtn.hasAttribute("disabled")).toBe(false);
   });
+
+  it("keeps the track paused by default after tuning in until Play button is clicked", async () => {
+    // When user tunes in (splash dismissed)
+    act(() => {
+      useRadioStore.getState().setHasTunedIn(true);
+    });
+
+    render(<RadioPlayer hasTunedIn={true} />);
+
+    // By default, track is paused / idle — not auto-playing
+    expect(useRadioStore.getState().playState).toBe("IDLE");
+    expect(useRadioStore.getState().userIntent).toBe("idle");
+    const playBtn = screen.getByLabelText("Play");
+    expect(playBtn).toBeDefined();
+
+    // Only plays when the user explicitly clicks the Play button
+    await act(async () => {
+      fireEvent.click(playBtn);
+    });
+
+    expect(useRadioStore.getState().playState).toBe("PLAYING");
+    expect(screen.getByLabelText("Pause")).toBeDefined();
+  });
 });
