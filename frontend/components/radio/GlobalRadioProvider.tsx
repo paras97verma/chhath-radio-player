@@ -130,8 +130,22 @@ export default function GlobalRadioProvider({
 
   return (
     <>
-      {/* Persistent native HTML5 dual audio pipeline */}
-      <div ref={containerRef} id="chhath-audio-container" style={{ display: "none" }} aria-hidden="true">
+      {/* Persistent native HTML5 dual audio pipeline — rendered in DOM off-screen to preserve background playback when screen locks */}
+      <div
+        ref={containerRef}
+        id="chhath-audio-container"
+        style={{
+          position: "fixed",
+          bottom: 0,
+          left: 0,
+          width: "1px",
+          height: "1px",
+          opacity: 0.001,
+          pointerEvents: "none",
+          zIndex: -1,
+        }}
+        aria-hidden="true"
+      >
         <audio
           ref={primaryAudioRef}
           id="chhath-audio-primary"

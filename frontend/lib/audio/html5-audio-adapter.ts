@@ -61,6 +61,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
    * all subsequent asynchronous stream resolution fetches and background transitions.
    */
   primeAudio(): void {
+    if (this.hasUserInteracted) return;
     this.hasUserInteracted = true;
     this.isPriming = true;
     const silentSrc =
@@ -74,7 +75,10 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
           const p = audio.play();
           if (p !== undefined) {
             p.then(() => {
-              audio.pause();
+              // Only pause if source is still the silent priming data URI
+              if (audio.src.startsWith("data:")) {
+                audio.pause();
+              }
             }).catch(() => {
               /* ignore priming abort */
             });
@@ -268,12 +272,6 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       const oldPrimary = this.primaryAudio;
       const newPrimary = this.secondaryAudio;
 
-      if (oldPrimary) {
-        oldPrimary.pause();
-        oldPrimary.removeAttribute("src");
-        oldPrimary.load();
-      }
-
       this.primaryAudio = newPrimary;
       this.secondaryAudio = oldPrimary;
       this.preloadedSongId = null;
@@ -287,7 +285,15 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       this._applyVolume(this.primaryAudio);
 
       this._emitState("PLAYING");
+      // Start new audio first to maintain continuous audio session on iOS lockscreen
       await this.primaryAudio.play();
+
+      // Only after new audio has started playing, clean up the previous audio element
+      if (oldPrimary) {
+        oldPrimary.pause();
+        oldPrimary.removeAttribute("src");
+        oldPrimary.load();
+      }
       return;
     }
 

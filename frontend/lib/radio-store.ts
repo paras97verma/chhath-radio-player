@@ -330,7 +330,19 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     // Omitting onSeekBack/onSeekFwd preserves [⏮ Previous Track] and [⏭ Next Track] buttons on mobile OS lock screens.
     // Seeking is performed exclusively via the lock screen scrubber progress bar (onSeekTo).
     registerMediaSessionHandlers({
-      onPlay: () => get().startPlayback(),
+      onPlay: async () => {
+        const { adapter, startPlayback } = get();
+        // Immediate direct resume within the lockscreen user-action window
+        if (adapter && (adapter.getState() === "PAUSED" || adapter.getState() === "CUED")) {
+          try {
+            await adapter.play();
+            return;
+          } catch {
+            /* fallback to full startPlayback if direct resume fails */
+          }
+        }
+        await startPlayback();
+      },
       onPause: () => get().pausePlayback(),
       onNext: () => get().nextSong(),
       onPrev: () => get().prevSong(),
@@ -441,7 +453,6 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const { adapter, queue, currentIndex } = get();
     if (!adapter || queue.length === 0) return;
 
-    adapter.primeAudio?.();
     set({ userIntent: "playing", error: null });
     onPlaybackStateChange(true);
 
