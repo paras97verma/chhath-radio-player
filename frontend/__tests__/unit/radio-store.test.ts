@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MockYouTubePlayerAdapter } from "../../lib/youtube-adapter";
-import { useRadioStore } from "../../lib/radio-store";
+import { useRadioStore, loadOfferingsFromStorage } from "../../lib/radio-store";
 import type { Song } from "../../lib/api";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -419,5 +419,64 @@ describe("TestFavoritesPersistence", () => {
     await getStore().setFilter("favorites");
     expect(getStore().queue.length).toBe(1);
     expect(getStore().queue[0].id).toBe(redeployedSong.id);
+  });
+});
+
+// ─── TestOfferingCountsPersistence ──────────────────────────────────────────
+
+describe("TestOfferingCountsPersistence", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    useRadioStore.setState({ offeringCounts: {} });
+  });
+
+  it("records an offering, increments count, and saves to localStorage", () => {
+    getStore().recordOffering("🪔");
+
+    expect(getStore().getOfferingCount("🪔")).toBe(1);
+    expect(getStore().getTotalOfferings()).toBe(1);
+
+    const stored = JSON.parse(localStorage.getItem("chhath_offerings_v1") || "{}");
+    expect(stored["🪔"]).toBe(1);
+
+    getStore().recordOffering("🪔");
+    getStore().recordOffering("🌸🌿");
+    getStore().recordOffering("☀️");
+
+    expect(getStore().getOfferingCount("🪔")).toBe(2);
+    expect(getStore().getOfferingCount("🌸🌿")).toBe(1);
+    expect(getStore().getOfferingCount("☀️")).toBe(1);
+    expect(getStore().getTotalOfferings()).toBe(4);
+
+    const storedAfter = JSON.parse(localStorage.getItem("chhath_offerings_v1") || "{}");
+    expect(storedAfter["🪔"]).toBe(2);
+    expect(storedAfter["🌸🌿"]).toBe(1);
+    expect(storedAfter["☀️"]).toBe(1);
+  });
+
+  it("persists offerings across simulated browser restarts / page reloads", () => {
+    // User sends offerings in first session
+    getStore().recordOffering("🪔");
+    getStore().recordOffering("☀️");
+    getStore().recordOffering("☀️");
+
+    expect(getStore().getTotalOfferings()).toBe(3);
+
+    // Simulate page reload / redeployment: re-import or re-hydrate from storage
+    const reloadedCounts = loadOfferingsFromStorage();
+    expect(reloadedCounts["🪔"]).toBe(1);
+    expect(reloadedCounts["☀️"]).toBe(2);
+  });
+
+  it("migrates counts from legacy sessionStorage and arghya count", () => {
+    // Simulate user who previously had reactions in sessionStorage
+    sessionStorage.setItem("chhath_reactions_session_v1", JSON.stringify({ "🪔": 7, "🙏": 3 }));
+    localStorage.setItem("chhath_arghya_count", "10");
+
+    const migrated = loadOfferingsFromStorage();
+    expect(migrated["🪔"]).toBe(7);
+    expect(migrated["🙏"]).toBe(3);
+    expect(migrated["☀️"]).toBe(10);
   });
 });

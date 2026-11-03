@@ -29,6 +29,85 @@ const FAVORITES_STORAGE_KEY = "chhath_radio_favorites_v1";
 const SHUFFLE_STORAGE_KEY = "chhath_radio_shuffle_v1";
 const VOLUME_STORAGE_KEY = "chhath_radio_volume_v1";
 const MUTED_STORAGE_KEY = "chhath_radio_muted_v1";
+export const OFFERINGS_STORAGE_KEY = "chhath_offerings_v1";
+export const LEGACY_ARGHYA_KEY = "chhath_arghya_count";
+export const LEGACY_REACTIONS_KEY = "chhath_reactions_session_v1";
+
+export function loadOfferingsFromStorage(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    let counts: Record<string, number> = {};
+    const raw = localStorage.getItem(OFFERINGS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        for (const [k, v] of Object.entries(parsed)) {
+          const num = Number(v);
+          if (!isNaN(num) && num > 0) {
+            counts[k] = Math.floor(num);
+          }
+        }
+      }
+    }
+
+    // Fallback/migration from sessionStorage if empty
+    if (Object.keys(counts).length === 0) {
+      try {
+        const sessionRaw = sessionStorage.getItem(LEGACY_REACTIONS_KEY);
+        if (sessionRaw) {
+          const sessionParsed = JSON.parse(sessionRaw);
+          if (sessionParsed && typeof sessionParsed === "object" && !Array.isArray(sessionParsed)) {
+            for (const [k, v] of Object.entries(sessionParsed)) {
+              const num = Number(v);
+              if (!isNaN(num) && num > 0) {
+                counts[k] = Math.floor(num);
+              }
+            }
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // Incorporate legacy chhath_arghya_count if available
+    try {
+      const legacyArghya = localStorage.getItem(LEGACY_ARGHYA_KEY);
+      if (legacyArghya) {
+        const num = parseInt(legacyArghya, 10);
+        if (!isNaN(num) && num > 0) {
+          counts["☀️"] = Math.max(counts["☀️"] ?? 0, num);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    return counts;
+  } catch {
+    return {};
+  }
+}
+
+export function saveOfferingsToStorage(counts: Record<string, number>) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(OFFERINGS_STORAGE_KEY, JSON.stringify(counts));
+  } catch {
+    /* ignore */
+  }
+  try {
+    sessionStorage.setItem(LEGACY_REACTIONS_KEY, JSON.stringify(counts));
+  } catch {
+    /* ignore */
+  }
+  try {
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    localStorage.setItem(LEGACY_ARGHYA_KEY, String(counts["☀️"] ?? total));
+  } catch {
+    /* ignore */
+  }
+}
 
 function loadFavoritesFromStorage(): string[] {
   if (typeof window === "undefined") return [];
@@ -178,6 +257,12 @@ interface RadioState {
   setProgress: (currentTime: number, duration: number) => void;
   seekTo: (seconds: number) => void;
   setHasTunedIn: (hasTunedIn: boolean) => void;
+
+  // Offerings State & Actions
+  offeringCounts: Record<string, number>;
+  recordOffering: (emoji: string) => void;
+  getOfferingCount: (emoji: string) => number;
+  getTotalOfferings: () => number;
 }
 
 export const useRadioStore = create<RadioState>((set, get) => ({
@@ -187,6 +272,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   favorites: loadFavoritesFromStorage(),
   activeFilter: "all",
   isShuffleEnabled: loadShuffleFromStorage(),
+  offeringCounts: loadOfferingsFromStorage(),
   playState: "IDLE",
   userIntent: "idle",
   radioSessionId: uuidv4(),
@@ -642,7 +728,38 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       }
     }
   },
+
+  recordOffering: (emoji: string) => {
+    const current = get().offeringCounts;
+    const next = { ...current, [emoji]: (current[emoji] ?? 0) + 1 };
+    saveOfferingsToStorage(next);
+    set({ offeringCounts: next });
+  },
+
+  getOfferingCount: (emoji: string) => {
+    return get().offeringCounts[emoji] ?? 0;
+  },
+
+  getTotalOfferings: () => {
+    return Object.values(get().offeringCounts).reduce((a, b) => a + b, 0);
+  },
 }));
+
+// Cross-tab synchronization for offering counts
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (e.key === OFFERINGS_STORAGE_KEY && e.newValue) {
+      try {
+        const parsed = JSON.parse(e.newValue);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          useRadioStore.setState({ offeringCounts: parsed });
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+}
 
 // Tab visibility changes: re-request wake lock if user is actively playing
 if (typeof document !== "undefined") {

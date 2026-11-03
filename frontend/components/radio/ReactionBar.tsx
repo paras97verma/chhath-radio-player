@@ -10,6 +10,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useRadioStore } from "@/lib/radio-store";
 
 const REACTIONS = [
   { emoji: "🪔", label: "Diya" },
@@ -18,25 +19,12 @@ const REACTIONS = [
   { emoji: "☀️", label: "Surya" },
 ];
 
-const STORAGE_KEY = "chhath_reactions_session_v1";
 const THROTTLE_MS = 800;
 
 const NM_FAB = "6px 6px 18px rgba(0,0,0,0.82), -3px -3px 10px rgba(90,40,15,0.22), inset 0 1px 0 rgba(254,215,170,0.12)";
 const NM_FAB_ACTIVE = "inset 3px 3px 8px rgba(0,0,0,0.70), inset -1px -1px 4px rgba(90,40,15,0.20)";
 const NM_ARC_BTN = "5px 5px 14px rgba(0,0,0,0.80), -2px -2px 8px rgba(90,40,15,0.20), inset 0 1px 0 rgba(254,215,170,0.12)";
 const NM_ARC_HOVER = "6px 6px 18px rgba(0,0,0,0.85), -3px -3px 10px rgba(90,40,15,0.30), 0 0 16px rgba(249,115,22,0.45)";
-
-function loadSessionReactions(): Record<string, number> {
-  try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw) as Record<string, number>;
-  } catch { return {}; }
-}
-
-function saveSessionReactions(counts: Record<string, number>) {
-  try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(counts)); } catch { /* ignore */ }
-}
 
 interface Props {
   onReact?: (emoji: string) => void;
@@ -46,11 +34,17 @@ interface Props {
 
 export default function ReactionBar({ onReact, arcDirection = "right" }: Props) {
   const [expanded, setExpanded] = useState(false);
-  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [mounted, setMounted] = useState(false);
+  const counts = useRadioStore((s) => s.offeringCounts);
+  const recordOffering = useRadioStore((s) => s.recordOffering);
+  const totalOfferings = useRadioStore((s) => s.getTotalOfferings());
+
   const lastTap = useRef<Record<string, number>>({});
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => { setCounts(loadSessionReactions()); }, []);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const handleMouseEnter = () => {
     if (leaveTimer.current) { clearTimeout(leaveTimer.current); leaveTimer.current = null; }
@@ -66,16 +60,13 @@ export default function ReactionBar({ onReact, arcDirection = "right" }: Props) 
     const now = Date.now();
     if (now - (lastTap.current[emoji] ?? 0) < THROTTLE_MS) return;
     lastTap.current[emoji] = now;
-    setCounts((prev) => {
-      const next = { ...prev, [emoji]: (prev[emoji] ?? 0) + 1 };
-      saveSessionReactions(next);
-      return next;
-    });
+    recordOffering(emoji);
     setExpanded(false);
     onReact?.(emoji);
-  }, [onReact]);
+  }, [onReact, recordOffering]);
 
-  const totalReactions = Object.values(counts).reduce((a, b) => a + b, 0);
+  const displayCounts = mounted ? counts : {};
+  const totalReactions = mounted ? totalOfferings : 0;
 
   // Arc angles for 4 buttons, 90° spread, evenly spaced at 30° intervals.
   // "left":  centered on 180° (pure left)  → 150°, 170°, 190°, 210°
@@ -123,7 +114,7 @@ export default function ReactionBar({ onReact, arcDirection = "right" }: Props) 
           onClick={() => setExpanded((v) => !v)}
           aria-label={expanded ? "Close reactions" : "Send a reaction"}
           aria-expanded={expanded}
-          title={totalReactions > 0 ? `${totalReactions.toLocaleString()} reactions today` : "Send a reaction 🪔"}
+          title={totalReactions > 0 ? `${totalReactions.toLocaleString()} offerings sent` : "Send an offering 🪔"}
           className="relative z-[2] w-12 h-12 rounded-full flex items-center justify-center
                      text-[22px] cursor-pointer border-none transition-all duration-200"
           style={{
@@ -162,13 +153,14 @@ export default function ReactionBar({ onReact, arcDirection = "right" }: Props) 
           const expandDelay = i * 40;
           const collapseDelay = (REACTIONS.length - 1 - i) * 30;
           const delay = expanded ? expandDelay : collapseDelay;
+          const emojiCount = displayCounts[emoji] ?? 0;
 
           return (
             <button
               key={emoji}
               onClick={() => handleReaction(emoji)}
               aria-label={`React with ${label}`}
-              title={`${label}${counts[emoji] ? ` · ${counts[emoji]}` : ""}`}
+              title={`${label}${emojiCount ? ` · ${emojiCount}` : ""}`}
               className="absolute top-1/2 left-1/2 w-10 h-10 rounded-full
                          flex items-center justify-center text-[18px]
                          cursor-pointer border-none z-[3]"
@@ -197,14 +189,14 @@ export default function ReactionBar({ onReact, arcDirection = "right" }: Props) 
             >
               {emoji}
               {/* Per-emoji count badge */}
-              {(counts[emoji] ?? 0) > 0 && (
+              {emojiCount > 0 && (
                 <span
                   aria-hidden="true"
                   className="absolute -top-0.5 -right-0.5 min-w-[14px] h-3.5 rounded-full
                              bg-orange-500/90 text-white text-[8px] font-bold
                              flex items-center justify-center px-0.5 leading-none"
                 >
-                  {counts[emoji] > 99 ? "99+" : counts[emoji]}
+                  {emojiCount > 99 ? "99+" : emojiCount}
                 </span>
               )}
             </button>
