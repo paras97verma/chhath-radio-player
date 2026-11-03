@@ -90,8 +90,10 @@ interface PageClientProps {
 
 export default function PageClient({ initialSongs }: PageClientProps) {
   const currentSong = useRadioStore((s) => s.currentSong());
+  const hasTunedIn = useRadioStore((s) => s.hasTunedIn || s.playState === "PLAYING" || s.playState === "BUFFERING");
+  const setHasTunedIn = useRadioStore((s) => s.setHasTunedIn);
+  const startPlayback = useRadioStore((s) => s.startPlayback);
   const [showDonate, setShowDonate] = useState(false);
-  const [hasTunedIn, setHasTunedIn] = useState(false);
   const [listenerCount, setListenerCount] = useState(0);
   const [splashEmoji, setSplashEmoji] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState("");
@@ -392,10 +394,14 @@ export default function PageClient({ initialSongs }: PageClientProps) {
     {/* ── TuneInSplash rendered OUTSIDE <main> to avoid overflow-hidden clipping ── */}
     {!hasTunedIn && (
       <TuneInSplash
-        onTuneIn={() => setHasTunedIn(true)}
+        onTuneIn={() => {
+          setHasTunedIn(true);
+          startPlayback();
+        }}
         onEarlyStart={() => {
-          // No-op: pre-warming already started on RadioPlayer mount.
-          // This hook is available for any future last-mile work during the fade.
+          // Pre-start playback immediately during the 300ms fade animation
+          setHasTunedIn(true);
+          startPlayback();
         }}
       />
     )}

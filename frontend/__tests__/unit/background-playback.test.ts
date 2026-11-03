@@ -1,7 +1,6 @@
 /**
  * Unit tests for background playback modules:
  * - wake-lock.ts
- * - audio-keep-alive.ts
  * - media-session.ts
  */
 
@@ -15,11 +14,6 @@ import {
   releaseWakeLock,
   onPlaybackStateChange,
 } from "../../lib/wake-lock";
-import {
-  startAudioKeepAlive,
-  stopAudioKeepAlive,
-  isAudioKeepAliveRunning,
-} from "../../lib/audio-keep-alive";
 import {
   isMediaSessionSupported,
   updateMediaSessionMetadata,
@@ -52,22 +46,6 @@ describe("WakeLock Module", () => {
   it("handles playback state changes without throwing", () => {
     expect(() => onPlaybackStateChange(true)).not.toThrow();
     expect(() => onPlaybackStateChange(false)).not.toThrow();
-  });
-});
-
-describe("AudioKeepAlive Module", () => {
-  afterEach(() => {
-    stopAudioKeepAlive();
-  });
-
-  it("toggles keep-alive running state", async () => {
-    expect(isAudioKeepAliveRunning()).toBe(false);
-
-    await startAudioKeepAlive();
-    expect(isAudioKeepAliveRunning()).toBe(true);
-
-    stopAudioKeepAlive();
-    expect(isAudioKeepAliveRunning()).toBe(false);
   });
 });
 

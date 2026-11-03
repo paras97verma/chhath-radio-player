@@ -17,8 +17,6 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { fetchRadioQueue } from "@/lib/api";
-import { YouTubeIFramePlayerAdapter } from "@/lib/youtube-adapter";
 import { useRadioStore } from "@/lib/radio-store";
 import { updateMediaSessionPositionState } from "@/lib/media-session";
 import BackgroundPlayModal from "@/components/radio/BackgroundPlayModal";
@@ -167,33 +165,44 @@ function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }
 // ─── Progress Bar ─────────────────────────────────────────────────────────────
 
 function ProgressBar({
-  adapterRef,
   isPlaying,
   isBuffering,
 }: {
-  adapterRef: React.MutableRefObject<YouTubeIFramePlayerAdapter | null>;
   isPlaying: boolean;
   isBuffering: boolean;
 }) {
+  const adapter = useRadioStore((s) => s.adapter);
+  const storeTime = useRadioStore((s) => s.currentTime);
+  const storeDuration = useRadioStore((s) => s.duration);
+  const seekTo = useRadioStore((s) => s.seekTo);
+
   const [progress, setProgress] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(storeDuration);
+  const [currentTime, setCurrentTime] = useState(storeTime);
   const rafRef = useRef<number>(0);
   const isDraggingRef = useRef(false);
   // After a seek, freeze the displayed position for a grace period so the
   // YouTube player has time to settle before getCurrentTime() is trusted again.
   const seekFreezeUntilRef = useRef<number>(0);
 
+  // Sync with store when duration/currentTime updates externally
+  useEffect(() => {
+    if (!isDraggingRef.current && Date.now() >= seekFreezeUntilRef.current) {
+      if (storeDuration > 0) {
+        setDuration(storeDuration);
+        setCurrentTime(storeTime);
+        setProgress(storeTime / storeDuration);
+      }
+    }
+  }, [storeTime, storeDuration]);
+
   useEffect(() => {
     // Run the rAF loop while playing OR buffering (e.g. after a seek).
-    // Stopping during buffering caused the progress bar to flash to 0 because
-    // the YouTube IFrame API briefly resets getCurrentTime() mid-seek.
     if (!isPlaying && !isBuffering) {
       cancelAnimationFrame(rafRef.current);
       return;
     }
     const tick = () => {
-      const adapter = adapterRef.current;
       if (adapter && !isDraggingRef.current) {
         // During the seek grace period, skip reading from the adapter so the
         // bar stays frozen at the seeked position instead of flashing to 0.
@@ -214,7 +223,7 @@ function ProgressBar({
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [adapterRef, isPlaying, isBuffering]);
+  }, [adapter, isPlaying, isBuffering]);
 
   const fmt = (s: number) => {
     const m = Math.floor(s / 60);
@@ -234,13 +243,9 @@ function ProgressBar({
     isDraggingRef.current = false;
     const val = Number((e.target as HTMLInputElement).value) / 1000;
     const seekTime = val * duration;
-    const adapter = adapterRef.current;
     if (!adapter) return;
-    // Freeze the displayed position for 600 ms so the YouTube player can
-    // settle after seekTo() — prevents the bar from flashing back to 0
-    // while the player buffers the new position.
     seekFreezeUntilRef.current = Date.now() + 600;
-    adapter.seekTo(seekTime);
+    seekTo(seekTime);
     if (!isPlaying) {
       setTimeout(() => { adapter.pause(); }, 150);
     }
@@ -298,38 +303,21 @@ function ProgressBar({
   );
 }
 
-// ─── Inline Volume Control (pure controlled component — no internal state) ────
+// ─── Inline Volume Control (pure controlled component — connected to store) ───
 
-function VolumeControl({
-  adapterRef,
-  volume,
-  isMuted,
-  onMuteToggle,
-  onVolumeChange,
-}: {
-  adapterRef: React.MutableRefObject<YouTubeIFramePlayerAdapter | null>;
-  volume: number;
-  isMuted: boolean;
-  onMuteToggle: () => void;
-  onVolumeChange: (v: number) => void;
-}) {
+function VolumeControl() {
+  const volume = useRadioStore((s) => s.volume);
+  const isMuted = useRadioStore((s) => s.isMuted);
+  const setVolume = useRadioStore((s) => s.setVolume);
+  const toggleMute = useRadioStore((s) => s.toggleMute);
+
   const VolumeIcon = isMuted || volume === 0 ? IconVolumeMute : volume < 50 ? IconVolumeLow : IconVolumeHigh;
   const displayVol = isMuted ? 0 : volume;
-
-  const handleVolumeChange = (v: number) => {
-    onVolumeChange(v);
-    if (v === 0) {
-      adapterRef.current?.mute();
-    } else {
-      adapterRef.current?.unMute();
-      adapterRef.current?.setVolume(v);
-    }
-  };
 
   return (
     <div className="flex items-center gap-1 shrink-0">
       <button
-        onClick={onMuteToggle}
+        onClick={toggleMute}
         aria-label={isMuted ? "Unmute" : `Volume ${volume}%`}
         className="text-white/40 hover:text-orange-400 transition-colors"
       >
@@ -350,7 +338,7 @@ function VolumeControl({
           min={0}
           max={100}
           value={displayVol}
-          onChange={(e) => handleVolumeChange(Number(e.target.value))}
+          onChange={(e) => setVolume(Number(e.target.value))}
           aria-label="Volume"
           className="absolute inset-0 w-full opacity-0 cursor-pointer h-full"
           style={{ accentColor: "#f97316" }}
@@ -506,24 +494,27 @@ function PlaylistDrawer({
 // ─── Main RadioPlayer ─────────────────────────────────────────────────────────
 
 export default function RadioPlayer({
-  hasTunedIn = false,
+  hasTunedIn: hasTunedInProp,
   showPlaylist: showPlaylistProp,
   onPlaylistToggle,
-  initialSongs,
 }: {
   hasTunedIn?: boolean;
   /** Lifted state — controlled by PageClient so it can hide side elements when playlist is open */
   showPlaylist?: boolean;
   onPlaylistToggle?: () => void;
-  /** Songs pre-fetched server-side (SSR). When provided, Effect A skips the client-side fetch. */
+  /** Optional legacy SSR prop */
   initialSongs?: Song[];
 }) {
-  const playerContainerRef = useRef<HTMLDivElement>(null);
-  const adapterRef = useRef<YouTubeIFramePlayerAdapter | null>(null);
-  const [isMuted, setIsMuted] = useState(false);
-  const [volume, setVolume] = useState(80);
-  const [isReady, setIsReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const storeHasTunedIn = useRadioStore((s) => s.hasTunedIn);
+  const hasTunedIn = hasTunedInProp ?? storeHasTunedIn;
+  const isReady = useRadioStore((s) => s.isReady);
+  const volume = useRadioStore((s) => s.volume);
+  const isMuted = useRadioStore((s) => s.isMuted);
+  const error = useRadioStore((s) => s.error);
+  const setVolume = useRadioStore((s) => s.setVolume);
+  const toggleMute = useRadioStore((s) => s.toggleMute);
+  const adapter = useRadioStore((s) => s.adapter);
+
   const showPlaylist = showPlaylistProp ?? false;
   const showPlaylistRef = useRef(false);
   const [playlistFocusIdx, setPlaylistFocusIdx] = useState<number>(-1);
@@ -541,13 +532,13 @@ export default function RadioPlayer({
     flashTimer.current = setTimeout(() => setKeyFlash(null), 220);
   }, []);
 
-  const loadQueue = useRadioStore((s) => s.loadQueue);
   const queue = useRadioStore((s) => s.queue);
   const currentIndex = useRadioStore((s) => s.currentIndex);
   const playState = useRadioStore((s) => s.playState);
   const startPlayback = useRadioStore((s) => s.startPlayback);
   const pausePlayback = useRadioStore((s) => s.pausePlayback);
   const nextSong = useRadioStore((s) => s.nextSong);
+  const prevSong = useRadioStore((s) => s.prevSong);
   const toggleFavorite = useRadioStore((s) => s.toggleFavorite);
   const isFavorite = useRadioStore((s) => s.isFavorite);
   const isShuffleEnabled = useRadioStore((s) => s.isShuffleEnabled);
@@ -580,54 +571,33 @@ export default function RadioPlayer({
         if (showPlaylistRef.current) {
           setPlaylistFocusIdx((prev) => Math.max(0, prev <= 0 ? state.currentIndex - 1 : prev - 1));
         } else {
-          setVolume((prev) => {
-            const next = Math.min(100, prev + 5);
-            state.adapter!.unMute();
-            state.adapter!.setVolume(next);
-            setIsMuted(false);
-            return next;
-          });
+          state.setVolume(Math.min(100, state.volume + 5));
         }
       } else if (e.code === "ArrowDown") {
         e.preventDefault();
         if (showPlaylistRef.current) {
           setPlaylistFocusIdx((prev) => Math.min(state.queue.length - 1, prev < 0 ? state.currentIndex + 1 : prev + 1));
         } else {
-          setVolume((prev) => {
-            const next = Math.max(0, prev - 5);
-            if (next === 0) { state.adapter!.mute(); setIsMuted(true); }
-            else { state.adapter!.setVolume(next); }
-            return next;
-          });
+          state.setVolume(Math.max(0, state.volume - 5));
         }
       } else if (e.code === "ArrowRight") {
         e.preventDefault();
         if (e.shiftKey) { state.nextSong(); triggerFlash("next"); }
-        else { state.adapter.seekTo(state.adapter.getCurrentTime() + 10); triggerFlash("seekFwd"); }
+        else { state.seekTo(state.currentTime + 10); triggerFlash("seekFwd"); }
       } else if (e.code === "ArrowLeft") {
         e.preventDefault();
         if (e.shiftKey) {
           if (state.currentIndex > 0) {
-            const prevIdx = state.currentIndex - 1;
-            const prevSong = state.queue[prevIdx];
-            if (prevSong) {
-              useRadioStore.setState({ currentIndex: prevIdx, playState: "BUFFERING" });
-              await state.adapter.loadVideo(prevSong.youtube_video_id);
-              triggerFlash("prev");
-            }
+            triggerFlash("prev");
+            await state.prevSong();
           }
         } else {
-          state.adapter.seekTo(Math.max(0, state.adapter.getCurrentTime() - 10));
+          state.seekTo(Math.max(0, state.currentTime - 10));
           triggerFlash("seekBack");
         }
       } else if (e.code === "KeyM") {
         e.preventDefault();
-        setIsMuted((prev) => {
-          const next = !prev;
-          if (next) state.adapter!.mute();
-          else state.adapter!.unMute();
-          return next;
-        });
+        state.toggleMute();
       } else if (e.code === "KeyP") {
         e.preventDefault();
         onPlaylistToggle?.();
@@ -656,66 +626,21 @@ export default function RadioPlayer({
   const handlePrev = useCallback(async () => {
     const state = useRadioStore.getState();
     if (!state.adapter || state.currentIndex <= 0) return;
-    const prevIdx = state.currentIndex - 1;
-    const prevSong = state.queue[prevIdx];
-    if (!prevSong) return;
     triggerFlash("prev");
-    useRadioStore.setState({ currentIndex: prevIdx, playState: "BUFFERING" });
-    await state.adapter.loadVideo(prevSong.youtube_video_id);
+    await state.prevSong();
   }, [triggerFlash]);
 
   const handlePlaySong = useCallback(async (index: number, song: Song) => {
     const state = useRadioStore.getState();
     if (!state.adapter) return;
-    useRadioStore.setState({ currentIndex: index, playState: "BUFFERING" });
-    await state.adapter.loadVideo(song.youtube_video_id);
+    useRadioStore.setState({ currentIndex: index, playState: "BUFFERING", userIntent: "playing", error: null });
+    try {
+      await state.adapter.loadVideo(song.youtube_video_id);
+    } catch {
+      useRadioStore.setState({ playState: "ERROR", error: "Could not play track" });
+    }
     if (showPlaylistRef.current) onPlaylistToggle?.();
   }, [onPlaylistToggle]);
-
-  // ── Initialize player when user tunes in ────────────────────────────────────
-  // The YouTube IFrame API script is already loaded from layout.tsx <head>,
-  // and songs are provided via the SSR initialSongs prop from page.tsx.
-  // The only remaining async work is new YT.Player() (~300–500ms, unavoidable).
-  useEffect(() => {
-    if (!hasTunedIn) return;
-    let cancelled = false;
-
-    async function init() {
-      try {
-        // Songs from SSR prop (fast path) or client fetch fallback
-        const songs = initialSongs?.length ? initialSongs : await fetchRadioQueue();
-        if (cancelled || songs.length === 0) return;
-
-        const adapter = new YouTubeIFramePlayerAdapter();
-        adapterRef.current = adapter;
-
-        if (playerContainerRef.current) {
-          // YT API already loaded from <head> — initialize() resolves fast
-          await adapter.initialize(playerContainerRef.current, songs[0].youtube_video_id);
-        }
-
-        if (cancelled) { adapter.destroy(); return; }
-
-        await loadQueue(songs, adapter);
-        setIsReady(true);
-
-        try { await adapter.play(); } catch { /* user can click play manually */ }
-      } catch (err) {
-        if (!cancelled) {
-          setError("Could not load radio. Please refresh.");
-          console.error("[RadioPlayer] Init error:", err);
-        }
-      }
-    }
-
-    init();
-
-    return () => {
-      cancelled = true;
-      const adapter = adapterRef.current;
-      if (adapter) { adapter.destroy(); adapterRef.current = null; }
-    };
-  }, [loadQueue, hasTunedIn, initialSongs]);
 
   const albumArt = currentSong
     ? `https://i.ytimg.com/vi/${currentSong.youtube_video_id}/mqdefault.jpg`
@@ -732,22 +657,6 @@ export default function RadioPlayer({
       `}</style>
 
       <div className="relative w-full" role="region" aria-label="Radio player">
-        {/* Hidden YouTube iframe with valid geometry to avoid browser invisible-frame throttling */}
-        <div
-          ref={playerContainerRef}
-          style={{
-            position: "fixed",
-            bottom: -150,
-            right: -150,
-            width: 200,
-            height: 200,
-            opacity: 0.005,
-            pointerEvents: "none",
-            zIndex: -50,
-          }}
-          aria-hidden="true"
-        />
-
         {/* Playlist drawer */}
         {showPlaylist && isReady && (
           <PlaylistDrawer onClose={() => onPlaylistToggle?.()} onPlaySong={handlePlaySong} />
@@ -895,28 +804,7 @@ export default function RadioPlayer({
               <div className="w-px h-5 bg-white/8 mx-1" />
 
               {/* Volume — always visible inline */}
-              {isReady && (
-                <VolumeControl
-                  adapterRef={adapterRef}
-                  volume={volume}
-                  isMuted={isMuted}
-                  onMuteToggle={() => {
-                    if (isMuted) {
-                      adapterRef.current?.unMute();
-                      adapterRef.current?.setVolume(volume || 80);
-                      setIsMuted(false);
-                    } else {
-                      adapterRef.current?.mute();
-                      setIsMuted(true);
-                    }
-                  }}
-                  onVolumeChange={(v) => {
-                    setVolume(v);
-                    if (v === 0) setIsMuted(true);
-                    else if (isMuted) setIsMuted(false);
-                  }}
-                />
-              )}
+              {isReady && <VolumeControl />}
 
               {/* Playlist toggle */}
               <button
@@ -946,7 +834,7 @@ export default function RadioPlayer({
           </div>
 
           {/* Progress bar row — always rendered for constant height stability */}
-          <ProgressBar adapterRef={adapterRef} isPlaying={isPlaying} isBuffering={isBuffering} />
+          <ProgressBar isPlaying={isPlaying} isBuffering={isBuffering} />
         </div>
 
         {/* Background Play Help & Permissions Modal */}

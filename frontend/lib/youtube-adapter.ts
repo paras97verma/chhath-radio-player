@@ -124,19 +124,35 @@ function loadYouTubeAPI(): Promise<void> {
   // This only happens on very slow connections or if the static script hasn't fired yet.
   if (ytApiLoadPromise) return ytApiLoadPromise;
 
-  ytApiLoadPromise = new Promise((resolve) => {
+  ytApiLoadPromise = new Promise((resolve, reject) => {
+    // 10s fallback timeout to prevent hanging forever if offline or blocked
+    const timeout = setTimeout(() => {
+      reject(new Error("YouTube API script load timeout"));
+    }, 10000);
+
     const existingCallback = window.onYouTubeIframeAPIReady;
     window.onYouTubeIframeAPIReady = () => {
+      clearTimeout(timeout);
       if (existingCallback) existingCallback();
       resolve();
     };
 
     // Fallback: inject the script if somehow it wasn't loaded from <head>
-    if (!document.getElementById("yt-iframe-api")) {
-      const script = document.createElement("script");
+    let script = document.getElementById("yt-iframe-api") as HTMLScriptElement | null;
+    if (!script) {
+      script = document.createElement("script");
       script.id = "yt-iframe-api";
       script.src = "https://www.youtube.com/iframe_api";
+      script.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error("Failed to load YouTube iframe API script"));
+      };
       document.head.appendChild(script);
+    } else {
+      script.addEventListener("error", () => {
+        clearTimeout(timeout);
+        reject(new Error("Failed to load YouTube iframe API script"));
+      });
     }
   });
 
@@ -152,38 +168,47 @@ export class YouTubeIFramePlayerAdapter implements YouTubePlayerAdapter {
   async initialize(container: HTMLElement, videoId: string): Promise<void> {
     await loadYouTubeAPI();
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.isReady = false;
-      this.player = new window.YT.Player(container, {
-        videoId,
-        playerVars: {
-          // Golden Rule: NO ad-blocking, NO fake controls
-          autoplay: 1,
-          rel: 0,
-          modestbranding: 1,
-          enablejsapi: 1,
-          playsinline: 1,
-          origin: typeof window !== "undefined" ? window.location.origin : undefined,
-        },
-        events: {
-          onReady: () => {
-            this.isReady = true;
-            resolve();
+      const initTimeout = setTimeout(() => {
+        reject(new Error("YouTube Player onReady timeout"));
+      }, 15000);
+
+      try {
+        this.player = new window.YT.Player(container, {
+          videoId,
+          playerVars: {
+            // Pre-warm silently; audio starts upon user gesture or startPlayback()
+            autoplay: 0,
+            rel: 0,
+            modestbranding: 1,
+            enablejsapi: 1,
+            playsinline: 1,
+            origin: typeof window !== "undefined" ? window.location.origin : undefined,
           },
-          onStateChange: (event) => {
-            const state = YT_STATE_MAP[event.data] ?? "UNSTARTED";
-            this.currentState = state;
-            this.stateListeners.forEach((cb) => cb(state));
-          },
-          onError: (event) => {
-            // Map YouTube errors to our ERROR state
-            if (YT_UNPLAYABLE_ERRORS.has(event.data)) {
+          events: {
+            onReady: () => {
+              clearTimeout(initTimeout);
+              this.isReady = true;
+              resolve();
+            },
+            onStateChange: (event) => {
+              const state = YT_STATE_MAP[event.data] ?? "UNSTARTED";
+              this.currentState = state;
+              this.stateListeners.forEach((cb) => cb(state));
+            },
+            onError: (event) => {
+              clearTimeout(initTimeout);
+              // Map any YouTube error code directly to ERROR state to prevent infinite buffering
               this.currentState = "ERROR";
               this.stateListeners.forEach((cb) => cb("ERROR" as PlayerState));
-            }
+            },
           },
-        },
-      });
+        });
+      } catch (err) {
+        clearTimeout(initTimeout);
+        reject(err);
+      }
     });
   }
 
@@ -243,7 +268,7 @@ export class YouTubeIFramePlayerAdapter implements YouTubePlayerAdapter {
 
   onStateChange(callback: (state: PlayerState) => void): () => void {
     this.stateListeners.add(callback);
-    // Return the unsubscribe function for React useEffect cleanup
+    // Return the unsubscribe function for cleanup
     return () => {
       this.stateListeners.delete(callback);
     };
@@ -254,7 +279,11 @@ export class YouTubeIFramePlayerAdapter implements YouTubePlayerAdapter {
     this.isReady = false;
     this.stateListeners.clear();
     if (this.player && typeof this.player.destroy === "function") {
-      this.player.destroy();
+      try {
+        this.player.destroy();
+      } catch {
+        /* ignore */
+      }
     }
     this.player = null;
   }
@@ -268,6 +297,10 @@ export class MockYouTubePlayerAdapter implements YouTubePlayerAdapter {
   public currentVideoId: string = "";
   public initializeCalled = false;
   public destroyCalled = false;
+  public volume: number = 80;
+  public isMuted: boolean = false;
+  public currentTime: number = 0;
+  public duration: number = 240;
 
   async initialize(_container: HTMLElement, videoId: string): Promise<void> {
     this.initializeCalled = true;
@@ -287,12 +320,29 @@ export class MockYouTubePlayerAdapter implements YouTubePlayerAdapter {
     this._emitState("PAUSED");
   }
 
-  mute(): void { /* no-op in mock */ }
-  unMute(): void { /* no-op in mock */ }
-  setVolume(_volume: number): void { /* no-op in mock */ }
-  seekTo(_seconds: number): void { /* no-op in mock */ }
-  getCurrentTime(): number { return 0; }
-  getDuration(): number { return 0; }
+  mute(): void {
+    this.isMuted = true;
+  }
+
+  unMute(): void {
+    this.isMuted = false;
+  }
+
+  setVolume(volume: number): void {
+    this.volume = volume;
+  }
+
+  seekTo(seconds: number): void {
+    this.currentTime = seconds;
+  }
+
+  getCurrentTime(): number {
+    return this.currentTime;
+  }
+
+  getDuration(): number {
+    return this.duration;
+  }
 
   getState(): PlayerState {
     return this.currentState;
