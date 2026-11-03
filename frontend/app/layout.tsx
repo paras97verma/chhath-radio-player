@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import ServiceWorkerRegistrar from "@/components/radio/ServiceWorkerRegistrar";
 import PWAInstallPrompt from "@/components/radio/PWAInstallPrompt";
+import GlobalRadioProvider from "@/components/radio/GlobalRadioProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -103,7 +104,9 @@ export default function RootLayout({
       >
         <ServiceWorkerRegistrar />
         <PWAInstallPrompt />
-        {children}
+        <GlobalRadioProvider>
+          {children}
+        </GlobalRadioProvider>
       </body>
     </html>
   );
