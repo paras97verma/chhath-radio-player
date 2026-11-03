@@ -199,11 +199,9 @@ print_urls() {
   divider
   echo ""
 
-  # Auto-open homepage and admin in the default browser
-  info "Homepage ${GREEN}${frontend_url}${NC} "
+  # Auto-open app homepage in the default browser
+  info "Opening ${GREEN}${frontend_url}${NC} in your browser..."
   open_browser "$frontend_url"
-  sleep 1
-  info "Admin Panel ${GREEN}${admin_url}${NC} "
 }
 
 # ── Commands ──────────────────────────────────────────────────────────────────

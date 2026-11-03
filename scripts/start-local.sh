@@ -283,9 +283,8 @@ open_url() {
   fi
 }
 
+# Auto-open app in browser
 open_url "http://localhost:3000"
-sleep 1
-open_url "http://localhost:3000/admin"
 
 # ── 10. Summary & Cheat Sheet ─────────────────────────────────────────────────
 echo ""
