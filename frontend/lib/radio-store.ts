@@ -455,7 +455,8 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     }
 
     const currentState = adapter.getState();
-    if (currentState === "PAUSED" || currentState === "CUED") {
+    const isLoaded = adapter.isSongLoaded ? adapter.isSongLoaded(song.youtube_video_id) : true;
+    if ((currentState === "PAUSED" || currentState === "CUED") && isLoaded) {
       try {
         await adapter.play();
       } catch (err) {

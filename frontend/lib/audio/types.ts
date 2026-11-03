@@ -36,6 +36,8 @@ export interface PipedInstance {
 export interface AudioPlayerAdapter {
   /** Optional WebKit user-gesture priming to unlock iOS mobile autoplay */
   primeAudio?(): void;
+  /** Check if the given video ID is already actively loaded in the audio pipeline */
+  isSongLoaded?(videoId: string): boolean;
   /** Initialize the player with DOM container/elements and initial song or videoId */
   initialize(container: HTMLElement | null, initial?: Song | string): Promise<void>;
   /** Load and play a new song */

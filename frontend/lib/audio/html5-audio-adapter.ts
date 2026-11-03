@@ -28,6 +28,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   // Authoritative duration tracking & user gesture priming
   private streamDuration: number | null = null;
   private hasUserInteracted = false;
+  private isPriming = false;
+  private currentVideoId: string | null = null;
 
   // Request sequencing and cooperative cancellation
   private activeRequestId = 0;
@@ -43,29 +45,47 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   }
 
   /**
+   * Checks if a given song is currently active and resolved in the primary audio pipeline.
+   */
+  isSongLoaded(videoId: string): boolean {
+    return (
+      this.currentVideoId === videoId &&
+      !!this.primaryAudio?.src &&
+      !this.primaryAudio.src.startsWith("data:")
+    );
+  }
+
+  /**
    * Synchronously primes both primary and secondary audio elements on user touch/click.
    * This permanently unlocks WebKit autoplay restrictions on iOS Safari across
    * all subsequent asynchronous stream resolution fetches and background transitions.
    */
   primeAudio(): void {
     this.hasUserInteracted = true;
+    this.isPriming = true;
     const silentSrc =
       "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
 
-    [this.primaryAudio, this.secondaryAudio].forEach((audio) => {
-      if (!audio) return;
-      if (!audio.src) {
-        audio.src = silentSrc;
-        const p = audio.play();
-        if (p !== undefined) {
-          p.then(() => {
-            audio.pause();
-          }).catch(() => {
-            /* ignore priming abort */
-          });
+    try {
+      [this.primaryAudio, this.secondaryAudio].forEach((audio) => {
+        if (!audio) return;
+        if (!audio.src || audio.src.startsWith("data:")) {
+          audio.src = silentSrc;
+          const p = audio.play();
+          if (p !== undefined) {
+            p.then(() => {
+              audio.pause();
+            }).catch(() => {
+              /* ignore priming abort */
+            });
+          }
         }
-      }
-    });
+      });
+    } finally {
+      setTimeout(() => {
+        this.isPriming = false;
+      }, 50);
+    }
   }
 
   async initialize(container: HTMLElement | null, initial?: Song | string): Promise<void> {
@@ -119,8 +139,12 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   private _bindAudioEvents(audio: HTMLAudioElement | null) {
     if (!audio) return;
 
-    const onPlay = () => this._emitState("PLAYING");
+    const onPlay = () => {
+      if (this.isPriming) return;
+      this._emitState("PLAYING");
+    };
     const onPlaying = () => {
+      if (this.isPriming) return;
       this._emitState("PLAYING");
       const dur = this.getDuration() || audio.duration;
       if (Number.isFinite(dur) && dur > 0) {
@@ -128,15 +152,21 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       }
     };
     const onPause = () => {
-      // Avoid emitting PAUSED if track just ended
-      if (audio.ended) return;
+      // Avoid emitting PAUSED if track just ended or if hardware is silently priming
+      if (this.isPriming || audio.ended) return;
       this._emitState("PAUSED");
     };
-    const onWaiting = () => this._emitState("BUFFERING");
-    const onEnded = () => this._emitState("ENDED");
+    const onWaiting = () => {
+      if (this.isPriming) return;
+      this._emitState("BUFFERING");
+    };
+    const onEnded = () => {
+      if (this.isPriming) return;
+      this._emitState("ENDED");
+    };
     const onError = () => {
       // If a newer load request is active or audio element was reset, ignore stale errors
-      if (this.activeAbortController?.signal.aborted || this.isDestroyed) return;
+      if (this.isPriming || this.activeAbortController?.signal.aborted || this.isDestroyed) return;
       // If user has not interacted yet, or error is MEDIA_ERR_ABORTED (code 1), ignore
       if (!this.hasUserInteracted || audio.error?.code === 1) return;
       console.warn("[Html5AudioAdapter] Audio playback error:", audio.error);
@@ -247,6 +277,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       this.primaryAudio = newPrimary;
       this.secondaryAudio = oldPrimary;
       this.preloadedSongId = null;
+      this.currentVideoId = videoId;
       this.streamDuration = extractDurationFromUrl(this.primaryAudio.src);
 
       // Rebind events for the active primary
@@ -273,6 +304,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       if (!this.primaryAudio) throw new Error("Audio element not initialized");
 
       this.hasUserInteracted = true;
+      this.currentVideoId = videoId;
       this.streamDuration = stream.duration ?? extractDurationFromUrl(stream.url) ?? null;
       this.primaryAudio.src = stream.url;
       this.primaryAudio.preload = "auto";
