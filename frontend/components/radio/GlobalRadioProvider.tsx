@@ -65,15 +65,15 @@ export default function GlobalRadioProvider({
 
           await adapter.initialize(container, songs[0].youtube_video_id);
 
-          const { volume, isMuted, userIntent, hasTunedIn } = useRadioStore.getState();
+          const { volume, isMuted, userIntent } = useRadioStore.getState();
           adapter.setVolume(volume);
           if (isMuted) adapter.mute();
 
           await useRadioStore.getState().loadQueue(songs, adapter);
           useRadioStore.getState().setIsReady(true);
 
-          // If playback was requested before initialization finished
-          if (userIntent === "playing" || hasTunedIn) {
+          // Only play if the user explicitly requested playback
+          if (userIntent === "playing") {
             try {
               await adapter.play();
             } catch (playErr) {

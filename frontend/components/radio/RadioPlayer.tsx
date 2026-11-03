@@ -609,7 +609,7 @@ export default function RadioPlayer({
 
   // Dynamic page title
   useEffect(() => {
-    if (!isReady || !currentSong) {
+    if (!isReady || !currentSong || playState === "IDLE") {
       document.title = "Chhath Radio — छठ के गीत, बिना रुके";
       return;
     }
@@ -621,7 +621,7 @@ export default function RadioPlayer({
     return () => {
       document.title = "Chhath Radio — छठ के गीत, बिना रुके";
     };
-  }, [currentSong, isPlaying, isReady]);
+  }, [currentSong, isPlaying, isReady, playState]);
 
   const handlePrev = useCallback(async () => {
     const state = useRadioStore.getState();
