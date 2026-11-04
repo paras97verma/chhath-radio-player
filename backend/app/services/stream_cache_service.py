@@ -392,24 +392,9 @@ class StreamCacheService:
                                     "extractor": ext_name,
                                 }
 
-                            # Fallback to muxed video stream containing audio
-                            video_streams = [
-                                v for v in data.get("videoStreams", [])
-                                if not v.get("videoOnly") and v.get("url")
-                            ]
-                            if video_streams:
-                                best = video_streams[0]
-                                duration = _extract_duration(data, best)
-                                cls._record_success(ext_name, latency_ms, redis_client)
-                                return {
-                                    "url": best["url"],
-                                    "format": best.get("format", "MP4"),
-                                    "mimeType": best.get("mimeType") or "video/mp4",
-                                    "bitrate": best.get("bitrate") or 128000,
-                                    "duration": duration,
-                                    "title": data.get("title", f"Chhath Song ({video_id})"),
-                                    "extractor": ext_name,
-                                }
+                            # Strict audio-only enforcement: do NOT fallback to muxed video streams.
+                            # If this extractor does not provide pure audio streams, rotate to next extractor.
+                            cls._record_failure(ext_name, redis_client)
 
                 except (urllib.error.URLError, TimeoutError, OSError) as exc:
                     if attempt < max_attempts:

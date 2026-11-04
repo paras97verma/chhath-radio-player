@@ -198,24 +198,6 @@ export async function GET(request: NextRequest) {
           streamCache.set(videoId, result);
           return NextResponse.json(result);
         }
-
-        const videoStreams = (data.videoStreams || []).filter((v: any) => !v.videoOnly && v.url);
-        if (videoStreams.length > 0) {
-          const best = videoStreams[0];
-          const result: CachedStreamResult = {
-            url: best.url,
-            format: best.format || "MP4",
-            mimeType: best.mimeType || "video/mp4",
-            bitrate: best.bitrate || 128000,
-            title: data.title,
-            timestamp: Date.now(),
-            cached: false,
-            cache_tier: "DIRECT_FALLBACK",
-          };
-
-          streamCache.set(videoId, result);
-          return NextResponse.json(result);
-        }
       }
     } catch {
       // Try next candidate

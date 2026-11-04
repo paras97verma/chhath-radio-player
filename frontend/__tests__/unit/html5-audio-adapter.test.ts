@@ -193,4 +193,77 @@ describe("Html5AudioAdapter", () => {
     await adapter.loadVideo("song_dur_test");
     expect(adapter.getDuration()).toBe(298.5);
   });
+
+  it("deduplicates ENDED events to prevent accidental double-skipping", async () => {
+    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchPipedStream).mockResolvedValue({
+      url: "https://audio.example.com/song.m4a?dur=200.0",
+      format: "M4A",
+      quality: "128kbps",
+      mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+      codec: "mp4a.40.2",
+      bitrate: 128000,
+      duration: 200.0,
+    });
+    primaryAudio.play = vi.fn().mockResolvedValue(undefined);
+
+    await adapter.loadVideo("dedup_test");
+
+    const states: string[] = [];
+    adapter.onStateChange((s) => states.push(s));
+
+    // 1. Timeupdate reaches threshold near end (cur >= duration - 0.4)
+    Object.defineProperty(primaryAudio, "currentTime", { value: 199.7, configurable: true, writable: true });
+    Object.defineProperty(primaryAudio, "paused", { value: false, configurable: true });
+    Object.defineProperty(primaryAudio, "ended", { value: false, configurable: true });
+    primaryAudio.dispatchEvent(new Event("timeupdate"));
+
+    expect(states.filter((s) => s === "ENDED").length).toBe(1);
+
+    // 2. Native ended event fires immediately after
+    Object.defineProperty(primaryAudio, "ended", { value: true, configurable: true });
+    primaryAudio.dispatchEvent(new Event("ended"));
+
+    // Crucial check: ENDED MUST still be emitted only ONCE!
+    expect(states.filter((s) => s === "ENDED").length).toBe(1);
+  });
+
+  it("performs instant seamless handoff when secondary audio has preloaded song", async () => {
+    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchPipedStream).mockResolvedValue({
+      url: "https://audio.example.com/song_preloaded.m4a",
+      format: "M4A",
+      quality: "128kbps",
+      mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+      codec: "mp4a.40.2",
+      bitrate: 128000,
+      duration: 180,
+    });
+    primaryAudio.play = vi.fn().mockResolvedValue(undefined);
+    secondaryAudio.play = vi.fn().mockResolvedValue(undefined);
+
+    // Preload next song
+    await adapter.preloadNextSong({
+      id: "song_next",
+      youtube_video_id: "next_vid_123",
+      title: "Next Song",
+      artist: "Singer",
+      youtube_url: null,
+      category: null,
+      enabled: true,
+      sort_order: 1,
+    });
+
+    expect(secondaryAudio.src).toBe("https://audio.example.com/song_preloaded.m4a");
+
+    const states: string[] = [];
+    adapter.onStateChange((s) => states.push(s));
+
+    // Now call loadVideo with the preloaded song ID
+    await adapter.loadVideo("next_vid_123");
+
+    // Must immediately transition without waiting for network re-fetch
+    expect(secondaryAudio.play).toHaveBeenCalled();
+    expect(states).toContain("PLAYING");
+  });
 });

@@ -209,22 +209,9 @@ export async function fetchPipedStream(
         }));
       }
 
-      // If audioStreams is empty, check videoStreams with audio
-      if (normalizedStreams.length === 0 && data.videoStreams) {
-        const muxed = (data.videoStreams || []).filter((v: any) => !v.videoOnly && v.url);
-        normalizedStreams = muxed.map((v: any) => ({
-          url: v.url,
-          format: v.format || "MP4",
-          quality: v.quality || "360p",
-          mimeType: v.mimeType || "video/mp4",
-          codec: "mp4",
-          bitrate: 128000,
-        }));
-      }
-
       if (normalizedStreams.length === 0) {
         markInstanceFailed(instance.apiUrl);
-        lastError = new Error(`Instance ${instance.name} returned no audio streams`);
+        lastError = new Error(`Instance ${instance.name} returned no pure audio streams`);
         continue;
       }
 

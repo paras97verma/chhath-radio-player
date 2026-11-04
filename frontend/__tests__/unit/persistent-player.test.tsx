@@ -436,4 +436,32 @@ describe("Persistent Player Lifecycle & Navigation Persistence", () => {
     );
     expect(remainingInFavs.length).toBe(0);
   });
+
+  it("renders playlist icon inside the player pill container and applies responsive layout classes to prevent mobile overflow", () => {
+    useRadioStore.setState({ isReady: true, adapter });
+
+    const { container } = render(
+      <RadioPlayer
+        hasTunedIn={true}
+        showPlaylist={false}
+      />
+    );
+
+    const togglePlaylistBtn = screen.getByRole("button", { name: "Toggle playlist" });
+    expect(togglePlaylistBtn).toBeDefined();
+
+    // Check that togglePlaylistBtn has shrink-0 and responsive width classes
+    expect(togglePlaylistBtn.className).toContain("shrink-0");
+    expect(togglePlaylistBtn.className).toContain("w-7");
+
+    // The outer pill container must have overflow-hidden
+    const pill = container.querySelector(".rounded-\\[26px\\]");
+    expect(pill).toBeDefined();
+    expect(pill?.className).toContain("overflow-hidden");
+
+    // The controls row must have min-w-0 and responsive gap/padding
+    const controlsRow = container.querySelector(".min-w-0.flex.items-center.justify-between") || container.querySelector(".flex.items-center.justify-between.gap-1\\.5");
+    expect(controlsRow).toBeDefined();
+    expect(controlsRow?.className).toContain("min-w-0");
+  });
 });

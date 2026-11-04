@@ -264,3 +264,35 @@ class TestStreamCacheService:
         count = StreamCacheService.flush_stream_cache()
         assert count == 2
         mock_redis.delete.assert_any_call("chhath:stream:vid1", "chhath:stream:vid2")
+
+    @patch("app.services.stream_cache_service.urllib.request.urlopen")
+    @patch("app.services.stream_cache_service._get_redis")
+    def test_extractor_enforces_audio_only_no_video_fallback(self, mock_get_redis, mock_urlopen):
+        """Ensures that upstream responses containing only muxed video streams are rejected."""
+        mock_redis = MagicMock()
+        mock_get_redis.return_value = mock_redis
+
+        # Mock Piped response with videoStreams but NO audioStreams
+        piped_video_only_response = {
+            "title": "Chhath Video",
+            "audioStreams": [],
+            "videoStreams": [
+                {
+                    "url": "https://googlevideo.com/videoplayback?mime=video%2Fmp4",
+                    "format": "MP4",
+                    "quality": "720p",
+                    "mimeType": "video/mp4",
+                    "videoOnly": False,
+                }
+            ],
+        }
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = json.dumps(piped_video_only_response).encode("utf-8")
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        result = StreamCacheService._extract_upstream("vidNoAudioStreams")
+        # Pure audio requirement: must NOT return the muxed video stream!
+        assert result is None

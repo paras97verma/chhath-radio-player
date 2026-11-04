@@ -24,22 +24,22 @@ import type { Song } from "@/lib/api";
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
 const IconPrev = () => (
-  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="currentColor" viewBox="0 0 24 24">
     <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
   </svg>
 );
 const IconNext = () => (
-  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="currentColor" viewBox="0 0 24 24">
     <path d="M6 18l8.5-6L6 6v12zm2-8.14L11.03 12 8 14.14V9.86zM16 6h2v12h-2z" />
   </svg>
 );
 const IconPlay = () => (
-  <svg className="w-7 h-7 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-5 h-5 sm:w-6 sm:h-6 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
     <path d="M8 5v14l11-7z" />
   </svg>
 );
 const IconPause = () => (
-  <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="currentColor" viewBox="0 0 24 24">
     <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
   </svg>
 );
@@ -59,17 +59,17 @@ const IconVolumeHigh = () => (
   </svg>
 );
 const IconList = () => (
-  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" viewBox="0 0 24 24">
     <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z" />
   </svg>
 );
 const IconClose = () => (
-  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" viewBox="0 0 24 24">
     <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
   </svg>
 );
 const IconShuffle = () => (
-  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+  <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" viewBox="0 0 24 24">
     <path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.45 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z" />
   </svg>
 );
@@ -109,7 +109,7 @@ function Spectrogram({ isPlaying }: { isPlaying: boolean }) {
 function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }) {
   return (
     <div
-      className="relative w-20 h-20 shrink-0 rounded-full"
+      className="relative w-14 h-14 sm:w-20 sm:h-20 shrink-0 rounded-full"
       style={{
         boxShadow: isPlaying
           ? "0 0 40px rgba(255, 107, 53, 0.7), 0 0 18px rgba(255, 138, 80, 0.4)"
@@ -154,7 +154,7 @@ function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }
       </div>
       {/* Center spindle */}
       <div
-        className="absolute w-3 h-3 rounded-full bg-orange-500 shadow"
+        className="absolute w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-orange-500 shadow"
         style={{ top: "50%", left: "50%", transform: "translate(-50%,-50%)", boxShadow: "0 0 8px rgba(255, 138, 80, 0.6)" }}
       />
     </div>
@@ -251,7 +251,7 @@ function ProgressBar({
   };
 
   return (
-    <div className="flex items-center gap-2 w-full px-5 pb-2">
+    <div className="flex items-center gap-2 w-full px-3.5 sm:px-5 pb-2">
       <span className="text-white/50 text-[9px] w-6 text-right shrink-0 tabular-nums">{fmt(currentTime)}</span>
       {/* Outer container is taller (h-4 = 16px) for a larger touch target on mobile */}
       <div
@@ -314,11 +314,11 @@ function VolumeControl() {
   const displayVol = isMuted ? 0 : volume;
 
   return (
-    <div className="flex items-center gap-1 shrink-0">
+    <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
       <button
         onClick={toggleMute}
         aria-label={isMuted ? "Unmute" : `Volume ${volume}%`}
-        className="text-white/40 hover:text-orange-400 transition-colors"
+        className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center text-white/40 hover:text-orange-400 transition-colors"
       >
         <VolumeIcon />
       </button>
@@ -672,7 +672,7 @@ export default function RadioPlayer({
 
         {/* ── Modern minimal glassmorphic pill ── */}
         <div
-          className="flex flex-col rounded-[26px]"
+          className="flex flex-col rounded-[26px] overflow-hidden"
           style={{
             background: "linear-gradient(145deg, rgba(25, 14, 8, 0.94) 0%, rgba(18, 10, 6, 0.90) 100%)",
             backdropFilter: "blur(32px)",
@@ -725,18 +725,18 @@ export default function RadioPlayer({
           </div>
 
           {/* Main row */}
-          <div className="flex items-center justify-between gap-3 px-5 pt-3 pb-2">
+          <div className="flex items-center justify-between gap-1.5 sm:gap-3 px-3.5 sm:px-5 pt-2.5 sm:pt-3 pb-2 min-w-0">
             {/* Vinyl art */}
             <VinylArt src={albumArt} isPlaying={isPlaying} />
 
             {/* Controls */}
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
               {/* Prev */}
               <button
                 onClick={handlePrev}
                 disabled={!isReady || currentIndex <= 0}
                 aria-label="Previous song"
-                className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:cursor-not-allowed hover:scale-110 active:scale-95"
+                className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-full transition-all disabled:cursor-not-allowed hover:scale-110 active:scale-95"
                 style={{
                   color: keyFlash === "prev" || keyFlash === "seekBack" ? "#ffa726" : "rgba(255,255,255,0.5)",
                   background: keyFlash === "prev" || keyFlash === "seekBack" ? "rgba(255, 138, 80, 0.25)" : "transparent",
@@ -752,7 +752,7 @@ export default function RadioPlayer({
                 onClick={isPlaying ? pausePlayback : startPlayback}
                 disabled={!isReady || isBuffering}
                 aria-label={isPlaying ? "Pause" : "Play"}
-                className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:opacity-30 disabled:cursor-not-allowed mx-0.5"
+                className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-full transition-all disabled:opacity-30 disabled:cursor-not-allowed mx-0.5"
                 style={{
                   background: isReady && !isBuffering
                     ? "linear-gradient(135deg, #ffa726, #ff7043)"
@@ -779,7 +779,7 @@ export default function RadioPlayer({
                 onClick={() => { triggerFlash("next"); nextSong(); }}
                 disabled={!isReady}
                 aria-label="Next song"
-                className="w-10 h-10 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed hover:scale-110 active:scale-95"
+                className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed hover:scale-110 active:scale-95"
                 style={{
                   color: keyFlash === "next" || keyFlash === "seekFwd" ? "#ffa726" : "rgba(255,255,255,0.5)",
                   background: keyFlash === "next" || keyFlash === "seekFwd" ? "rgba(255, 138, 80, 0.25)" : "transparent",
@@ -798,7 +798,7 @@ export default function RadioPlayer({
                     suppressHydrationWarning
                     aria-label={shuffleActive ? "Disable shuffle" : "Enable shuffle"}
                     title={shuffleActive ? "Shuffle is ON" : "Shuffle is OFF"}
-                    className="w-10 h-10 flex items-center justify-center rounded-full transition-all hover:scale-110"
+                    className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-full transition-all hover:scale-110"
                     style={{
                       color: shuffleActive ? "#ffa726" : "rgba(255,255,255,0.4)",
                       background: shuffleActive ? "rgba(255, 138, 80, 0.22)" : "transparent",
@@ -811,7 +811,7 @@ export default function RadioPlayer({
               })()}
 
               {/* Divider */}
-              <div className="w-px h-5 bg-white/8 mx-1" />
+              <div className="w-px h-4 sm:h-5 bg-white/8 mx-0.5 sm:mx-1" />
 
               {/* Volume — always visible inline */}
               {isReady && <VolumeControl />}
@@ -822,7 +822,7 @@ export default function RadioPlayer({
                 disabled={!isReady}
                 aria-label="Toggle playlist"
                 aria-expanded={showPlaylist}
-                className={`w-8 h-8 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed ml-0.5 ${showPlaylist
+                className={`w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed ml-0.5 shrink-0 ${showPlaylist
                   ? "text-orange-400 bg-orange-500/20"
                   : "text-white/35 hover:text-white/70 hover:bg-white/8"
                   }`}

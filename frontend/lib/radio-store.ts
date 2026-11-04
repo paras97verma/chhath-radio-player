@@ -419,8 +419,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     };
 
     // Register OS Media Session controls (Lock screen, Control Center, Bluetooth headsets).
-    // Omitting onSeekBack/onSeekFwd preserves [⏮ Previous Track] and [⏭ Next Track] buttons on mobile OS lock screens.
-    // Seeking is performed exclusively via the lock screen scrubber progress bar (onSeekTo).
+    // Standardizes prev, next, seekto, seekbackward, seekforward across Android, iOS, and desktop.
     registerMediaSessionHandlers({
       onPlay: async () => {
         const { adapter, startPlayback } = get();
@@ -440,6 +439,14 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       onPrev: () => get().prevSong(),
       onSeekTo: (time) => {
         get().seekTo(time);
+      },
+      onSeekBackward: (offset = 10) => {
+        const { currentTime, seekTo } = get();
+        seekTo(Math.max(0, currentTime - offset));
+      },
+      onSeekForward: (offset = 10) => {
+        const { currentTime, duration, seekTo } = get();
+        seekTo(Math.min(duration || Infinity, currentTime + offset));
       },
     });
 
@@ -640,12 +647,26 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     if (sessionId !== radioSessionId) return;
 
     switch (state) {
-      case "PLAYING":
+      case "PLAYING": {
         set({ playState: "PLAYING", userIntent: "playing", error: null, consecutiveErrors: 0 });
-        updateMediaSessionMetadata(queue[currentIndex], true);
+        const dur = adapter?.getDuration?.() || get().duration;
+        const cur = adapter?.getCurrentTime?.() || get().currentTime;
+        updateMediaSessionMetadata(queue[currentIndex], true, dur, cur);
         reassertMediaSessionHandlers();
         onPlaybackStateChange(true);
+
+        // Proactively prewarm the next track immediately after playback begins
+        // so lockscreen and manual skips transition with 0-second latency
+        if (queue.length > 1 && adapter?.preloadNextSong) {
+          const { isShuffleEnabled } = get();
+          const nextIdx = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
+          const nextSong = queue[nextIdx];
+          if (nextSong) {
+            adapter.preloadNextSong(nextSong);
+          }
+        }
         break;
+      }
 
       case "PAUSED": {
         set({ playState: "PAUSED" });
@@ -659,6 +680,8 @@ export const useRadioStore = create<RadioState>((set, get) => ({
         break;
 
       case "ENDED": {
+        // Prevent duplicate transition if already buffering or loading the next track
+        if (get().playState === "BUFFERING") return;
         if (queue.length > 0) {
           const { isShuffleEnabled } = get();
           const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);

@@ -13,6 +13,7 @@ import type { Song } from "../api";
 import type { AudioPlayerAdapter, PlayerState } from "./types";
 import { fetchPipedStream } from "../piped/piped-client";
 import { extractDurationFromUrl } from "../piped/stream-selector";
+import { updateMediaSessionPositionState } from "../media-session";
 
 export class Html5AudioAdapter implements AudioPlayerAdapter {
   private primaryAudio: HTMLAudioElement | null = null;
@@ -30,6 +31,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   private hasUserInteracted = false;
   private isPriming = false;
   private currentVideoId: string | null = null;
+  private hasEndedEmitted = false;
 
   // Request sequencing and cooperative cancellation
   private activeRequestId = 0;
@@ -153,19 +155,25 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       const dur = this.getDuration() || audio.duration;
       if (Number.isFinite(dur) && dur > 0) {
         this._emitProgress(audio.currentTime, dur);
+        updateMediaSessionPositionState(audio.currentTime, dur, audio.playbackRate || 1);
       }
     };
     const onPause = () => {
       // Avoid emitting PAUSED if track just ended or if hardware is silently priming
-      if (this.isPriming || audio.ended) return;
+      if (this.isPriming || audio.ended || this.hasEndedEmitted) return;
       this._emitState("PAUSED");
+      const dur = this.getDuration() || audio.duration;
+      if (Number.isFinite(dur) && dur > 0) {
+        updateMediaSessionPositionState(audio.currentTime, dur, 0);
+      }
     };
     const onWaiting = () => {
       if (this.isPriming) return;
       this._emitState("BUFFERING");
     };
     const onEnded = () => {
-      if (this.isPriming) return;
+      if (this.isPriming || this.hasEndedEmitted) return;
+      this.hasEndedEmitted = true;
       this._emitState("ENDED");
     };
     const onError = () => {
@@ -182,9 +190,10 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       const cur = audio.currentTime;
       if (Number.isFinite(dur) && dur > 0 && Number.isFinite(cur)) {
         this._emitProgress(cur, dur);
+        updateMediaSessionPositionState(cur, dur, audio.playbackRate || 1);
         // If authoritative duration is known, end song when within 0.4s of the end
         // to prevent iOS Safari CoreAudio from playing 5 minutes of trailing silence!
-        if (this.streamDuration && cur >= this.streamDuration - 0.4 && !audio.paused && !audio.ended) {
+        if (this.streamDuration && cur >= this.streamDuration - 0.4 && !audio.paused && !audio.ended && !this.hasEndedEmitted) {
           onEnded();
         }
       }
@@ -195,6 +204,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       const cur = audio.currentTime;
       if (Number.isFinite(dur) && dur > 0) {
         this._emitProgress(Number.isFinite(cur) ? cur : 0, dur);
+        updateMediaSessionPositionState(Number.isFinite(cur) ? cur : 0, dur, audio.playbackRate || 1);
       }
     };
 
@@ -237,6 +247,9 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   async loadVideo(videoId: string): Promise<void> {
     if (!videoId) return;
 
+    // Reset completion emission flag for newly requested song
+    this.hasEndedEmitted = false;
+
     // 1. Cancel any in-flight background preload so it does not contend with live playback
     if (this.preloadAbortController) {
       try {
@@ -261,13 +274,13 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     const controller = new AbortController();
     this.activeAbortController = controller;
 
-    // Check if the secondary audio element already has this song pre-buffered
+    // Check if the secondary audio element already has this song pre-buffered or has a resolved src
     if (
       this.preloadedSongId === videoId &&
       this.secondaryAudio &&
-      this.secondaryAudio.src &&
-      this.secondaryAudio.readyState >= 2 // HAVE_CURRENT_DATA or higher
+      this.secondaryAudio.src
     ) {
+      this.hasEndedEmitted = false;
       // Instant seamless handoff! Swap primary and secondary
       const oldPrimary = this.primaryAudio;
       const newPrimary = this.secondaryAudio;
@@ -285,8 +298,12 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       this._applyVolume(this.primaryAudio);
 
       this._emitState("PLAYING");
-      // Start new audio first to maintain continuous audio session on iOS lockscreen
+      // Start new audio first to maintain continuous audio session on iOS/Android lockscreen
       await this.primaryAudio.play();
+
+      if (this.streamDuration && this.streamDuration > 0) {
+        updateMediaSessionPositionState(0, this.streamDuration, 1);
+      }
 
       // Only after new audio has started playing, clean up the previous audio element
       if (oldPrimary) {
@@ -315,6 +332,10 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       this.primaryAudio.src = stream.url;
       this.primaryAudio.preload = "auto";
       this._applyVolume(this.primaryAudio);
+
+      if (this.streamDuration && this.streamDuration > 0) {
+        updateMediaSessionPositionState(0, this.streamDuration, 1);
+      }
 
       try {
         await this.primaryAudio.play();

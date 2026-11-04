@@ -46,10 +46,16 @@ export function selectBestAudioStream(
 ): AudioStreamInfo | null {
   if (!streams || streams.length === 0) return null;
 
+  // CRITICAL REQUIREMENT: Strictly reject any muxed video streams. Only pure audio streams are permitted.
+  const pureAudioStreams = streams.filter(
+    (s) => !s.mimeType.toLowerCase().startsWith("video/") && (s.format !== "MP4" || s.mimeType.includes("audio"))
+  );
+  if (pureAudioStreams.length === 0) return null;
+
   const apple = isAppleWebKit();
 
   // Test canPlayType when an HTMLAudioElement is provided
-  const playable = streams.filter((stream) => {
+  const playable = pureAudioStreams.filter((stream) => {
     if (!audioElement || typeof audioElement.canPlayType !== "function") {
       // Heuristic fallback if no audio element (e.g. test environment)
       if (apple) {
@@ -66,7 +72,7 @@ export function selectBestAudioStream(
     return test === "probably" || test === "maybe";
   });
 
-  const candidates = playable.length > 0 ? playable : streams;
+  const candidates = playable.length > 0 ? playable : pureAudioStreams;
 
   if (apple) {
     // Prefer M4A / AAC for Apple WebKit
