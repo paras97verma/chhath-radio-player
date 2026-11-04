@@ -253,7 +253,10 @@ class StreamCacheService:
             return cached
 
         # 2. Cache miss: Coordinate via single-flight lock
-        _record_metric("cache_misses")
+        # Only record user-selected playback as a cache miss to prevent background prewarming
+        # from artificially lowering the overall playback hit ratio.
+        if priority == "high":
+            _record_metric("cache_misses")
         redis_client = _get_redis()
         return cls._resolve_with_single_flight(clean_id, redis_client, priority=priority)
 
@@ -578,10 +581,22 @@ class StreamCacheService:
                 pass
 
     @classmethod
+    def reset_metrics(cls) -> None:
+        """Resets all stream resolution telemetry and hit/miss counters in Redis."""
+        redis_client = _get_redis()
+        if redis_client:
+            try:
+                redis_client.delete(STREAM_METRICS_KEY)
+                logger.info("[StreamCache] Successfully reset telemetry metrics in Redis.")
+            except Exception as exc:
+                logger.warning("[StreamCache] Failed to reset metrics key in Redis: %s", exc)
+
+    @classmethod
     def flush_stream_cache(cls, video_id: Optional[str] = None) -> int:
         """
         Flushes stream cache entries from L1 in-memory and L2 Redis.
-        If video_id is provided, flushes only that track. Otherwise flushes all streams.
+        If video_id is provided, flushes only that track. Otherwise flushes all streams
+        and resets resolution telemetry metrics so future measurements reflect clean state.
         Returns the count of Redis keys deleted.
         """
         global _l1_cache, _l1_cache_ts
@@ -597,6 +612,7 @@ class StreamCacheService:
                     deleted_count = redis_client.delete(f"{STREAM_CACHE_PREFIX}{clean_id}")
                 except Exception as exc:
                     logger.warning("[StreamCache] Redis delete failed for %s: %s", clean_id, exc)
+            _record_metric("invalidations", 1)
         else:
             _l1_cache.clear()
             _l1_cache_ts.clear()
@@ -617,11 +633,13 @@ class StreamCacheService:
                             redis_client.delete(*keys)
                         if cursor == 0:
                             break
+
+                    # Reset metrics counters on full on-demand cache flush
+                    redis_client.delete(STREAM_METRICS_KEY)
                 except Exception as exc:
                     logger.warning("[StreamCache] Redis flush all failed: %s", exc)
 
-        _record_metric("invalidations", deleted_count or 1)
-        logger.info("[StreamCache] Flushed %d stream keys (video_id=%s)", deleted_count, video_id or "ALL")
+        logger.info("[StreamCache] Flushed %d stream keys (video_id=%s) and reset metrics", deleted_count, video_id or "ALL")
         return deleted_count
 
     @classmethod
@@ -636,7 +654,8 @@ class StreamCacheService:
             "extractions_failed": 0,
             "expirations_detected": 0,
             "invalidations": 0,
-            "hit_ratio": 0.0,
+            "hit_ratio": 1.0,
+            "total_requests": 0,
         }
         if redis_client:
             try:
@@ -654,6 +673,8 @@ class StreamCacheService:
                 metrics["total_requests"] = total_requests
                 if total_requests > 0:
                     metrics["hit_ratio"] = round(total_hits / total_requests, 4)
+                else:
+                    metrics["hit_ratio"] = 1.0
             except Exception:
                 pass
         return metrics

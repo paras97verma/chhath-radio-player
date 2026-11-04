@@ -635,6 +635,7 @@ function CatalogStatusSection({ token }: { token: string }) {
     try {
       const res = await adminTriggerReconcile(token);
       setReconcileMessage(res.message || "Reconciliation pass dispatched in background!");
+      await fetchBothStatuses(false);
 
       // Poll periodically to catch real-time completion
       let pollCount = 0;
@@ -656,14 +657,16 @@ function CatalogStatusSection({ token }: { token: string }) {
   const [flushing, setFlushing] = useState(false);
 
   const handleFlushAndRefreshCache = async () => {
-    if (!confirm("This will purge all cached audio streams from Redis and launch a complete re-extraction and verification pass across all songs. Continue?")) {
+    if (!confirm("This will purge all cached audio streams from Redis, reset hit/miss telemetry, and launch a complete re-extraction and verification pass across all songs. Continue?")) {
       return;
     }
     setFlushing(true);
-    setReconcileMessage("Flushing stream cache and starting full catalog re-warming pass...");
+    setReconcileMessage("Flushing stream cache, resetting telemetry, and starting catalog re-warming pass...");
     try {
       const res = await adminFlushAndRefreshCache(token);
-      setReconcileMessage(res.message || "Cache flushed and re-warming pass launched!");
+      setReconcileMessage(res.message || "Cache flushed, telemetry reset, and re-warming pass launched!");
+      await fetchBothStatuses(false);
+
       let pollCount = 0;
       const pollInterval = setInterval(async () => {
         pollCount += 1;

@@ -264,6 +264,8 @@ class TestStreamCacheService:
         count = StreamCacheService.flush_stream_cache()
         assert count == 2
         mock_redis.delete.assert_any_call("chhath:stream:vid1", "chhath:stream:vid2")
+        from app.services.stream_cache_service import STREAM_METRICS_KEY
+        mock_redis.delete.assert_any_call(STREAM_METRICS_KEY)
 
     @patch("app.services.stream_cache_service.urllib.request.urlopen")
     @patch("app.services.stream_cache_service._get_redis")

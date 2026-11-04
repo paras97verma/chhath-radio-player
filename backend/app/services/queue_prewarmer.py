@@ -115,7 +115,7 @@ class CatalogReconciliationService:
             return True
 
         try:
-            stream = StreamCacheService.get_stream(clean_id)
+            stream = StreamCacheService.get_stream(clean_id, priority="normal")
             if stream and stream.get("url"):
                 return True
         except Exception as exc:
@@ -270,49 +270,77 @@ class CatalogReconciliationService:
                 pass
 
         # 2. Metadata Synchronization pass: resolve missing duration / incomplete metadata
+        # Read incomplete records in a single fast query and close the DB session immediately
+        # to ensure the connection pool is never starved during upstream network operations.
+        incomplete_items = []
         db_meta = SessionLocal()
-        metadata_synced_count = 0
         try:
-            incomplete_songs = db_meta.query(Song).filter(
-                Song.enabled == True,
-                (Song.metadata_status != "complete") | (Song.duration_seconds == None)
-            ).all()
-            for s in incomplete_songs:
-                vid = (s.youtube_video_id or "").strip()
-                if not vid:
-                    continue
-                # Fast resolution: check if duration is already cached in Redis stream
-                resolved = False
-                if redis_client:
-                    try:
-                        raw = redis_client.get(f"{STREAM_CACHE_PREFIX}{vid}")
-                        if raw:
-                            stream_dict = json.loads(raw)
-                            dur = stream_dict.get("duration")
-                            if dur is not None:
-                                s.duration_seconds = int(dur)
-                                s.metadata_status = "complete"
-                                if not s.thumbnail_url:
-                                    s.thumbnail_url = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
-                                s.last_metadata_sync = datetime.now(timezone.utc)
-                                db_meta.commit()
-                                metadata_synced_count += 1
-                                resolved = True
-                    except Exception:
-                        db_meta.rollback()
-
-                # If not resolved from Redis stream cache, sync from upstream
-                if not resolved:
-                    try:
-                        synced = await asyncio.to_thread(SongService.sync_song_metadata, db_meta, s)
-                        if synced:
-                            metadata_synced_count += 1
-                    except Exception as sync_err:
-                        logger.debug("[CatalogReconciler] Could not sync metadata for %s: %s", vid, sync_err)
+            incomplete_items = [
+                (s.id, (s.youtube_video_id or "").strip())
+                for s in db_meta.query(Song).filter(
+                    Song.enabled == True,
+                    (Song.metadata_status != "complete") | (Song.duration_seconds == None)
+                ).all()
+            ]
         except Exception as exc:
-            logger.warning("[CatalogReconciler] Metadata sync pass error: %s", exc)
+            logger.warning("[CatalogReconciler] Metadata sync query error: %s", exc)
         finally:
             db_meta.close()
+
+        metadata_synced_count = 0
+        from app.services.song_service import fetch_video_metadata
+
+        for s_id, vid in incomplete_items:
+            if not vid:
+                continue
+            await asyncio.sleep(0.01)
+
+            # Fast resolution: check if duration is already cached in Redis stream
+            dur: Optional[float] = None
+            if redis_client:
+                try:
+                    raw = redis_client.get(f"{STREAM_CACHE_PREFIX}{vid}")
+                    if raw:
+                        stream_dict = json.loads(raw)
+                        dur = stream_dict.get("duration")
+                except Exception:
+                    pass
+
+            meta: Optional[Dict[str, Any]] = None
+            if dur is None:
+                try:
+                    meta = await asyncio.to_thread(fetch_video_metadata, vid)
+                    if meta and meta.get("duration_seconds") is not None:
+                        dur = float(meta["duration_seconds"])
+                except Exception as sync_err:
+                    logger.debug("[CatalogReconciler] Could not sync metadata for %s: %s", vid, sync_err)
+
+            if dur is not None or meta:
+                # Brief isolated single-record DB transaction (releases connection immediately)
+                db_write = SessionLocal()
+                try:
+                    song_record = db_write.get(Song, s_id)
+                    if song_record:
+                        if dur is not None:
+                            song_record.duration_seconds = int(dur)
+                            song_record.metadata_status = "complete"
+                        if meta:
+                            if (not song_record.title or song_record.title.startswith("Chhath Song (")) and meta.get("title"):
+                                song_record.title = meta["title"]
+                            if (not song_record.artist or song_record.artist in ("Chhath Radio", "Traditional", "Chhath Singer")) and meta.get("artist"):
+                                song_record.artist = meta["artist"]
+                            if meta.get("thumbnail_url"):
+                                song_record.thumbnail_url = meta["thumbnail_url"]
+                        if not song_record.thumbnail_url:
+                            song_record.thumbnail_url = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+                        song_record.last_metadata_sync = datetime.now(timezone.utc)
+                        db_write.commit()
+                        metadata_synced_count += 1
+                except Exception as write_err:
+                    db_write.rollback()
+                    logger.warning("[CatalogReconciler] Failed to save metadata for %s: %s", vid, write_err)
+                finally:
+                    db_write.close()
 
         if metadata_synced_count > 0:
             logger.info("[CatalogReconciler] Successfully synced metadata for %d songs.", metadata_synced_count)
