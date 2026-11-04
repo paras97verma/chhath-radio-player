@@ -1,112 +1,227 @@
-/**
- * E2E tests for the Chhath Radio public page.
- *
- * Runs against the live Next.js dev server (http://localhost:3000).
- * Verifies page load, player controls, song display, and listener count.
- */
+/** Cross-browser playback checks against deterministic Invidious metadata/media mocks. */
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Route } from "@playwright/test";
 
-/**
- * Dismiss the TuneInSplash overlay so underlying UI is interactable.
- *
- * The splash is a full-screen dialog at z-[9999]. Its inner card stops
- * propagation, so we must click the "Tune In" button directly. After clicking,
- * the splash fades out over 300ms (CSS transition) then unmounts.
- */
-async function dismissSplash(page: Page) {
+const SONGS = [
+  {
+    id: "e2e-song-1",
+    title: "First E2E Song",
+    artist: "Test Singer",
+    youtube_video_id: "E2E12345678",
+    youtube_url: null,
+    category: "Chhath",
+    enabled: true,
+    sort_order: 1,
+  },
+  {
+    id: "e2e-song-2",
+    title: "Second E2E Song",
+    artist: "Test Singer",
+    youtube_video_id: "E2E23456789",
+    youtube_url: null,
+    category: "Chhath",
+    enabled: true,
+    sort_order: 2,
+  },
+];
+
+type PlaybackScenario = "progress" | "delayed-progress" | "fallback" | "fail";
+
+function streamResponse(videoId: string) {
+  const now = Math.floor(Date.now() / 1000);
+  const providerOrigin = "https://invidious.example.test";
+  const directUrl = `https://media.example.test/${videoId}.m4a`;
+  const proxyUrl = `${providerOrigin}/latest_version?id=${videoId}&itag=140&local=true`;
+  const source = (mode: "direct" | "proxy", url: string) => ({
+    mode,
+    provider: "invidious",
+    provider_origin: providerOrigin,
+    url,
+    itag: 140,
+    mime_type: 'audio/mp4; codecs="mp4a.40.2"',
+    codec: "mp4a.40.2",
+    resolved_at: now,
+    expires_at: null,
+    refresh_at: now + 1200,
+    validation_state: "validated",
+  });
+
+  return {
+    schema_version: 1,
+    video_id: videoId,
+    generation: 1,
+    refreshed_at: now,
+    duration: 180,
+    sources: [source("direct", directUrl), source("proxy", proxyUrl)],
+  };
+}
+
+async function mockPlaybackEnvironment(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    type TestWindow = Window & {
+      __radioPlaybackScenario?: PlaybackScenario;
+      __radioAudioAttempts?: string[];
+    };
+    const testWindow = window as TestWindow;
+    testWindow.__radioPlaybackScenario = "progress";
+    testWindow.__radioAudioAttempts = [];
+
+    type MockAudio = HTMLMediaElement & { __radioMockSrc?: string };
+    Object.defineProperty(HTMLMediaElement.prototype, "src", {
+      configurable: true,
+      get(this: MockAudio) {
+        return this.__radioMockSrc ?? "";
+      },
+      set(this: MockAudio, value: string) {
+        this.__radioMockSrc = value ? new URL(value, document.baseURI).href : "";
+      },
+    });
+    const removeAttribute = Element.prototype.removeAttribute;
+    Element.prototype.removeAttribute = function (name: string) {
+      if (this instanceof HTMLMediaElement && name.toLowerCase() === "src") {
+        (this as MockAudio).__radioMockSrc = "";
+      }
+      return removeAttribute.call(this, name);
+    };
+
+    HTMLMediaElement.prototype.load = function () {};
+    HTMLMediaElement.prototype.pause = function () {
+      Object.defineProperty(this, "paused", { configurable: true, value: true });
+    };
+    HTMLMediaElement.prototype.play = function () {
+      const audio = this;
+      const sourceUrl = audio.src;
+      if (sourceUrl.startsWith("data:")) return Promise.resolve();
+
+      const mode = new URL(sourceUrl).pathname === "/latest_version" ? "proxy" : "direct";
+      testWindow.__radioAudioAttempts?.push(mode);
+      const scenario = testWindow.__radioPlaybackScenario ?? "progress";
+      const shouldFail = scenario === "fail" || (scenario === "fallback" && mode === "direct");
+      const delay = scenario === "delayed-progress" ? 700 : 0;
+
+      Object.defineProperty(audio, "paused", { configurable: true, value: false });
+      Object.defineProperty(audio, "ended", { configurable: true, value: false });
+      Reflect.deleteProperty(audio, "error");
+      if (scenario === "delayed-progress") audio.dispatchEvent(new Event("canplay"));
+      window.setTimeout(() => {
+        if (shouldFail) {
+          Object.defineProperty(audio, "error", { configurable: true, value: { code: 2 } });
+          audio.dispatchEvent(new Event("error"));
+          return;
+        }
+
+        Object.defineProperty(audio, "currentTime", { configurable: true, value: 0.25 });
+        audio.dispatchEvent(new Event("playing"));
+        audio.dispatchEvent(new Event("timeupdate"));
+        window.setTimeout(() => {
+          Object.defineProperty(audio, "currentTime", { configurable: true, value: 0.5 });
+          audio.dispatchEvent(new Event("timeupdate"));
+        }, 350);
+      }, delay);
+      return Promise.resolve();
+    };
+  });
+
+  await page.route("**/api/radio/queue", (route: Route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(SONGS) }),
+  );
+  await page.route("**/api/stream**", (route: Route) => {
+    const requestUrl = new URL(route.request().url());
+    if (requestUrl.pathname.endsWith("/source-failure")) {
+      return route.fulfill({ status: 204, body: "" });
+    }
+    const videoId = requestUrl.searchParams.get("v");
+    if (!videoId) return route.fulfill({ status: 400, body: "missing video id" });
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: { "Cache-Control": "no-store" },
+      body: JSON.stringify(streamResponse(videoId)),
+    });
+  });
+}
+
+async function openRadio(page: Page): Promise<void> {
+  await mockPlaybackEnvironment(page);
+  await page.goto("/");
+  await page.waitForLoadState("domcontentloaded");
+  await expect(page.getByText("First E2E Song", { exact: true })).toBeVisible({ timeout: 10_000 });
+}
+
+async function startFromSplash(page: Page): Promise<void> {
   const splash = page.getByRole("dialog", { name: /click to start/i });
-  const isSplashVisible = await splash.isVisible().catch(() => false);
-  if (!isSplashVisible) return;
+  if (await splash.isVisible().catch(() => false)) {
+    await page.getByRole("button", { name: /start chhath radio|tune in/i }).click();
+    await expect(splash).not.toBeVisible({ timeout: 3_000 });
+  }
+}
 
-  // Click the "Tune In" button — this triggers handleClick() → fading=true
-  const tuneInBtn = page.getByRole("button", { name: /tune in|start chhath radio/i });
-  await tuneInBtn.click();
+async function setPlaybackScenario(page: Page, scenario: PlaybackScenario): Promise<void> {
+  await page.evaluate((value) => {
+    (window as Window & { __radioPlaybackScenario?: PlaybackScenario }).__radioPlaybackScenario = value;
+  }, scenario);
+}
 
-  // Wait for the 300ms CSS fade + React unmount (give it up to 3s)
-  await expect(splash).not.toBeVisible({ timeout: 3_000 });
+async function playbackAttempts(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as Window & { __radioAudioAttempts?: string[] }).__radioAudioAttempts ?? []);
 }
 
 test.describe("Chhath Radio — Public Page", () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForLoadState("domcontentloaded");
-  });
-
   test("page loads without JS errors", async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", (err) => errors.push(err.message));
-    await page.waitForLoadState("networkidle");
+    await openRadio(page);
+    await expect(page).toHaveTitle(/Chhath Radio/i);
     expect(errors).toHaveLength(0);
   });
 
-  test("page title contains 'Chhath Radio'", async ({ page }) => {
-    await expect(page).toHaveTitle(/Chhath Radio/i);
+  test("radio controls and listener count render", async ({ page }) => {
+    await openRadio(page);
+    await startFromSplash(page);
+    await expect(page.getByRole("region", { name: "Radio player" })).toBeVisible();
+    await expect(page.getByRole("status").first()).toBeVisible();
+  });
+});
+
+test.describe("Chhath Radio — Cross-browser playback recovery", () => {
+  test("PLAYING waits for media progress, not canplay alone", async ({ page }) => {
+    await openRadio(page);
+    await setPlaybackScenario(page, "delayed-progress");
+    const status = page.getByRole("status").first();
+
+    await startFromSplash(page);
+    await expect(status).toContainText(/Connecting to audio|Starting audio/, { timeout: 2_000 });
+    await expect(status).toContainText("On air", { timeout: 5_000 });
+    await expect.poll(() => playbackAttempts(page)).toContain("direct");
   });
 
-  test("play button is visible", async ({ page }) => {
-    await dismissSplash(page);
-    // Use exact match to avoid matching "Toggle playlist" button
-    const playButton = page.getByRole("button", { name: "Play", exact: true });
-    await expect(playButton).toBeVisible({ timeout: 10_000 });
+  test("failed direct media falls back to Invidious proxy and reaches progress", async ({ page }) => {
+    await openRadio(page);
+    await setPlaybackScenario(page, "fallback");
+    await startFromSplash(page);
+
+    await expect(page.getByRole("status").first()).toContainText("On air", { timeout: 5_000 });
+    await expect.poll(() => playbackAttempts(page)).toEqual(expect.arrayContaining(["direct", "proxy"]));
   });
 
-  test("radio controls group has accessible label", async ({ page }) => {
-    await dismissSplash(page);
-    // The radio player renders a group with aria-label="Radio controls"
-    // Fall back to checking the player container is present
-    const controls = page.getByRole("group", { name: "Radio controls" });
-    const isVisible = await controls.isVisible({ timeout: 10_000 }).catch(() => false);
-    if (!isVisible) {
-      // Fallback: verify the radio player pill is present
-      await expect(page.locator("[data-testid='radio-player'], [aria-label*='radio' i]").first()).toBeVisible({ timeout: 5_000 });
-    } else {
-      await expect(controls).toBeVisible();
-    }
-  });
+  test("failure of both modes keeps the selected song instead of skipping", async ({ page }) => {
+    await openRadio(page);
+    await setPlaybackScenario(page, "fail");
+    await startFromSplash(page);
 
-  test("listener count element is visible on page", async ({ page }) => {
-    await dismissSplash(page);
-    // Try to find a listener count element (role=status or aria-label containing 'listener')
-    const listenerEl = page.getByRole("status").or(
-      page.locator("[aria-label*='listener' i]")
-    ).first();
-    const hasListenerCount = await listenerEl.isVisible().catch(() => false);
-    // Soft check — the element may not have a role/aria-label in all implementations.
-    // At minimum, the page title should be present (confirms page loaded).
-    if (!hasListenerCount) {
-      await expect(page).toHaveTitle(/Chhath Radio/i);
-    }
-  });
-
-  test("clicking play button changes UI state", async ({ page }) => {
-    await dismissSplash(page);
-    // Use exact match to avoid strict mode violation with "Toggle playlist"
-    const playButton = page.getByRole("button", { name: "Play", exact: true });
-    await expect(playButton).toBeVisible({ timeout: 10_000 });
-    await playButton.click();
-    // After clicking play, the button label or state should change
-    // (buffering, playing, or pause button appears)
-    await page.waitForTimeout(1000);
-    // The play button should either change label or a pause button should appear
-    const pauseButton = page.getByRole("button", { name: /pause/i });
-    const stillPlayButton = page.getByRole("button", { name: "Play", exact: true });
-    const eitherVisible = await pauseButton.isVisible().catch(() => false) ||
-                          await stillPlayButton.isVisible().catch(() => false);
-    expect(eitherVisible).toBe(true);
+    await expect.poll(() => playbackAttempts(page)).toEqual(expect.arrayContaining(["direct", "proxy"]));
+    const player = page.getByRole("region", { name: "Radio player" });
+    await expect(player.getByText("First E2E Song", { exact: true })).toBeVisible();
+    await expect(player.getByText("Second E2E Song", { exact: true })).toHaveCount(0);
   });
 });
 
 test.describe("Chhath Radio — Admin Link", () => {
   test("admin page is accessible at /admin", async ({ page }) => {
-    // The admin page exists and redirects unauthenticated users to login
+    await mockPlaybackEnvironment(page);
     await page.goto("/admin");
-    // Should either show the admin login page or redirect to /admin/login
     await page.waitForLoadState("domcontentloaded");
-    const url = page.url();
-    // Admin route should be reachable (not 404)
-    expect(url).toMatch(/\/admin/);
-    // The page should have some admin-related content (title check is reliable)
+    expect(page.url()).toMatch(/\/admin/);
     await expect(page).toHaveTitle(/.+/);
   });
 });

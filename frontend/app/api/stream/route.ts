@@ -1,224 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
-import { extractDurationFromUrl } from "@/lib/piped/stream-selector";
-
-interface CachedStreamResult {
-  url: string;
-  direct_url?: string;
-  proxy_url?: string;
-  status?: string;
-  sources?: any[];
-  format: string;
-  mimeType: string;
-  bitrate: number;
-  duration?: number;
-  title?: string;
-  timestamp: number;
-  cached?: boolean;
-  cache_tier?: string;
-}
-
-const streamCache = new Map<string, CachedStreamResult>();
-const CACHE_TTL_MS = 15 * 60 * 1000; // 15 mins
 
 const BACKEND_URL =
   process.env.BACKEND_URL ||
   process.env.NEXT_PUBLIC_API_URL ||
   "http://localhost:8000";
+const NO_STORE_HEADERS = { "Cache-Control": "no-store, max-age=0" };
 
-function isUrlExpired(url: string): boolean {
-  if (!url) return true;
-  try {
-    const u = new URL(url);
-    const exp = u.searchParams.get("expire");
-    if (exp) {
-      const expSec = Number(exp);
-      if (!isNaN(expSec) && Date.now() / 1000 >= expSec - 60) {
-        return true;
-      }
-    }
-  } catch {}
-  return false;
-}
+export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const videoId = searchParams.get("v") || searchParams.get("videoId");
-  const forceFresh = searchParams.get("force_fresh") === "true";
+  const incoming = new URL(request.url);
+  const videoId = incoming.searchParams.get("v") || incoming.searchParams.get("videoId");
 
-  if (!videoId || videoId.length < 5) {
-    return NextResponse.json({ error: "Missing or invalid video ID" }, { status: 400 });
-  }
-
-  // 1. Check in-memory Next.js server cache (bypassed if forceFresh is requested)
-  if (!forceFresh) {
-    const cached = streamCache.get(videoId);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS && !isUrlExpired(cached.url)) {
-      return NextResponse.json({ ...cached, cached: true, cache_tier: "NEXT_MEM" });
-    }
-  } else {
-    streamCache.delete(videoId);
-  }
-
-  // 2. Primary: query FastAPI Backend with Redis high-concurrency stream caching
-  try {
-    const backendRes = await fetch(
-      `${BACKEND_URL}/api/stream?v=${encodeURIComponent(videoId)}&priority=high${forceFresh ? "&force_fresh=true" : ""}`,
-      {
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(12000),
-      }
+  if (!videoId || !/^[A-Za-z0-9_-]{5,32}$/.test(videoId)) {
+    return NextResponse.json(
+      { error: "invalid_video_id" },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
-
-    if (backendRes.ok) {
-      const data = await backendRes.json();
-      if (data && data.url && !isUrlExpired(data.url)) {
-        const streamDuration =
-          typeof data.duration === "number" && data.duration > 0
-            ? data.duration
-            : extractDurationFromUrl(data.url) || undefined;
-
-        const result: CachedStreamResult = {
-          url: data.url,
-          direct_url: data.direct_url,
-          proxy_url: data.proxy_url,
-          status: data.status,
-          sources: data.sources,
-          format: data.format || "M4A",
-          mimeType: data.mimeType || 'audio/mp4; codecs="mp4a.40.2"',
-          bitrate: data.bitrate || 128000,
-          duration: streamDuration,
-          title: data.title,
-          timestamp: Date.now(),
-          cached: data.cached,
-          cache_tier: data.cache_tier || "REDIS_BACKEND",
-        };
-        streamCache.set(videoId, result);
-        return NextResponse.json(result);
-      }
-    }
-  } catch (backendErr) {
-    console.warn("[NextApiStream] Backend Redis stream resolution fallback:", backendErr);
   }
 
-  // 3. Fallback: Direct extraction if backend is offline or starting
-  const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-  const candidateEndpoints = [
-    {
-      type: "invidious",
-      url: `https://yt.chocolatemoo53.com/api/v1/videos/${videoId}?fields=title,adaptiveFormats,formatStreams`,
-      name: "Chocolatemoo (USA - Verified Active)",
-    },
-    {
-      type: "invidious",
-      url: `https://invidious.tiekoetter.com/api/v1/videos/${videoId}?fields=title,adaptiveFormats,formatStreams`,
-      name: "Tiekoetter (Germany)",
-    },
-    {
-      type: "invidious",
-      url: `https://invidious.nerdvpn.de/api/v1/videos/${videoId}?fields=title,adaptiveFormats,formatStreams`,
-      name: "NerdVPN (Canada)",
-    },
-    {
-      type: "invidious",
-      url: `https://inv.nadeko.net/api/v1/videos/${videoId}?fields=title,adaptiveFormats,formatStreams`,
-      name: "Nadeko (Chile)",
-    },
-    {
-      type: "piped",
-      url: `https://api.piped.private.coffee/streams/${videoId}`,
-      name: "Private Coffee",
-    },
-    {
-      type: "piped",
-      url: `https://pipedapi.ducks.party/streams/${videoId}`,
-      name: "Ducks Party",
-    },
-  ];
-
-  for (const candidate of candidateEndpoints) {
-    try {
-      const res = await fetch(candidate.url, {
-        headers: { "User-Agent": userAgent },
-        signal: AbortSignal.timeout(4500),
-      });
-
-      if (!res.ok) continue;
-
-      const data = await res.json();
-
-      if (candidate.type === "invidious") {
-        const adaptive = (data.adaptiveFormats || []).filter(
-          (f: any) => (f.type || "").includes("audio") && f.url
-        );
-
-        if (adaptive.length > 0) {
-          // Prioritize AAC-LC (mp4a.40.2 / itag 140) to prevent iOS Safari 2x duration inflation
-          const m4aStreams = adaptive
-            .filter((f: any) => (f.type || "").includes("mp4"))
-            .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
-
-          const aacLc = m4aStreams.find((f: any) => (f.type || "").includes("mp4a.40.2"));
-          const best = aacLc || m4aStreams[0] || adaptive[0];
-
-          const streamDuration =
-            Number(data.lengthSeconds || 0) ||
-            (best.approxDurationMs ? Number(best.approxDurationMs) / 1000 : 0) ||
-            extractDurationFromUrl(best.url) ||
-            undefined;
-
-          const result: CachedStreamResult = {
-            url: best.url,
-            format: (best.type || "").includes("mp4") ? "M4A" : "WEBM_OPUS",
-            mimeType: best.type || 'audio/mp4; codecs="mp4a.40.2"',
-            bitrate: best.bitrate || 128000,
-            duration: streamDuration,
-            title: data.title,
-            timestamp: Date.now(),
-            cached: false,
-            cache_tier: "DIRECT_FALLBACK",
-          };
-
-          streamCache.set(videoId, result);
-          return NextResponse.json(result);
-        }
-      } else if (candidate.type === "piped") {
-        const audioStreams = data.audioStreams || [];
-        if (audioStreams.length > 0) {
-          const m4aStreams = audioStreams
-            .filter((s: any) => (s.mimeType || "").includes("mp4") || s.format === "M4A")
-            .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
-
-          const aacLc = m4aStreams.find((s: any) => (s.mimeType || "").includes("mp4a.40.2"));
-          const best = aacLc || m4aStreams[0] || audioStreams[0];
-
-          const streamDuration =
-            Number(data.duration || 0) ||
-            extractDurationFromUrl(best.url) ||
-            undefined;
-
-          const result: CachedStreamResult = {
-            url: best.url,
-            format: best.format || "M4A",
-            mimeType: best.mimeType || 'audio/mp4; codecs="mp4a.40.2"',
-            bitrate: best.bitrate || 128000,
-            duration: streamDuration,
-            title: data.title,
-            timestamp: Date.now(),
-            cached: false,
-            cache_tier: "DIRECT_FALLBACK",
-          };
-
-          streamCache.set(videoId, result);
-          return NextResponse.json(result);
-        }
-      }
-    } catch {
-      // Try next candidate
-    }
+  const backendUrl = new URL(`${BACKEND_URL.replace(/\/+$/, "")}/api/stream`);
+  backendUrl.searchParams.set("v", videoId);
+  backendUrl.searchParams.set("priority", incoming.searchParams.get("priority") || "high");
+  if (incoming.searchParams.get("force_fresh") === "true") {
+    backendUrl.searchParams.set("force_fresh", "true");
   }
 
-  return NextResponse.json(
-    { error: `Could not resolve playable audio stream for video ${videoId}` },
-    { status: 502 }
-  );
+  try {
+    const backendResponse = await fetch(backendUrl, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000),
+    });
+
+    return new NextResponse(backendResponse.body, {
+      status: backendResponse.status,
+      headers: {
+        "Content-Type": backendResponse.headers.get("content-type") || "application/json",
+        ...NO_STORE_HEADERS,
+      },
+    });
+  } catch {
+    return NextResponse.json(
+      { error: "stream_unavailable", retryable: true },
+      { status: 503, headers: NO_STORE_HEADERS },
+    );
+  }
 }

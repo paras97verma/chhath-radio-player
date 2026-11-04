@@ -18,8 +18,14 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useRadioStore, getFavoriteSongs } from "@/lib/radio-store";
-import { updateMediaSessionPositionState, updateMediaSessionMetadata } from "@/lib/media-session";
+import {
+  updateMediaSessionPositionState,
+  updateMediaSessionMetadata,
+  setMediaSessionPlaybackState,
+} from "@/lib/media-session";
+import { onPlaybackStateChange } from "@/lib/wake-lock";
 import type { Song } from "@/lib/api";
+import PlayerRecoveryPanel from "./PlayerRecoveryPanel";
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -119,7 +125,7 @@ function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }
     >
       {/* Outer vinyl ring */}
       <div
-        className="absolute inset-0 rounded-full"
+        className="radio-player-vinyl absolute inset-0 rounded-full"
         style={{
           background: "conic-gradient(from 0deg, #1a0a00, #3a1a00, #1a0a00, #2a1200, #1a0a00)",
           animation: isPlaying ? "vinylSpin 4s linear infinite" : "none",
@@ -129,7 +135,7 @@ function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }
       {[0.85, 0.70, 0.55].map((r, i) => (
         <div
           key={i}
-          className="absolute rounded-full border border-white/5"
+          className="radio-player-vinyl absolute rounded-full border border-white/5"
           style={{
             inset: `${(1 - r) * 50}%`,
             animation: isPlaying ? "vinylSpin 4s linear infinite" : "none",
@@ -138,7 +144,7 @@ function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }
       ))}
       {/* Album art center */}
       <div
-        className="absolute rounded-full overflow-hidden"
+        className="radio-player-vinyl absolute rounded-full overflow-hidden"
         style={{
           inset: "18%",
           animation: isPlaying ? "vinylSpin 4s linear infinite" : "none",
@@ -250,6 +256,14 @@ function ProgressBar({
     }
   };
 
+  const handleSeekKeyUp = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(e.key)) return;
+    isDraggingRef.current = false;
+    seekFreezeUntilRef.current = Date.now() + 600;
+    seekTo((Number(e.currentTarget.value) / 1000) * duration);
+    if (!isPlaying) setTimeout(() => { adapter?.pause(); }, 150);
+  };
+
   return (
     <div className="flex items-center gap-2 w-full px-3.5 sm:px-5 pb-2">
       <span className="text-white/50 text-[9px] w-6 text-right shrink-0 tabular-nums">{fmt(currentTime)}</span>
@@ -292,9 +306,10 @@ function ProgressBar({
           onTouchStart={handleSeekStart}
           onMouseUp={handleSeekEnd}
           onTouchEnd={handleSeekEnd}
+          onKeyUp={handleSeekKeyUp}
           className="absolute inset-0 w-full opacity-0 cursor-pointer h-full"
           aria-label="Seek"
-          tabIndex={-1}
+          aria-valuetext={`${fmt(currentTime)} of ${fmt(duration)}`}
         />
       </div>
       <span className="text-white/50 text-[9px] w-6 shrink-0 tabular-nums">{fmt(duration)}</span>
@@ -341,7 +356,6 @@ function VolumeControl() {
           aria-label="Volume"
           className="absolute inset-0 w-full opacity-0 cursor-pointer h-full"
           style={{ accentColor: "#f97316" }}
-          tabIndex={-1}
         />
       </div>
     </div>
@@ -521,6 +535,7 @@ export default function RadioPlayer({
   const showPlaylist = showPlaylistProp ?? false;
   const showPlaylistRef = useRef(false);
   const [mounted, setMounted] = useState(false);
+  const [hasMediaProgress, setHasMediaProgress] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -553,7 +568,41 @@ export default function RadioPlayer({
   const currentSong = queue[currentIndex] ?? null;
   const isPlaying = playState === "PLAYING";
   const isBuffering = playState === "BUFFERING";
+  const isActuallyPlaying = isPlaying && hasMediaProgress;
+  const hasPlaybackError = playState === "ERROR" || Boolean(error);
+  const statusLabel = hasPlaybackError
+    ? "Playback interrupted"
+    : isBuffering
+      ? "Connecting to audio"
+      : isActuallyPlaying
+        ? "On air"
+        : isPlaying
+          ? "Starting audio"
+          : playState === "PAUSED"
+            ? "Paused"
+            : currentSong
+              ? "Ready to play"
+              : isReady
+                ? "Choose a song"
+                : "Loading your station";
   const isCurrentSongFavorite = currentSong ? isFavorite(currentSong.id) : false;
+
+  useEffect(() => {
+    setHasMediaProgress(false);
+    if (!isPlaying || !adapter || !currentSong) return;
+
+    let previousTime = adapter.getCurrentTime();
+    const interval = window.setInterval(() => {
+      const currentTime = adapter.getCurrentTime();
+      if (currentTime > previousTime + 0.03) {
+        setHasMediaProgress(true);
+        window.clearInterval(interval);
+      }
+      previousTime = currentTime;
+    }, 250);
+
+    return () => window.clearInterval(interval);
+  }, [adapter, currentSong?.youtube_video_id, isPlaying]);
 
   // Keyboard controls
   useEffect(() => {
@@ -586,10 +635,8 @@ export default function RadioPlayer({
       } else if (e.code === "ArrowLeft") {
         e.preventDefault();
         if (e.shiftKey) {
-          if (state.currentIndex > 0) {
-            triggerFlash("prev");
-            await state.prevSong();
-          }
+          triggerFlash("prev");
+          await state.prevSong();
         } else {
           state.seekTo(Math.max(0, state.currentTime - 10));
           triggerFlash("seekBack");
@@ -624,7 +671,7 @@ export default function RadioPlayer({
 
   const handlePrev = useCallback(async () => {
     const state = useRadioStore.getState();
-    if (!state.adapter || state.currentIndex <= 0) return;
+    if (!state.adapter) return;
     triggerFlash("prev");
     await state.prevSong();
   }, [triggerFlash]);
@@ -645,7 +692,9 @@ export default function RadioPlayer({
       await state.adapter.loadVideo(song.youtube_video_id);
     } catch (err: any) {
       if (err?.name !== "AbortError") {
-        useRadioStore.setState({ playState: "ERROR", error: "Could not play track" });
+        useRadioStore.setState({ playState: "ERROR", userIntent: "idle", error: "Could not play track" });
+        onPlaybackStateChange(false);
+        setMediaSessionPlaybackState("none");
       }
     }
   }, []);
@@ -664,7 +713,7 @@ export default function RadioPlayer({
         }
       `}</style>
 
-      <div className="relative w-full" role="region" aria-label="Radio player">
+      <div className="radio-player relative w-full" role="region" aria-label="Radio player">
         {/* Playlist drawer */}
         {showPlaylist && isReady && (
           <PlaylistDrawer onClose={() => onPlaylistToggle?.()} onPlaySong={handlePlaySong} />
@@ -683,15 +732,11 @@ export default function RadioPlayer({
         >
           {/* Song name & artist strip at top of pill (both desktop and mobile) */}
           <div
-            className="flex items-center justify-between px-4 sm:px-5 py-1.5 border-b h-12 shrink-0 relative"
+            className="flex items-center justify-between px-4 sm:px-5 py-2 border-b min-h-[60px] shrink-0 relative"
             style={{ borderColor: "rgba(255,138,80,0.18)" }}
           >
-            <div className="min-w-0 flex-1 text-center px-6 flex flex-col justify-center h-full">
-              {error ? (
-                <p className="text-red-400 text-xs font-medium truncate" role="alert">{error}</p>
-              ) : !isReady ? (
-                <p className="text-amber-200/50 text-xs animate-pulse tracking-wide font-medium">Tuning in…</p>
-              ) : currentSong ? (
+            <div className="min-w-0 flex-1 text-center px-2 sm:px-6 flex flex-col justify-center">
+              {currentSong ? (
                 <>
                   <div className="flex items-center justify-center gap-1.5 min-w-0">
                     <p className="text-[#fff7ed] text-xs sm:text-sm font-semibold truncate leading-tight tracking-wide">
@@ -707,27 +752,43 @@ export default function RadioPlayer({
                       </span>
                     )}
                   </div>
-                  <p className="text-amber-200/70 text-[10px] sm:text-[11px] truncate mt-0.5 flex items-center justify-center gap-1.5 font-medium tracking-wide">
-                    {isPlaying && (
-                      <span
-                        className="inline-block w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0"
-                        style={{ animation: "nmFabPulse 1.8s ease-in-out infinite" }}
-                        aria-hidden="true"
-                      />
-                    )}
+                  <p className="text-amber-200/70 text-[10px] sm:text-[11px] truncate mt-0.5 font-medium tracking-wide">
                     {currentSong.artist}
                   </p>
                 </>
               ) : (
-                <p className="text-white/30 text-xs font-medium">No songs loaded</p>
+                <p className="text-white/70 text-xs font-medium">{isReady ? "Choose a song to begin" : "Loading your station…"}</p>
               )}
+              <div
+                className={`mt-1 inline-flex items-center justify-center gap-1.5 text-[10px] font-semibold tracking-wide ${hasPlaybackError ? "text-rose-200" : isActuallyPlaying ? "text-emerald-200" : isBuffering || isPlaying ? "text-amber-100" : "text-white/55"}`}
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full shrink-0 ${hasPlaybackError ? "bg-rose-400" : isActuallyPlaying ? "bg-emerald-400" : isBuffering || isPlaying ? "bg-amber-300 animate-pulse" : "bg-white/35"}`}
+                  aria-hidden="true"
+                />
+                <span>{statusLabel}</span>
+                <Spectrogram isPlaying={isActuallyPlaying} />
+              </div>
             </div>
           </div>
+
+          {hasPlaybackError && (
+            <PlayerRecoveryPanel
+              error={error}
+              canRetry={Boolean(currentSong) && !isBuffering}
+              canSkip={isReady && queue.length > 1}
+              onRetry={() => void startPlayback()}
+              onSkip={() => void nextSong()}
+            />
+          )}
 
           {/* Main row */}
           <div className="flex items-center justify-between gap-1.5 sm:gap-3 px-3.5 sm:px-5 pt-2.5 sm:pt-3 pb-2 min-w-0">
             {/* Vinyl art */}
-            <VinylArt src={albumArt} isPlaying={isPlaying} />
+              <VinylArt src={albumArt} isPlaying={isActuallyPlaying} />
 
             {/* Controls */}
             <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
@@ -741,7 +802,7 @@ export default function RadioPlayer({
                   color: keyFlash === "prev" || keyFlash === "seekBack" ? "#ffa726" : "rgba(255,255,255,0.5)",
                   background: keyFlash === "prev" || keyFlash === "seekBack" ? "rgba(255, 138, 80, 0.25)" : "transparent",
                   boxShadow: keyFlash === "prev" || keyFlash === "seekBack" ? "0 0 16px rgba(255, 138, 80, 0.45)" : "none",
-                  opacity: (!isReady || currentIndex <= 0) && !keyFlash ? 0.2 : 1,
+                  opacity: !isReady && !keyFlash ? 0.2 : 1,
                 }}
               >
                 <IconPrev />
@@ -811,7 +872,7 @@ export default function RadioPlayer({
               })()}
 
               {/* Divider */}
-              <div className="w-px h-4 sm:h-5 bg-white/8 mx-0.5 sm:mx-1" />
+              <div className="hidden sm:block w-px h-4 sm:h-5 bg-white/8 mx-0.5 sm:mx-1" />
 
               {/* Volume — always visible inline */}
               {isReady && <VolumeControl />}

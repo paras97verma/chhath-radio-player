@@ -4,7 +4,7 @@ All endpoints require a valid JWT Bearer token.
 """
 import uuid
 from typing import Optional, Union, List
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -237,12 +237,14 @@ async def refresh_entire_catalog_cache(
 
 @router.get("/status", status_code=status.HTTP_200_OK)
 def get_admin_catalog_status(
+    response: Response,
     _admin: Admin = Depends(get_current_admin),
 ) -> dict:
     """
     GET /api/admin/songs/status
     Returns complete catalog readiness and telemetry metrics.
     """
+    response.headers["Cache-Control"] = "no-store, max-age=0"
     from app.services.queue_prewarmer import CatalogReconciliationService
 
     return CatalogReconciliationService.get_catalog_readiness_status()

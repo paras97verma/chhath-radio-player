@@ -4,10 +4,7 @@ Chhath Radio — High-Concurrency Stream Cache & Resolution Service
 Integrates Redis for high-scalability audio stream resolution:
 1. Two-tier caching (L1 In-Memory + L2 Redis) with proactive expiry detection (10-minute safety buffer).
 2. Fast-path cache lookup for instant user song selection (returns in 1-2ms).
-3. Direct-first, proxy-fallback extraction strategy:
-   - AAC-LC (itag 140 / mp4a.40.2) direct adaptive stream.
-   - Invidious local proxy fallback: /latest_version?id={video_id}&itag=140&local=true.
-   - Opus / Piped secondary fallback.
+3. Direct-first, Invidious local proxy fallback extraction strategy.
 4. Single-flight request coalescing using Redis distributed locking (SET NX EX).
 5. Safe atomic lock release via Lua script (verifies token ownership).
 6. Shared upstream instance health, latency tracking, and cooldown blacklist.
@@ -15,32 +12,307 @@ Integrates Redis for high-scalability audio stream resolution:
 8. Real-time metrics tracking in Redis (hit rates, misses, latency, fallbacks).
 """
 
-import asyncio
+import os
 import json
+import hashlib
 import logging
+import math
 import re
 import time
 import urllib.parse
 import urllib.request
 import uuid
-from typing import Optional, Dict, Any, List, Union
+from collections import OrderedDict
+from contextlib import contextmanager
+from dataclasses import dataclass
+from threading import BoundedSemaphore, Event, Lock, Thread
+from typing import Any, Dict, List, Literal, Optional, TypedDict, Union
 
 from app.core.redis import get_redis_client as _get_redis
 
 logger = logging.getLogger(__name__)
 
+StreamSourceMode = Literal["direct", "proxy"]
+StreamValidationState = Literal["validated", "unvalidated", "expired", "rejected"]
+
+
+class SourceCandidate(TypedDict):
+    """Canonical metadata for one independently expiring Invidious source."""
+
+    mode: StreamSourceMode
+    provider: Literal["invidious"]
+    provider_origin: str
+    url: str
+    itag: int
+    mime_type: str
+    codec: Optional[str]
+    resolved_at: float
+    expires_at: Optional[float]
+    refresh_at: float
+    validation_state: StreamValidationState
+
+
+class LegacySourceCandidate(TypedDict, total=False):
+    """Current source fields retained until the stream API migration."""
+
+    url: str
+    type: Literal["direct", "direct_alt", "proxy", "proxy_fallback", "fallback"]
+    format: str
+    mimeType: str
+    bitrate: int
+    expires_at: Optional[float]
+
+
+class StreamCacheFence(TypedDict):
+    """Internal authority record; fence tokens must never be sent to clients."""
+
+    generation: int
+    fence_token: str
+
+
+class StreamCacheRecord(TypedDict):
+    """Metadata-only cache entry guarded by a separate StreamCacheFence."""
+
+    schema_version: int
+    video_id: str
+    generation: int
+    fence_token: str
+    refreshed_at: float
+    sources: List[SourceCandidate]
+    last_resolution: Optional[str]
+
+
+class LegacyStreamResponse(TypedDict, total=False):
+    """Compatibility mapping returned by the current resolver/API path."""
+
+    url: str
+    direct_url: Optional[str]
+    proxy_url: Optional[str]
+    status: str
+    sources: List[Union[SourceCandidate, LegacySourceCandidate]]
+    format: str
+    quality: str
+    mimeType: str
+    codec: str
+    bitrate: int
+    duration: float
+    cache_tier: str
+    title: str
+    extractor: str
+    expires_at: Optional[float]
+    is_audio_only: bool
+    cached: bool
+    timestamp: int
+
 # ─── Redis Configuration ───────────────────────────────────────────────────────
 
 STREAM_CACHE_PREFIX = "chhath:stream:"
+STREAM_FENCE_PREFIX = "chhath:stream:fence:"
 STREAM_LOCK_PREFIX = "chhath:lock:stream:"
-HEALTH_PREFIX = "chhath:piped:health:"
+HEALTH_PREFIX = "chhath:invidious:health:"
 STREAM_METRICS_KEY = "chhath:metrics:stream"
 
-STREAM_CACHE_TTL = 14400         # 4 Hours max (Google CDN tokens valid for 6h)
 CONSERVATIVE_TTL = 1800          # 30 Minutes when expiry timestamp is unknown
 EXPIRY_BUFFER_SECONDS = 600      # 10 Minutes safety buffer before known expiry
+CACHE_RETENTION_GRACE_SECONDS = 3600
+MAX_CACHE_RETENTION_SECONDS = 86400
 LOCK_EXPIRE_SECONDS = 8          # Max lock hold time to prevent deadlocks
+LOCK_RENEW_INTERVAL_SECONDS = 2.0
+L1_CACHE_MAX_ENTRIES = 512
 COOLDOWN_SECONDS = 600           # 10 minutes cooldown for failed upstream instances
+STREAM_RESOLUTION_TIMEOUT_SECONDS = 5.0
+MAX_ORIGINS_PER_RESOLUTION = 2
+DEFAULT_INVIDIOUS_REQUESTS_PER_SECOND = 2.0
+DEFAULT_INVIDIOUS_MAX_CONCURRENCY = 1
+INVIDIOUS_LIMIT_PREFIX = "chhath:invidious:limit:"
+INVIDIOUS_LIMIT_LEASE_MS = 15_000
+INVIDIOUS_LIMIT_RETRY_SECONDS = 0.025
+
+DEFAULT_INVIDIOUS_ORIGINS = (
+    "https://yt.chocolatemoo53.com",
+    "https://invidious.nerdvpn.de",
+    "https://inv.nadeko.net",
+    "https://invidious.tiekoetter.com",
+)
+
+
+@dataclass(frozen=True)
+class InvidiousInstance:
+    name: str
+    origin: str
+    requests_per_second: float
+    max_concurrency: int
+
+
+def _load_invidious_registry() -> tuple[InvidiousInstance, ...]:
+    configured = os.getenv("INVIDIOUS_INSTANCES", "").strip()
+    origins = configured.split(",") if configured else DEFAULT_INVIDIOUS_ORIGINS
+    try:
+        requests_per_second = float(os.getenv(
+            "INVIDIOUS_REQUESTS_PER_SECOND", str(DEFAULT_INVIDIOUS_REQUESTS_PER_SECOND)
+        ))
+    except ValueError:
+        requests_per_second = DEFAULT_INVIDIOUS_REQUESTS_PER_SECOND
+    try:
+        max_concurrency = int(os.getenv(
+            "INVIDIOUS_MAX_CONCURRENCY", str(DEFAULT_INVIDIOUS_MAX_CONCURRENCY)
+        ))
+    except ValueError:
+        max_concurrency = DEFAULT_INVIDIOUS_MAX_CONCURRENCY
+
+    if not math.isfinite(requests_per_second) or requests_per_second <= 0:
+        requests_per_second = DEFAULT_INVIDIOUS_REQUESTS_PER_SECOND
+    if max_concurrency <= 0:
+        max_concurrency = DEFAULT_INVIDIOUS_MAX_CONCURRENCY
+
+    registry = []
+    seen = set()
+    for raw_origin in origins:
+        origin = raw_origin.strip().rstrip("/")
+        parsed = urllib.parse.urlsplit(origin)
+        if parsed.scheme != "https" or not parsed.netloc or parsed.path or parsed.query or parsed.fragment:
+            continue
+        if origin in seen:
+            continue
+        seen.add(origin)
+        registry.append(InvidiousInstance(
+            name=parsed.netloc,
+            origin=origin,
+            requests_per_second=requests_per_second,
+            max_concurrency=max_concurrency,
+        ))
+    return tuple(registry)
+
+
+INVIDIOUS_REGISTRY = _load_invidious_registry()
+
+
+class _OriginRequestLimiter:
+    """Enforces per-origin concurrency and minimum spacing between requests."""
+
+    def __init__(self, instance: InvidiousInstance):
+        self._instance = instance
+        self._semaphore = BoundedSemaphore(instance.max_concurrency)
+        self._rate_lock = Lock()
+        self._next_allowed_at = 0.0
+        self._interval = 1.0 / instance.requests_per_second
+
+    @contextmanager
+    def acquire(self, deadline: float, redis_client: Optional[Any] = None):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not self._semaphore.acquire(timeout=remaining):
+            raise TimeoutError("Invidious request budget exhausted")
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not self._rate_lock.acquire(timeout=remaining):
+                raise TimeoutError("Invidious request budget exhausted")
+            try:
+                delay = max(0.0, self._next_allowed_at - time.monotonic())
+                remaining = deadline - time.monotonic()
+                if delay >= remaining:
+                    raise TimeoutError("Invidious request budget exhausted")
+                if delay > 0:
+                    time.sleep(delay)
+                self._next_allowed_at = time.monotonic() + self._interval
+            finally:
+                self._rate_lock.release()
+            with _distributed_origin_slot(self._instance, redis_client, deadline):
+                yield
+        finally:
+            self._semaphore.release()
+
+
+_origin_limiters: Dict[tuple[str, float, int], _OriginRequestLimiter] = {}
+_origin_limiters_lock = Lock()
+
+
+def _get_origin_limiter(instance: InvidiousInstance) -> _OriginRequestLimiter:
+    key = (instance.origin, instance.requests_per_second, instance.max_concurrency)
+    with _origin_limiters_lock:
+        limiter = _origin_limiters.get(key)
+        if limiter is None:
+            limiter = _OriginRequestLimiter(instance)
+            _origin_limiters[key] = limiter
+        return limiter
+
+
+ORIGIN_LIMIT_ACQUIRE_LUA = """
+local now_parts = redis.call("TIME")
+local now_ms = now_parts[1] * 1000 + math.floor(now_parts[2] / 1000)
+redis.call("ZREMRANGEBYSCORE", KEYS[1], "-inf", now_ms)
+if redis.call("ZCARD", KEYS[1]) >= tonumber(ARGV[2]) then
+    return {0, 1}
+end
+local next_at = tonumber(redis.call("GET", KEYS[2]) or now_ms)
+local start_at = math.max(now_ms, next_at)
+local wait_ms = start_at - now_ms
+if wait_ms > tonumber(ARGV[5]) then
+    return {-1, wait_ms}
+end
+redis.call("ZADD", KEYS[1], now_ms + tonumber(ARGV[3]), ARGV[1])
+redis.call("PEXPIRE", KEYS[1], tonumber(ARGV[3]) * 2)
+redis.call("SET", KEYS[2], start_at + tonumber(ARGV[4]), "PX", math.max(tonumber(ARGV[4]) * 2, tonumber(ARGV[3])))
+return {1, wait_ms}
+"""
+
+ORIGIN_LIMIT_RELEASE_LUA = """
+return redis.call("ZREM", KEYS[1], ARGV[1])
+"""
+
+
+@contextmanager
+def _distributed_origin_slot(instance: InvidiousInstance, redis_client: Optional[Any], deadline: float):
+    """Share origin rate and concurrency limits across backend worker processes."""
+    if redis_client is None:
+        yield
+        return
+
+    digest = hashlib.sha256(instance.origin.encode("utf-8")).hexdigest()
+    key_prefix = f"{INVIDIOUS_LIMIT_PREFIX}{{{digest}}}"
+    slots_key = f"{key_prefix}:slots"
+    rate_key = f"{key_prefix}:next"
+    token = uuid.uuid4().hex
+    interval_ms = max(1, math.ceil(1000 / instance.requests_per_second))
+    acquired = False
+
+    while not acquired:
+        remaining_ms = max(0, math.floor((deadline - time.monotonic()) * 1000))
+        if remaining_ms <= 0:
+            raise TimeoutError("Invidious request budget exhausted")
+        result = redis_client.eval(
+            ORIGIN_LIMIT_ACQUIRE_LUA,
+            2,
+            slots_key,
+            rate_key,
+            token,
+            instance.max_concurrency,
+            INVIDIOUS_LIMIT_LEASE_MS,
+            interval_ms,
+            remaining_ms,
+        )
+        status, wait_ms = int(result[0]), max(0, int(result[1]))
+        if status < 0:
+            raise TimeoutError("Invidious request budget exhausted")
+        if status == 0:
+            time.sleep(min(INVIDIOUS_LIMIT_RETRY_SECONDS, remaining_ms / 1000))
+            continue
+
+        wait_seconds = wait_ms / 1000
+        if time.monotonic() + wait_seconds >= deadline:
+            redis_client.eval(ORIGIN_LIMIT_RELEASE_LUA, 1, slots_key, token)
+            raise TimeoutError("Invidious request budget exhausted")
+        if wait_seconds:
+            time.sleep(wait_seconds)
+        acquired = True
+
+    try:
+        yield
+    finally:
+        try:
+            redis_client.eval(ORIGIN_LIMIT_RELEASE_LUA, 1, slots_key, token)
+        except Exception:
+            # The lease expires automatically if a worker dies or Redis is unavailable.
+            logger.warning("Could not release Invidious origin slot for %s", instance.name)
 
 # Atomic lock release Lua script (only delete if current value matches token)
 RELEASE_LOCK_LUA = """
@@ -51,59 +323,119 @@ else
 end
 """
 
+ADVANCE_FENCE_LUA = """
+local generation = redis.call("HINCRBY", KEYS[1], "generation", 1)
+redis.call("HSET", KEYS[1], "fence_token", ARGV[1])
+return {generation, ARGV[1]}
+"""
+
+READ_FENCED_CACHE_LUA = """
+local raw = redis.call("GET", KEYS[1])
+if not raw then return nil end
+local generation = redis.call("HGET", KEYS[2], "generation")
+local token = redis.call("HGET", KEYS[2], "fence_token")
+if not generation or not token then return {'generation_mismatch', raw} end
+local ok, record = pcall(cjson.decode, raw)
+if not ok then return {'invalid_cache_record', raw} end
+if tonumber(record.generation) ~= tonumber(generation) or record.fence_token ~= token then
+    return {'generation_mismatch', raw}
+end
+return raw
+"""
+
+MATCH_FENCE_LUA = """
+if redis.call("HGET", KEYS[1], "generation") == ARGV[1]
+and redis.call("HGET", KEYS[1], "fence_token") == ARGV[2] then
+    return 1
+end
+return 0
+"""
+
+COMMIT_FENCED_CACHE_LUA = """
+if redis.call("HGET", KEYS[1], "generation") ~= ARGV[1]
+or redis.call("HGET", KEYS[1], "fence_token") ~= ARGV[2]
+or redis.call("GET", KEYS[2]) ~= ARGV[3] then
+    return 0
+end
+redis.call("SET", KEYS[3], ARGV[5], "EX", tonumber(ARGV[4]))
+return 1
+"""
+
+WRITE_FENCED_CACHE_LUA = """
+if redis.call("HGET", KEYS[1], "generation") ~= ARGV[1]
+or redis.call("HGET", KEYS[1], "fence_token") ~= ARGV[2] then
+    return 0
+end
+redis.call("SET", KEYS[2], ARGV[4], "EX", tonumber(ARGV[3]))
+return 1
+"""
+
+EVICT_FENCED_CACHE_LUA = """
+local current_token = redis.call("HGET", KEYS[1], "fence_token")
+if ARGV[1] ~= "" and current_token ~= ARGV[1] then return {0, 0} end
+local generation = redis.call("HINCRBY", KEYS[1], "generation", 1)
+redis.call("HSET", KEYS[1], "fence_token", ARGV[2])
+local deleted = redis.call("DEL", KEYS[2])
+redis.call("DEL", KEYS[3])
+return {generation, deleted}
+"""
+
+RENEW_LOCK_LUA = """
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("PEXPIRE", KEYS[1], ARGV[2])
+end
+return 0
+"""
+
 # In-Memory L1 Cache (ultra-fast local hits within process)
-_l1_cache: Dict[str, Dict[str, Any]] = {}
+_l1_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 _l1_cache_ts: Dict[str, float] = {}
 L1_CACHE_TTL = 300  # 5 minutes in-memory
 
-# Candidate upstream extraction instances — prioritized by reliability
-BOOTSTRAP_EXTRACTORS = [
-    {
-        "type": "invidious",
-        "url": "https://yt.chocolatemoo53.com/api/v1/videos/{video_id}?fields=title,adaptiveFormats,formatStreams",
-        "name": "Chocolatemoo (USA - Verified Active)",
-        "origin": "https://yt.chocolatemoo53.com",
-    },
-    {
-        "type": "invidious",
-        "url": "https://invidious.nerdvpn.de/api/v1/videos/{video_id}?fields=title,adaptiveFormats,formatStreams",
-        "name": "NerdVPN (Canada)",
-        "origin": "https://invidious.nerdvpn.de",
-    },
-    {
-        "type": "invidious",
-        "url": "https://inv.nadeko.net/api/v1/videos/{video_id}?fields=title,adaptiveFormats,formatStreams",
-        "name": "Nadeko (Chile)",
-        "origin": "https://inv.nadeko.net",
-    },
-    {
-        "type": "invidious",
-        "url": "https://invidious.tiekoetter.com/api/v1/videos/{video_id}?fields=title,adaptiveFormats,formatStreams",
-        "name": "Tiekoetter (Germany)",
-        "origin": "https://invidious.tiekoetter.com",
-    },
-    {
-        "type": "piped",
-        "url": "https://api.piped.private.coffee/streams/{video_id}",
-        "name": "Private Coffee",
-        "origin": "https://api.piped.private.coffee",
-    },
-    {
-        "type": "piped",
-        "url": "https://pipedapi.ducks.party/streams/{video_id}",
-        "name": "Ducks Party",
-        "origin": "https://pipedapi.ducks.party",
-    },
-]
-
-
 def _clean_l1_cache() -> None:
-    """Prune expired L1 cache entries."""
+    """Prune expired L1 entries and enforce the in-process capacity limit."""
     now = time.time()
     expired = [k for k, ts in _l1_cache_ts.items() if now - ts > L1_CACHE_TTL]
     for k in expired:
         _l1_cache.pop(k, None)
         _l1_cache_ts.pop(k, None)
+    while len(_l1_cache) > L1_CACHE_MAX_ENTRIES:
+        oldest, _ = _l1_cache.popitem(last=False)
+        _l1_cache_ts.pop(oldest, None)
+
+
+def _cache_l1(video_id: str, record: Dict[str, Any], now: Optional[float] = None) -> None:
+    """Insert or refresh one L1 entry, keeping most recently used entries last."""
+    _l1_cache[video_id] = record
+    _l1_cache.move_to_end(video_id)
+    _l1_cache_ts[video_id] = time.time() if now is None else now
+    _clean_l1_cache()
+
+
+@contextmanager
+def _renew_lock_lease(redis_client: Any, lock_key: str, lock_token: str):
+    """Keep a single-flight lock alive while its token still owns it."""
+    stopped = Event()
+
+    def renew() -> None:
+        while not stopped.wait(LOCK_RENEW_INTERVAL_SECONDS):
+            try:
+                owned = redis_client.eval(
+                    RENEW_LOCK_LUA, 1, lock_key, lock_token, LOCK_EXPIRE_SECONDS * 1000
+                )
+                if not owned:
+                    return
+            except Exception as exc:
+                logger.warning("Could not renew stream resolution lease: %s", exc)
+                return
+
+    thread = Thread(target=renew, name="stream-lock-renewal", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        thread.join(timeout=LOCK_RENEW_INTERVAL_SECONDS + 0.1)
 
 
 def _record_metric(metric_field: str, amount: int = 1) -> None:
@@ -127,7 +459,7 @@ def _extract_duration(data: Dict[str, Any], best: Dict[str, Any]) -> float:
                 return round(val, 2)
         except (ValueError, TypeError):
             pass
-    # 2. Piped duration
+    # 2. Legacy extractor duration field
     dur = data.get("duration")
     if dur is not None:
         try:
@@ -185,8 +517,320 @@ def is_url_expired(url: str, buffer_seconds: int = EXPIRY_BUFFER_SECONDS) -> boo
 class StreamCacheService:
     """High-concurrency stream resolution service with Redis single-flight and caching."""
 
+    @staticmethod
+    def _public_response(record: Dict[str, Any]) -> Dict[str, Any]:
+        """Keep internal cache fencing tokens out of API responses."""
+        response = dict(record)
+        response.pop("fence_token", None)
+        return response
+
+    @staticmethod
+    def _fenced_read_payload(result: Any) -> Optional[str]:
+        """Decode fenced reads and count coherence failures without exposing payloads."""
+        if isinstance(result, (list, tuple)):
+            status = result[0].decode("utf-8") if isinstance(result[0], bytes) else str(result[0])
+            if status == "generation_mismatch":
+                _record_metric("generation_mismatches")
+            elif status == "invalid_cache_record":
+                _record_metric("invalid_cache_records")
+            return None
+        if isinstance(result, bytes):
+            return result.decode("utf-8")
+        return result if isinstance(result, str) else None
+
+    @staticmethod
+    def _expired_candidate_count(record: Any, now: float) -> int:
+        if not isinstance(record, dict) or not isinstance(record.get("sources"), list):
+            return 0
+        expired = 0
+        for source in record["sources"]:
+            if not isinstance(source, dict) or source.get("validation_state") != "validated":
+                continue
+            try:
+                refresh_at = float(source.get("refresh_at"))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(refresh_at) and refresh_at <= now:
+                expired += 1
+        return expired
+
+    @staticmethod
+    def _read_current_record(redis_client: Any, video_id: str) -> Optional[Dict[str, Any]]:
+        """Read a cache record only when its generation and token match the live fence."""
+        result = redis_client.eval(
+            READ_FENCED_CACHE_LUA,
+            2,
+            f"{STREAM_CACHE_PREFIX}{video_id}",
+            f"{STREAM_FENCE_PREFIX}{video_id}",
+        )
+        raw = StreamCacheService._fenced_read_payload(result)
+        if not raw:
+            return None
+        record = StreamCacheService._validate_cache_record(json.loads(raw), time.time(), video_id)
+        if not record:
+            return None
+        if not isinstance(record.get("generation"), int) or not record.get("fence_token"):
+            return None
+        return record
+
+    @staticmethod
+    def _advance_fence(redis_client: Any, video_id: str) -> Dict[str, Any]:
+        token = uuid.uuid4().hex
+        generation, returned_token = redis_client.eval(
+            ADVANCE_FENCE_LUA, 1, f"{STREAM_FENCE_PREFIX}{video_id}", token
+        )
+        return {"generation": int(generation), "fence_token": str(returned_token)}
+
+    @staticmethod
+    def _evict_fenced_record(
+        redis_client: Any, video_id: str, expected_token: Optional[str] = None
+    ) -> int:
+        result = redis_client.eval(
+            EVICT_FENCED_CACHE_LUA,
+            3,
+            f"{STREAM_FENCE_PREFIX}{video_id}",
+            f"{STREAM_CACHE_PREFIX}{video_id}",
+            f"{STREAM_LOCK_PREFIX}{video_id}",
+            expected_token or "",
+            uuid.uuid4().hex,
+        )
+        if expected_token and int(result[0]) == 0:
+            _record_metric("generation_mismatches")
+        return int(result[1])
+
+    @staticmethod
+    def _matches_fence(redis_client: Any, video_id: str, record: Dict[str, Any]) -> bool:
+        generation = record.get("generation")
+        token = record.get("fence_token")
+        if not isinstance(generation, int) or not isinstance(token, str) or not token:
+            return False
+        matched = bool(redis_client.eval(
+            MATCH_FENCE_LUA,
+            1,
+            f"{STREAM_FENCE_PREFIX}{video_id}",
+            str(generation),
+            token,
+        ))
+        if not matched:
+            _record_metric("generation_mismatches")
+        return matched
+
+    @staticmethod
+    def _validate_source_candidates(
+        sources: Any, now: Optional[float] = None, video_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Keep only current, canonical Invidious audio candidates."""
+        now = time.time() if now is None else float(now)
+        if not isinstance(sources, list):
+            return []
+
+        valid: List[Dict[str, Any]] = []
+        seen_modes = set()
+        configured_origins = {
+            instance.origin.rstrip("/").lower() for instance in INVIDIOUS_REGISTRY
+        }
+        for candidate in sources:
+            if not isinstance(candidate, dict):
+                continue
+            mode = candidate.get("mode")
+            if mode not in ("direct", "proxy") or mode in seen_modes:
+                continue
+            if candidate.get("provider") != "invidious":
+                continue
+
+            try:
+                provider_origin = str(candidate.get("provider_origin") or "")
+                origin_parts = urllib.parse.urlsplit(provider_origin)
+                provider_host = origin_parts.hostname
+                url = str(candidate.get("url") or "")
+                url_parts = urllib.parse.urlsplit(url)
+                url_host = url_parts.hostname
+                itag = int(candidate.get("itag"))
+                resolved_at = float(candidate.get("resolved_at"))
+                refresh_at = float(candidate.get("refresh_at"))
+                expiry_value = candidate.get("expires_at")
+                expires_at = None if expiry_value is None else float(expiry_value)
+            except (TypeError, ValueError):
+                continue
+
+            if (
+                not provider_origin
+                or origin_parts.scheme != "https"
+                or not provider_host
+                or origin_parts.path
+                or origin_parts.query
+                or origin_parts.fragment
+                or origin_parts.username
+                or origin_parts.password
+                or not url
+                or url_parts.scheme != "https"
+                or not url_host
+                or url_parts.username
+                or url_parts.password
+                or itag <= 0
+                or not math.isfinite(resolved_at)
+                or not math.isfinite(refresh_at)
+                or resolved_at <= 0
+                or resolved_at > now
+                or refresh_at <= now
+                or candidate.get("validation_state") != "validated"
+            ):
+                continue
+
+            normalized_origin = f"{origin_parts.scheme}://{origin_parts.netloc}".lower()
+            if normalized_origin not in configured_origins:
+                continue
+
+            mime_type = str(candidate.get("mime_type") or "").strip()
+            media_type = mime_type.split(";", 1)[0].strip().lower()
+            if media_type not in {"audio/mp4", "audio/webm"}:
+                continue
+            codec = candidate.get("codec")
+            codec = str(codec).strip() if codec is not None else ""
+            if len(codec) > 100:
+                continue
+            declared_codec = re.search(r'codecs\s*=\s*["\']?([^;"\']+)', mime_type, re.IGNORECASE)
+            if declared_codec and codec and declared_codec.group(1).strip().lower() != codec.lower():
+                continue
+
+            source_expiry = extract_url_expiry(url)
+            if mode == "direct":
+                direct_params = urllib.parse.parse_qs(url_parts.query)
+                declared_itags = direct_params.get("itag")
+                if declared_itags and declared_itags != [str(itag)]:
+                    continue
+                if expires_at is None:
+                    if source_expiry is not None or now - resolved_at >= CONSERVATIVE_TTL:
+                        continue
+                    if refresh_at > resolved_at + CONSERVATIVE_TTL:
+                        continue
+                else:
+                    if (
+                        not math.isfinite(expires_at)
+                        or expires_at <= now + EXPIRY_BUFFER_SECONDS
+                        or (source_expiry is not None and int(expires_at) != source_expiry)
+                        or refresh_at > expires_at - EXPIRY_BUFFER_SECONDS
+                    ):
+                        continue
+            else:
+                if expires_at is not None or source_expiry is not None:
+                    continue
+                if now - resolved_at >= CONSERVATIVE_TTL:
+                    continue
+                if refresh_at > resolved_at + CONSERVATIVE_TTL:
+                    continue
+
+                proxy_params = urllib.parse.parse_qs(url_parts.query)
+                origin_netloc = origin_parts.netloc.lower()
+                expected_id = video_id or proxy_params.get("id", [""])[0]
+                if (
+                    url_parts.netloc.lower() != origin_netloc
+                    or url_parts.path != "/latest_version"
+                    or set(proxy_params) != {"id", "itag", "local"}
+                    or proxy_params.get("id") != [expected_id]
+                    or proxy_params.get("itag") != [str(itag)]
+                    or proxy_params.get("local") != ["true"]
+                ):
+                    continue
+
+            alias = candidate.get("type")
+            allowed_aliases = {"direct", "direct_alt"} if mode == "direct" else {
+                "proxy", "proxy_fallback", "fallback"
+            }
+            if alias is not None and alias not in allowed_aliases:
+                continue
+
+            normalized = dict(candidate)
+            normalized.update({
+                "mode": mode,
+                "provider_origin": f"{origin_parts.scheme}://{origin_parts.netloc}",
+                "url": url,
+                "itag": itag,
+                "mime_type": mime_type,
+                "codec": codec or (declared_codec.group(1).strip() if declared_codec else None),
+                "resolved_at": resolved_at,
+                "expires_at": expires_at,
+                "refresh_at": refresh_at,
+            })
+            valid.append(normalized)
+            seen_modes.add(mode)
+            if len(valid) == 2:
+                break
+
+        return sorted(valid, key=lambda candidate: 0 if candidate["mode"] == "direct" else 1)
+
     @classmethod
-    def get_stream_fast(cls, video_id: str) -> Optional[Dict[str, Any]]:
+    def _validate_cache_record(
+        cls, record: Any, now: Optional[float] = None, video_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Reject legacy aggregates and rebuild compatibility fields from valid sources."""
+        if not isinstance(record, dict) or not isinstance(record.get("sources"), list):
+            return None
+        now = time.time() if now is None else float(now)
+        record_video_id = str(record.get("video_id") or video_id or "")
+        if video_id and record_video_id and record_video_id != video_id:
+            return None
+        sources = cls._validate_source_candidates(record["sources"], now, record_video_id or None)
+        if not sources:
+            return None
+
+        direct = next((source for source in sources if source["mode"] == "direct"), None)
+        proxy = next((source for source in sources if source["mode"] == "proxy"), None)
+        primary = direct or proxy
+        mime_type = primary["mime_type"]
+        media_type = mime_type.split(";", 1)[0].strip().lower()
+        codec = primary.get("codec")
+        bitrate = primary.get("bitrate")
+        try:
+            bitrate = int(bitrate) if bitrate is not None else 128000
+        except (TypeError, ValueError):
+            bitrate = 128000
+        if bitrate <= 0:
+            bitrate = 128000
+
+        result = dict(record)
+        result.update({
+            "video_id": record_video_id or None,
+            "sources": sources,
+            "url": primary["url"],
+            "direct_url": direct["url"] if direct else None,
+            "proxy_url": proxy["url"] if proxy else None,
+            "status": "READY" if direct else "DEGRADED",
+            "format": "M4A" if media_type == "audio/mp4" else "WEBM_OPUS",
+            "quality": f"{round(bitrate / 1000)}kbps",
+            "mimeType": mime_type,
+            "codec": codec or "",
+            "bitrate": bitrate,
+            "expires_at": direct.get("expires_at") if direct else None,
+            "is_audio_only": True,
+        })
+        return result
+
+    @staticmethod
+    def _cache_retention_ttl(record: Any, now: Optional[float] = None) -> int:
+        """Retain source metadata beyond its latest refresh deadline for safe recache."""
+        now = time.time() if now is None else float(now)
+        if not isinstance(record, dict) or not isinstance(record.get("sources"), list):
+            return 0
+        deadlines = []
+        for source in record["sources"]:
+            if not isinstance(source, dict):
+                continue
+            try:
+                deadline = float(source.get("refresh_at"))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(deadline):
+                deadlines.append(deadline)
+        if not deadlines:
+            return 0
+        retain_until = max(deadlines) + CACHE_RETENTION_GRACE_SECONDS
+        return max(1, min(MAX_CACHE_RETENTION_SECONDS, math.ceil(retain_until - now)))
+
+    @classmethod
+    def get_stream_fast(
+        cls, video_id: str, *, record_metrics: bool = True
+    ) -> Optional[LegacyStreamResponse]:
         """
         Fast-path cache lookup for user song selection (L1 in-memory -> L2 Redis).
         Returns immediately without blocking on network if a valid, unexpired stream exists.
@@ -196,49 +840,66 @@ class StreamCacheService:
         if not clean_id or len(clean_id) < 5:
             return None
 
-        # 1. Check L1 In-Memory Cache
+        redis_client = _get_redis()
+        if not redis_client:
+            _l1_cache.pop(clean_id, None)
+            _l1_cache_ts.pop(clean_id, None)
+            return None
+
         now = time.time()
         _clean_l1_cache()
         if clean_id in _l1_cache and (now - _l1_cache_ts.get(clean_id, 0)) < L1_CACHE_TTL:
-            cached_data = _l1_cache[clean_id]
-            if not is_url_expired(cached_data.get("url", ""), buffer_seconds=EXPIRY_BUFFER_SECONDS):
-                _record_metric("l1_hits")
-                cached_data["cached"] = True
-                cached_data["cache_tier"] = "L1_MEMORY"
-                return cached_data
+            cached_record = _l1_cache[clean_id]
+            if cls._matches_fence(redis_client, clean_id, cached_record):
+                cached_data = cls._validate_cache_record(cached_record, now, clean_id)
+            else:
+                cached_data = None
+            if cached_data:
+                if record_metrics:
+                    _record_metric("l1_hits")
+                _cache_l1(clean_id, cached_data, now)
+                cached_response = cls._public_response(cached_data)
+                cached_response["cached"] = True
+                cached_response["cache_tier"] = "L1_MEMORY"
+                return cached_response
             else:
                 _l1_cache.pop(clean_id, None)
                 _l1_cache_ts.pop(clean_id, None)
 
-        # 2. Check L2 Redis Cache
-        redis_client = _get_redis()
-        cache_key = f"{STREAM_CACHE_PREFIX}{clean_id}"
-
-        if redis_client:
-            try:
-                raw_json = redis_client.get(cache_key)
-                if raw_json:
-                    stream_data = json.loads(raw_json)
-                    if not is_url_expired(stream_data.get("url", ""), buffer_seconds=EXPIRY_BUFFER_SECONDS):
+        try:
+            raw_result = redis_client.eval(
+                READ_FENCED_CACHE_LUA,
+                2,
+                f"{STREAM_CACHE_PREFIX}{clean_id}",
+                f"{STREAM_FENCE_PREFIX}{clean_id}",
+            )
+            raw_json = cls._fenced_read_payload(raw_result)
+            if raw_json:
+                raw_record = json.loads(raw_json)
+                expired_count = cls._expired_candidate_count(raw_record, now)
+                if expired_count:
+                    _record_metric("expired_candidates_rejected", expired_count)
+                    _record_metric("expirations_detected", expired_count)
+                stream_data = cls._validate_cache_record(raw_record, now, clean_id)
+                if stream_data and cls._matches_fence(redis_client, clean_id, stream_data):
+                    if record_metrics:
                         _record_metric("redis_hits")
-                        _l1_cache[clean_id] = stream_data
-                        _l1_cache_ts[clean_id] = now
-                        stream_data["cached"] = True
-                        stream_data["cache_tier"] = "L2_REDIS"
-                        return stream_data
-                    else:
-                        logger.info("[StreamCache] Evicting expired stream from Redis for %s", clean_id)
-                        redis_client.delete(cache_key)
-                        _l1_cache.pop(clean_id, None)
-                        _l1_cache_ts.pop(clean_id, None)
-                        _record_metric("expirations_detected")
-            except Exception as exc:
-                logger.warning("[StreamCache] Redis GET failed for %s: %s", clean_id, exc)
+                    _cache_l1(clean_id, stream_data, now)
+                    cached_response = cls._public_response(stream_data)
+                    cached_response["cached"] = True
+                    cached_response["cache_tier"] = "L2_REDIS"
+                    return cached_response
+                _l1_cache.pop(clean_id, None)
+                _l1_cache_ts.pop(clean_id, None)
+                if not expired_count:
+                    _record_metric("invalid_cache_records")
+        except Exception as exc:
+            logger.warning("[StreamCache] Fenced Redis read failed for %s: %s", clean_id, exc)
 
         return None
 
     @classmethod
-    def get_stream(cls, video_id: str, priority: str = "high", force_fresh: bool = False) -> Optional[Dict[str, Any]]:
+    def get_stream(cls, video_id: str, priority: str = "high", force_fresh: bool = False) -> Optional[LegacyStreamResponse]:
         """
         Main entry point: Resolves a playable direct audio stream for a given video ID.
         Checks fast cache first. On miss (or force_fresh), coordinates via single-flight distributed lock.
@@ -264,7 +925,7 @@ class StreamCacheService:
     @classmethod
     def _resolve_with_single_flight(
         cls, video_id: str, redis_client: Optional[Any], priority: str = "high", force_fresh: bool = False
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[LegacyStreamResponse]:
         """
         Coordinates concurrent requests for the same track using Redis distributed locking.
         Only one worker queries upstream; other workers wait and read the cached result.
@@ -272,71 +933,100 @@ class StreamCacheService:
         lock_key = f"{STREAM_LOCK_PREFIX}{video_id}"
         lock_token = str(uuid.uuid4())
         cache_key = f"{STREAM_CACHE_PREFIX}{video_id}"
-
-        # If force_fresh, invalidate local L1 and L2 first
-        if force_fresh:
-            _l1_cache.pop(video_id, None)
-            _l1_cache_ts.pop(video_id, None)
-            if redis_client:
-                try:
-                    redis_client.delete(cache_key)
-                except Exception:
-                    pass
-
-        # If Redis is available, attempt atomic lock acquisition
+        previous_record = None
+        fence = None
+        lock_acquired = False
         if redis_client:
             try:
-                acquired = redis_client.set(
+                lock_acquired = bool(redis_client.set(
                     lock_key, lock_token, nx=True, ex=LOCK_EXPIRE_SECONDS
-                )
-                if not acquired:
-                    # Another worker is actively resolving this track.
-                    # Poll Redis cache (faster 50ms polling if user-selected high priority)
+                ))
+                if not lock_acquired:
                     poll_interval = 0.05 if priority == "high" else 0.15
-                    max_wait = 3.5 if priority == "high" else 6.0
+                    max_wait = STREAM_RESOLUTION_TIMEOUT_SECONDS + LOCK_RENEW_INTERVAL_SECONDS
                     return cls._poll_for_result(video_id, redis_client, poll_interval=poll_interval, max_wait_sec=max_wait)
+                previous_record = cls._read_current_record(redis_client, video_id)
+                fence = cls._advance_fence(redis_client, video_id)
+                _l1_cache.pop(video_id, None)
+                _l1_cache_ts.pop(video_id, None)
             except Exception as exc:
-                logger.warning("[StreamCache] Redis lock acquisition failed: %s", exc)
-
-        # Winner worker: Perform upstream resolution
-        try:
-            stream_result = cls._extract_upstream(video_id)
-            if stream_result:
-                now = time.time()
-                stream_result["cached"] = False
-                stream_result["timestamp"] = int(now * 1000)
-
-                # Store in L1 Memory Cache
-                _l1_cache[video_id] = stream_result
-                _l1_cache_ts[video_id] = now
-
-                # Store in L2 Redis Cache with TTL aligned to CDN expiry
-                if redis_client:
+                logger.warning("[StreamCache] Redis coordination failed for %s: %s", video_id, exc)
+                if lock_acquired:
                     try:
-                        ttl = STREAM_CACHE_TTL
-                        exp = stream_result.get("expires_at") or extract_url_expiry(stream_result.get("url", ""))
-                        if exp:
-                            rem = int(exp - time.time() - EXPIRY_BUFFER_SECONDS)
-                            if rem > 60:
-                                ttl = min(ttl, rem)
-                            else:
-                                ttl = 60
+                        redis_client.eval(RELEASE_LOCK_LUA, 1, lock_key, lock_token)
+                    except Exception:
+                        pass
+                redis_client = None
+                lock_acquired = False
+                fence = None
+                previous_record = None
 
-                        redis_client.setex(
-                            cache_key,
-                            ttl,
-                            json.dumps(stream_result),
-                        )
-                        _record_metric("extractions_success")
-                    except Exception as exc:
-                        logger.warning("[StreamCache] Redis SETEX failed: %s", exc)
+        def resolve_and_commit() -> Optional[LegacyStreamResponse]:
+            nonlocal previous_record, fence
+            stream_result = cls._extract_upstream(video_id)
+            now = time.time()
+            stream_result = cls._validate_cache_record(stream_result, now, video_id)
 
-                return stream_result
-            else:
+            if stream_result and previous_record:
+                existing_modes = {source["mode"] for source in stream_result["sources"]}
+                alternates = cls._validate_source_candidates(
+                    previous_record.get("sources"), now, video_id
+                )
+                stream_result["sources"].extend(
+                    source for source in alternates if source["mode"] not in existing_modes
+                )
+
+            if not stream_result:
                 _record_metric("extractions_failed")
+                return None
+
+            if fence:
+                stream_result.update(fence)
+                stream_result["schema_version"] = 1
+                stream_result["video_id"] = video_id
+                stream_result["refreshed_at"] = now
+            stream_result = cls._validate_cache_record(stream_result, now, video_id)
+            if not stream_result:
+                _record_metric("extractions_failed")
+                return None
+
+            stream_result["timestamp"] = int(now * 1000)
+            if redis_client and lock_acquired and fence:
+                ttl = cls._cache_retention_ttl(stream_result, now)
+                if ttl <= 0:
+                    return None
+                committed = redis_client.eval(
+                    COMMIT_FENCED_CACHE_LUA,
+                    3,
+                    f"{STREAM_FENCE_PREFIX}{video_id}",
+                    lock_key,
+                    cache_key,
+                    str(fence["generation"]),
+                    fence["fence_token"],
+                    lock_token,
+                    ttl,
+                    json.dumps(stream_result),
+                )
+                if not committed:
+                    _record_metric("stale_write_rejections")
+                    return None
+                stream_result["cached"] = False
+                _cache_l1(video_id, stream_result, now)
+                _record_metric("extractions_success")
+            else:
+                stream_result["generation"] = 0
+                stream_result.pop("fence_token", None)
+                stream_result["cached"] = False
+
+            return cls._public_response(stream_result)
+
+        try:
+            if redis_client and lock_acquired:
+                with _renew_lock_lease(redis_client, lock_key, lock_token):
+                    return resolve_and_commit()
+            return resolve_and_commit()
         finally:
-            # Safely release lock using Lua script to verify token ownership
-            if redis_client:
+            if redis_client and lock_acquired:
                 try:
                     redis_client.eval(RELEASE_LOCK_LUA, 1, lock_key, lock_token)
                 except Exception as exc:
@@ -347,273 +1037,182 @@ class StreamCacheService:
     @classmethod
     def _poll_for_result(
         cls, video_id: str, redis_client: Any, poll_interval: float = 0.1, max_wait_sec: float = 4.0
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[LegacyStreamResponse]:
         """Follower workers poll Redis for the winning worker's resolved stream."""
-        cache_key = f"{STREAM_CACHE_PREFIX}{video_id}"
         deadline = time.time() + max_wait_sec
 
         while time.time() < deadline:
             time.sleep(poll_interval)
             try:
-                raw_json = redis_client.get(cache_key)
-                if raw_json:
-                    data = json.loads(raw_json)
-                    if not is_url_expired(data.get("url", ""), buffer_seconds=EXPIRY_BUFFER_SECONDS):
-                        data["cached"] = True
-                        data["cache_tier"] = "COALESCED_REDIS"
-                        return data
+                data = cls._read_current_record(redis_client, video_id)
+                if data:
+                    data["cached"] = True
+                    data["cache_tier"] = "COALESCED_REDIS"
+                    return cls._public_response(data)
             except Exception:
                 pass
 
-        logger.info("[StreamCache] Single-flight poll timed out for %s. Extracting directly.", video_id)
-        return cls._extract_upstream(video_id)
-
-    @staticmethod
-    def _resolve_final_proxy_url(proxy_url: str, timeout: float = 4.0) -> Optional[str]:
-        """
-        Follows Invidious 302 redirects ahead of time during background extraction.
-        Eliminates 2 round-trip redirects (3-5s delay) so the browser directly streams
-        from the final companion audio endpoint with 0 redirects and immediate TTFB.
-        """
-        if not proxy_url:
-            return None
-        try:
-            req = urllib.request.Request(
-                proxy_url,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Range": "bytes=0-0"},
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                final_url = resp.geturl()
-                if final_url and ("videoplayback" in final_url or "companion" in final_url):
-                    return final_url
-        except urllib.error.HTTPError as exc:
-            if exc.code in (200, 206) and hasattr(exc, "url") and exc.url:
-                return exc.url
-        except Exception as e:
-            logger.warning("[StreamCache] Could not pre-resolve proxy redirect: %s", e)
-        return proxy_url
-
-    @staticmethod
-    def _check_url_accessibility(url: str, timeout: float = 2.0) -> bool:
-        """
-        Lightweight probe to verify if direct stream URL is accessible or IP-blocked (403).
-        """
-        if not url:
-            return False
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Range": "bytes=0-0"},
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.status in (200, 206)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 403:
-                return False
-            return exc.code in (416, 302, 301)
-        except Exception:
-            return True
+        logger.info("[StreamCache] Single-flight poll timed out for %s.", video_id)
+        return None
 
     @classmethod
-    def _extract_upstream(cls, video_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Direct-First, Proxy-Fallback Strategy:
-        1. Attempt direct AAC-LC adaptive stream (itag 140 / mp4a.40.2).
-        2. Construct and validate Invidious proxy fallback (/latest_version?id=...&itag=140&local=true).
-        3. Fall back to Opus (audio/webm) or Piped instances.
-        Strictly rejects any video-containing streams.
-        """
+    def _extract_upstream(cls, video_id: str) -> Optional[LegacyStreamResponse]:
+        """Resolve audio metadata from at most two rate-limited Invidious origins."""
+        if not video_id:
+            return None
+
+        deadline = time.monotonic() + STREAM_RESOLUTION_TIMEOUT_SECONDS
         redis_client = _get_redis()
-        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        user_agent = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        fields = "title,adaptiveFormats,formatStreams"
 
-        for extractor in BOOTSTRAP_EXTRACTORS:
-            ext_name = extractor["name"]
-            endpoint = extractor["url"].format(video_id=video_id)
-            origin = extractor.get("origin") or ""
+        for instance in INVIDIOUS_REGISTRY[:MAX_ORIGINS_PER_RESOLUTION]:
+            if time.monotonic() >= deadline:
+                break
 
-            # Check instance cooldown in Redis
+            health_key = f"{HEALTH_PREFIX}{instance.name}"
             if redis_client:
                 try:
-                    health_key = f"{HEALTH_PREFIX}{ext_name}"
                     cooldown = redis_client.hget(health_key, "cooldown_until")
                     if cooldown and time.time() < float(cooldown):
                         continue
                 except Exception:
                     pass
 
-            max_attempts = 2
-            for attempt in range(1, max_attempts + 1):
-                start_time = time.time()
-                try:
-                    req = urllib.request.Request(
-                        endpoint,
-                        headers={"User-Agent": user_agent, "Accept": "application/json"},
-                    )
-                    with urllib.request.urlopen(req, timeout=5) as resp:
-                        if resp.status != 200:
-                            cls._record_failure(ext_name, redis_client)
-                            break
+            endpoint = (
+                f"{instance.origin}/api/v1/videos/"
+                f"{urllib.parse.quote(video_id, safe='')}?fields={fields}"
+            )
+            request = urllib.request.Request(
+                endpoint,
+                headers={"User-Agent": user_agent, "Accept": "application/json"},
+            )
+            request_started = time.monotonic()
+            try:
+                limiter = _get_origin_limiter(instance)
+                with limiter.acquire(deadline, redis_client):
+                    timeout = deadline - time.monotonic()
+                    if timeout <= 0:
+                        raise TimeoutError("Invidious resolution deadline exceeded")
+                    with urllib.request.urlopen(request, timeout=timeout) as response:
+                        if response.status != 200:
+                            cls._record_failure(instance.name, redis_client)
+                            continue
+                        data = json.loads(response.read().decode("utf-8"))
 
-                        data = json.loads(resp.read().decode("utf-8"))
-                        latency_ms = int((time.time() - start_time) * 1000)
-
-                        # Invidious parser
-                        if extractor["type"] == "invidious":
-                            adaptive = [
-                                f for f in data.get("adaptiveFormats", [])
-                                if "audio" in f.get("type", "") and not f.get("type", "").startswith("video/") and f.get("url")
-                            ]
-                            if adaptive:
-                                # Prioritize AAC-LC (mp4a.40.2 / itag 140) for universal browser support
-                                m4a_streams = [f for f in adaptive if "mp4" in f.get("type", "")]
-                                m4a_streams.sort(key=lambda x: int(x.get("bitrate") or 0), reverse=True)
-
-                                aac_lc = next((f for f in m4a_streams if "mp4a.40.2" in f.get("type", "")), None)
-                                best = aac_lc or (m4a_streams[0] if m4a_streams else adaptive[0])
-                                duration = _extract_duration(data, best)
-                                direct_url = best["url"]
-                                expiry = extract_url_expiry(direct_url)
-
-                                # Immediate Invidious proxy fallback URL and pre-resolution
-                                raw_proxy_url = f"{origin}/latest_version?id={video_id}&itag=140&local=true" if origin else None
-                                resolved_proxy_url = cls._resolve_final_proxy_url(raw_proxy_url) if raw_proxy_url else None
-                                final_proxy_url = resolved_proxy_url or raw_proxy_url
-
-                                # Independent validation: check if direct_url has IP-binding lock or returns 403
-                                has_ip_restriction = bool(re.search(r"[?&]ip=", direct_url))
-                                is_direct_accessible = cls._check_url_accessibility(direct_url) if not has_ip_restriction else False
-
-                                # Build prioritized candidate sources (Constraint 3)
-                                sources = [
-                                    {
-                                        "url": direct_url,
-                                        "type": "direct",
-                                        "format": "M4A" if "mp4" in best.get("type", "") else "WEBM_OPUS",
-                                        "mimeType": best.get("type") or 'audio/mp4; codecs="mp4a.40.2"',
-                                        "bitrate": best.get("bitrate") or 128000,
-                                        "expires_at": expiry,
-                                    }
-                                ]
-
-                                # Priority 2: Alternative direct format
-                                alt_stream = next((f for f in adaptive if f.get("url") and f.get("url") != direct_url), None)
-                                if alt_stream:
-                                    sources.append({
-                                        "url": alt_stream["url"],
-                                        "type": "direct_alt",
-                                        "format": "WEBM_OPUS" if "webm" in alt_stream.get("type", "") else "M4A",
-                                        "mimeType": alt_stream.get("type") or "audio/webm",
-                                        "bitrate": alt_stream.get("bitrate") or 128000,
-                                        "expires_at": extract_url_expiry(alt_stream["url"]),
-                                    })
-
-                                # Priority 3: Pre-resolved companion proxy endpoint
-                                if final_proxy_url:
-                                    sources.append({
-                                        "url": final_proxy_url,
-                                        "type": "proxy",
-                                        "format": "M4A",
-                                        "mimeType": 'audio/mp4; codecs="mp4a.40.2"',
-                                        "bitrate": 128000,
-                                    })
-
-                                # Priority 4: Fallback Invidious raw endpoint
-                                if raw_proxy_url and raw_proxy_url != final_proxy_url:
-                                    sources.append({
-                                        "url": raw_proxy_url,
-                                        "type": "proxy_fallback",
-                                        "format": "M4A",
-                                        "mimeType": 'audio/mp4; codecs="mp4a.40.2"',
-                                        "bitrate": 128000,
-                                    })
-
-                                # Determine authoritative stream readiness status
-                                if is_direct_accessible and not has_ip_restriction:
-                                    stream_status = "READY"
-                                    stream_url = direct_url
-                                elif final_proxy_url:
-                                    stream_status = "DEGRADED"
-                                    # If direct is IP-bound or failed, serve the verified proxy as primary
-                                    # to prevent client from waiting 15s for browser native retry loop!
-                                    stream_url = final_proxy_url
-                                else:
-                                    stream_status = "FAILED"
-                                    stream_url = direct_url
-
-                                cls._record_success(ext_name, latency_ms, redis_client)
-                                return {
-                                    "url": stream_url,
-                                    "direct_url": direct_url,
-                                    "proxy_url": final_proxy_url,
-                                    "status": stream_status,
-                                    "sources": sources,
-                                    "format": "M4A" if "mp4" in best.get("type", "") else "WEBM_OPUS",
-                                    "mimeType": best.get("type") or 'audio/mp4; codecs="mp4a.40.2"',
-                                    "bitrate": best.get("bitrate") or 128000,
-                                    "duration": duration,
-                                    "title": data.get("title", f"Chhath Song ({video_id})"),
-                                    "extractor": ext_name,
-                                    "expires_at": expiry,
-                                    "is_audio_only": True,
-                                }
-
-                        # Piped parser
-                        elif extractor["type"] == "piped":
-                            audio_streams = [
-                                s for s in data.get("audioStreams", [])
-                                if not (s.get("mimeType") or "").startswith("video/") and s.get("url")
-                            ]
-                            if audio_streams:
-                                m4a_streams = [s for s in audio_streams if "mp4" in s.get("mimeType", "") or s.get("format") == "M4A"]
-                                m4a_streams.sort(key=lambda s: int(s.get("bitrate") or 0), reverse=True)
-                                aac_lc = next((s for s in m4a_streams if "mp4a.40.2" in s.get("mimeType", "")), None)
-                                best = aac_lc or (m4a_streams[0] if m4a_streams else audio_streams[0])
-                                duration = _extract_duration(data, best)
-                                direct_url = best["url"]
-                                expiry = extract_url_expiry(direct_url)
-
-                                has_ip_restriction = bool(re.search(r"[?&]ip=", direct_url))
-                                is_direct_accessible = cls._check_url_accessibility(direct_url) if not has_ip_restriction else False
-                                stream_status = "READY" if is_direct_accessible and not has_ip_restriction else "DEGRADED"
-
-                                sources = [{
-                                    "url": direct_url,
-                                    "type": "direct",
-                                    "format": best.get("format", "M4A"),
-                                    "mimeType": best.get("mimeType") or 'audio/mp4; codecs="mp4a.40.2"',
-                                    "bitrate": best.get("bitrate") or 128000,
-                                    "expires_at": expiry,
-                                }]
-
-                                cls._record_success(ext_name, latency_ms, redis_client)
-                                return {
-                                    "url": direct_url,
-                                    "direct_url": direct_url,
-                                    "proxy_url": None,
-                                    "status": stream_status,
-                                    "sources": sources,
-                                    "format": best.get("format", "M4A"),
-                                    "mimeType": best.get("mimeType") or 'audio/mp4; codecs="mp4a.40.2"',
-                                    "bitrate": best.get("bitrate") or 128000,
-                                    "duration": duration,
-                                    "title": data.get("title", f"Chhath Song ({video_id})"),
-                                    "extractor": ext_name,
-                                    "expires_at": expiry,
-                                    "is_audio_only": True,
-                                }
-
-                            cls._record_failure(ext_name, redis_client)
-
-                except (urllib.error.URLError, TimeoutError, OSError) as exc:
-                    if attempt < max_attempts:
-                        time.sleep(0.5)
+                audio_formats = []
+                for candidate in data.get("adaptiveFormats", []):
+                    mime_type = str(candidate.get("type") or "")
+                    url = str(candidate.get("url") or "")
+                    media_type = mime_type.split(";", 1)[0].strip().lower()
+                    try:
+                        itag = int(candidate.get("itag") or 0)
+                    except (TypeError, ValueError):
                         continue
-                    else:
-                        logger.warning("[StreamCache] Extractor %s failed for %s (attempt %d): %s", ext_name, video_id, attempt, exc)
-                        cls._record_failure(ext_name, redis_client)
-                except Exception as exc:
-                    logger.warning("[StreamCache] Extractor %s parse error for %s: %s", ext_name, video_id, exc)
-                    cls._record_failure(ext_name, redis_client)
+                    if (
+                        itag > 0
+                        and media_type in {"audio/mp4", "audio/webm"}
+                        and url.startswith("https://")
+                    ):
+                        audio_formats.append(candidate)
+
+                if not audio_formats:
+                    cls._record_failure(instance.name, redis_client)
+                    continue
+
+                aac_lc = next(
+                    (item for item in audio_formats if "mp4a.40.2" in str(item.get("type", ""))),
+                    None,
+                )
+                m4a_formats = [
+                    item for item in audio_formats
+                    if "audio/mp4" in str(item.get("type", "")).lower()
+                ]
+                best = aac_lc or max(
+                    m4a_formats or audio_formats,
+                    key=lambda item: int(item.get("bitrate") or 0),
+                )
+                mime_type = str(best.get("type") or "audio/mp4")
+                media_type = mime_type.split(";", 1)[0].strip().lower()
+                codec_match = re.search(r'codecs\s*=\s*["\']?([^;"\']+)', mime_type, re.IGNORECASE)
+                codec = codec_match.group(1).strip() if codec_match else (
+                    "mp4a.40.2" if media_type == "audio/mp4" else "opus"
+                )
+                stream_format = "M4A" if media_type == "audio/mp4" else "WEBM_OPUS"
+                bitrate = int(best.get("bitrate") or 128000)
+                itag = int(best["itag"])
+                direct_url = str(best["url"])
+                resolved_at = time.time()
+                expiry = extract_url_expiry(direct_url)
+                direct_source: Optional[SourceCandidate] = None
+
+                if expiry is None or expiry > resolved_at + EXPIRY_BUFFER_SECONDS:
+                    direct_source = {
+                        "mode": "direct",
+                        "provider": "invidious",
+                        "provider_origin": instance.origin,
+                        "url": direct_url,
+                        "itag": itag,
+                        "mime_type": mime_type,
+                        "codec": codec,
+                        "resolved_at": resolved_at,
+                        "expires_at": float(expiry) if expiry is not None else None,
+                        "refresh_at": float(expiry - EXPIRY_BUFFER_SECONDS)
+                        if expiry is not None else resolved_at + CONSERVATIVE_TTL,
+                        "validation_state": "validated",
+                        "type": "direct",
+                        "format": stream_format,
+                        "mimeType": mime_type,
+                        "bitrate": bitrate,
+                    }
+
+                proxy_query = urllib.parse.urlencode({
+                    "id": video_id,
+                    "itag": itag,
+                    "local": "true",
+                })
+                proxy_url = f"{instance.origin}/latest_version?{proxy_query}"
+                proxy_source: SourceCandidate = {
+                    "mode": "proxy",
+                    "provider": "invidious",
+                    "provider_origin": instance.origin,
+                    "url": proxy_url,
+                    "itag": itag,
+                    "mime_type": mime_type,
+                    "codec": codec,
+                    "resolved_at": resolved_at,
+                    "expires_at": None,
+                    "refresh_at": resolved_at + CONSERVATIVE_TTL,
+                    "validation_state": "validated",
+                    "type": "proxy",
+                    "format": stream_format,
+                    "mimeType": mime_type,
+                    "bitrate": bitrate,
+                }
+                sources = ([direct_source] if direct_source else []) + [proxy_source]
+                latency_ms = int((time.monotonic() - request_started) * 1000)
+                response = {
+                    "schema_version": 1,
+                    "video_id": video_id,
+                    "refreshed_at": resolved_at,
+                    "sources": sources,
+                    "duration": _extract_duration(data, best),
+                    "title": data.get("title", f"Chhath Song ({video_id})"),
+                    "extractor": instance.name,
+                }
+                validated_response = cls._validate_cache_record(response, resolved_at, video_id)
+                if not validated_response:
+                    cls._record_failure(instance.name, redis_client)
+                    continue
+                cls._record_success(instance.name, latency_ms, redis_client)
+                return validated_response
+            except Exception as exc:
+                logger.info("[StreamCache] Invidious origin %s failed for %s: %s", instance.name, video_id, exc)
+                cls._record_failure(instance.name, redis_client)
+                if time.monotonic() >= deadline:
                     break
 
         return None
@@ -650,54 +1249,53 @@ class StreamCacheService:
 
     @classmethod
     def invalidate_stream(cls, video_id: str, source_type: str = "all") -> None:
-        """
-        Invalidates stream cache for video_id.
-        If source_type == 'direct' and a valid proxy_url exists in cache:
-        Downgrades cache entry to DEGRADED and promotes proxy_url to url,
-        avoiding cold eviction and allowing other clients to play instantly!
-        """
+        """Fence and invalidate one source set, preserving a valid proxy on direct demotion."""
         clean_id = (video_id or "").strip()
         if not clean_id:
             return
 
         redis_client = _get_redis()
-        cache_key = f"{STREAM_CACHE_PREFIX}{clean_id}"
-
-        if source_type == "direct":
-            # Check if we can do an in-place promotion of proxy_url
-            cached = _l1_cache.get(clean_id)
-            if not cached and redis_client:
-                try:
-                    raw = redis_client.get(cache_key)
-                    if raw:
-                        cached = json.loads(raw)
-                except Exception:
-                    pass
-
-            if cached and cached.get("proxy_url") and cached.get("proxy_url") != cached.get("url"):
-                logger.info("[StreamCache] Demoting direct stream for %s to DEGRADED and promoting proxy URL.", clean_id)
-                cached["url"] = cached["proxy_url"]
-                cached["status"] = "DEGRADED"
-                _l1_cache[clean_id] = cached
-                _l1_cache_ts[clean_id] = time.time()
-                if redis_client:
-                    try:
-                        ttl = redis_client.ttl(cache_key)
-                        if ttl and ttl > 60:
-                            redis_client.setex(cache_key, ttl, json.dumps(cached))
-                    except Exception:
-                        pass
-                _record_metric("degraded_promotions")
-                return
-
         _l1_cache.pop(clean_id, None)
         _l1_cache_ts.pop(clean_id, None)
-        if redis_client:
-            try:
-                redis_client.delete(cache_key)
-                _record_metric("invalidations")
-            except Exception:
-                pass
+        if not redis_client:
+            return
+
+        try:
+            current = cls._read_current_record(redis_client, clean_id)
+            if source_type == "direct" and current:
+                proxy_sources = [
+                    source for source in cls._validate_source_candidates(
+                        current.get("sources"), time.time(), clean_id
+                    ) if source["mode"] == "proxy"
+                ]
+                if proxy_sources:
+                    fence = cls._advance_fence(redis_client, clean_id)
+                    current.update(fence)
+                    current["sources"] = proxy_sources
+                    current = cls._validate_cache_record(current, time.time(), clean_id)
+                    ttl = cls._cache_retention_ttl(current, time.time()) if current else 0
+                    if current and ttl > 0:
+                        written = redis_client.eval(
+                            WRITE_FENCED_CACHE_LUA,
+                            2,
+                            f"{STREAM_FENCE_PREFIX}{clean_id}",
+                            f"{STREAM_CACHE_PREFIX}{clean_id}",
+                            str(fence["generation"]),
+                            fence["fence_token"],
+                            ttl,
+                            json.dumps(current),
+                        )
+                        if written:
+                            _cache_l1(clean_id, current)
+                            _record_metric("degraded_promotions")
+                            return
+                        _record_metric("stale_write_rejections")
+
+            expected_token = current.get("fence_token") if current else None
+            cls._evict_fenced_record(redis_client, clean_id, expected_token)
+            _record_metric("invalidations")
+        except Exception as exc:
+            logger.warning("[StreamCache] Fenced invalidation failed for %s: %s", clean_id, exc)
 
     @classmethod
     def reset_metrics(cls) -> None:
@@ -720,7 +1318,6 @@ class StreamCacheService:
           Flushes ALL streams and RESETS telemetry metrics (hits, misses, extractions).
         Returns the count of Redis keys deleted.
         """
-        global _l1_cache, _l1_cache_ts
         deleted_count = 0
         redis_client = _get_redis()
 
@@ -751,15 +1348,14 @@ class StreamCacheService:
                 _l1_cache_ts.pop(cid, None)
                 if redis_client:
                     try:
-                        deleted = redis_client.delete(f"{STREAM_CACHE_PREFIX}{cid}")
-                        redis_client.delete(f"{STREAM_LOCK_PREFIX}{cid}")
-                        deleted_count += deleted
+                        deleted_count += cls._evict_fenced_record(redis_client, cid)
                     except Exception as exc:
-                        logger.warning("[StreamCache] Redis delete failed for %s: %s", cid, exc)
+                        logger.warning("[StreamCache] Fenced flush failed for %s: %s", cid, exc)
             _record_metric("invalidations", len(clean_ids))
             logger.info("[StreamCache] Selectively flushed %d stream(s) for %d requested track(s). Telemetry preserved.", deleted_count, len(clean_ids))
         else:
             # ENTIRE CATALOG FLUSH: Flush all cached streams and reset telemetry metrics.
+            known_ids = set(_l1_cache)
             _l1_cache.clear()
             _l1_cache_ts.clear()
             if redis_client:
@@ -767,18 +1363,20 @@ class StreamCacheService:
                     cursor = 0
                     while True:
                         cursor, keys = redis_client.scan(cursor=cursor, match=f"{STREAM_CACHE_PREFIX}*", count=100)
-                        if keys:
-                            deleted_count += redis_client.delete(*keys)
+                        known_ids.update(
+                            key.decode("utf-8") if isinstance(key, bytes) else str(key)
+                            for key in keys
+                        )
                         if cursor == 0:
                             break
-                    # Also clear any locks
-                    cursor = 0
-                    while True:
-                        cursor, keys = redis_client.scan(cursor=cursor, match=f"{STREAM_LOCK_PREFIX}*", count=100)
-                        if keys:
-                            redis_client.delete(*keys)
-                        if cursor == 0:
-                            break
+
+                    for cache_key in known_ids:
+                        if cache_key.startswith(STREAM_CACHE_PREFIX):
+                            cache_key = cache_key[len(STREAM_CACHE_PREFIX):]
+                        try:
+                            deleted_count += cls._evict_fenced_record(redis_client, cache_key)
+                        except Exception as exc:
+                            logger.warning("[StreamCache] Fenced flush failed for %s: %s", cache_key, exc)
 
                     # Reset metrics counters ONLY on full on-demand cache flush
                     redis_client.delete(STREAM_METRICS_KEY)
@@ -788,6 +1386,152 @@ class StreamCacheService:
             logger.info("[StreamCache] Flushed entire stream cache (%d streams) and reset telemetry metrics.", deleted_count)
 
         return deleted_count
+
+    @classmethod
+    def get_catalog_cache_summary(cls, video_ids: List[str]) -> Dict[str, Any]:
+        """Summarize fenced source readiness without returning URLs or counting playback hits."""
+        clean_ids = list(dict.fromkeys(
+            value.strip() for value in video_ids
+            if isinstance(value, str) and len(value.strip()) >= 5
+        ))
+        modes: Dict[str, Dict[str, Union[int, float]]] = {
+            mode: {
+                "ready": 0,
+                "expiring": 0,
+                "overdue": 0,
+                "missing": 0,
+                "unavailable": 0,
+                "oldest_overdue_age_seconds": 0,
+            }
+            for mode in ("direct", "proxy")
+        }
+        result: Dict[str, Any] = {
+            "cache_available": False,
+            "lookup_errors": 0,
+            "songs_ready": 0,
+            "songs_missing": len(clean_ids),
+            "songs_expiring": 0,
+            "modes": modes,
+        }
+        if not clean_ids:
+            return result
+
+        redis_client = _get_redis()
+        if not redis_client:
+            for summary in modes.values():
+                summary["missing"] = 0
+                summary["unavailable"] = len(clean_ids)
+            return result
+        result["cache_available"] = True
+
+        now = time.time()
+        ready_song_count = 0
+        expiring_song_count = 0
+        read_results = None
+        pipeline_factory = getattr(redis_client, "pipeline", None)
+        if callable(pipeline_factory):
+            try:
+                pipeline = pipeline_factory(transaction=False)
+                for video_id in clean_ids:
+                    pipeline.eval(
+                        READ_FENCED_CACHE_LUA,
+                        2,
+                        f"{STREAM_CACHE_PREFIX}{video_id}",
+                        f"{STREAM_FENCE_PREFIX}{video_id}",
+                    )
+                candidate_results = pipeline.execute()
+                if isinstance(candidate_results, (list, tuple)) and len(candidate_results) == len(clean_ids):
+                    read_results = candidate_results
+            except Exception as exc:
+                logger.debug("[StreamCache] Batched catalog inspection unavailable: %s", exc)
+
+        for index, video_id in enumerate(clean_ids):
+            try:
+                raw_result = (
+                    read_results[index]
+                    if read_results is not None
+                    else redis_client.eval(
+                        READ_FENCED_CACHE_LUA,
+                        2,
+                        f"{STREAM_CACHE_PREFIX}{video_id}",
+                        f"{STREAM_FENCE_PREFIX}{video_id}",
+                    )
+                )
+                raw = cls._fenced_read_payload(raw_result)
+                if not raw:
+                    for summary in modes.values():
+                        summary["missing"] += 1
+                    continue
+
+                record = json.loads(raw)
+                if (
+                    not isinstance(record, dict)
+                    or record.get("schema_version") != 1
+                    or record.get("video_id") != video_id
+                    or type(record.get("generation")) is not int
+                    or record["generation"] < 1
+                    or not isinstance(record.get("fence_token"), str)
+                ):
+                    _record_metric("invalid_cache_records")
+                    for summary in modes.values():
+                        summary["missing"] += 1
+                    continue
+
+                sources = record.get("sources", [])
+                valid_sources = cls._validate_source_candidates(sources, now, video_id)
+                valid_by_mode = {source["mode"]: source for source in valid_sources}
+                source_list = sources if isinstance(sources, list) else []
+                song_expiring = False
+
+                for mode, summary in modes.items():
+                    current = valid_by_mode.get(mode)
+                    if current:
+                        summary["ready"] += 1
+                        if current["refresh_at"] - now <= EXPIRY_BUFFER_SECONDS:
+                            summary["expiring"] += 1
+                            song_expiring = True
+                        continue
+
+                    overdue_ages = []
+                    for source in source_list:
+                        if not isinstance(source, dict) or source.get("mode") != mode:
+                            continue
+                        try:
+                            deadline = float(source.get("refresh_at"))
+                            resolved_at = float(source.get("resolved_at"))
+                        except (TypeError, ValueError):
+                            continue
+                        reference_time = min(now, deadline - 0.001)
+                        if (
+                            math.isfinite(deadline)
+                            and deadline <= now
+                            and reference_time >= resolved_at
+                            and cls._validate_source_candidates([source], reference_time, video_id)
+                        ):
+                            overdue_ages.append(max(0.0, now - deadline))
+
+                    if overdue_ages:
+                        summary["overdue"] += 1
+                        summary["oldest_overdue_age_seconds"] = max(
+                            summary["oldest_overdue_age_seconds"], max(overdue_ages)
+                        )
+                    else:
+                        summary["missing"] += 1
+
+                if "proxy" in valid_by_mode:
+                    ready_song_count += 1
+                if song_expiring:
+                    expiring_song_count += 1
+            except Exception as exc:
+                logger.debug("[StreamCache] Catalog cache inspection failed for %s: %s", video_id, exc)
+                result["lookup_errors"] += 1
+                for summary in modes.values():
+                    summary["unavailable"] += 1
+
+        result["songs_ready"] = ready_song_count
+        result["songs_missing"] = max(0, len(clean_ids) - ready_song_count)
+        result["songs_expiring"] = expiring_song_count
+        return result
 
     @classmethod
     def get_metrics(cls) -> Dict[str, Any]:
@@ -800,6 +1544,11 @@ class StreamCacheService:
             "extractions_success": 0,
             "extractions_failed": 0,
             "expirations_detected": 0,
+            "expired_candidates_rejected": 0,
+            "generation_mismatches": 0,
+            "stale_write_rejections": 0,
+            "invalid_cache_records": 0,
+            "stale_expired_serves": 0,
             "invalidations": 0,
             "hit_ratio": 1.0,
             "total_requests": 0,

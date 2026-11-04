@@ -1,293 +1,228 @@
-/**
- * Piped / Native Stream Client
- *
- * Resolves direct audio stream URLs for YouTube video IDs.
- * Implements:
- * 1. Primary path: Same-origin Next.js API route (/api/stream?v=...) to eliminate CORS and extension blockers
- * 2. Fallback path: Multi-instance failover with Invidious + Piped API support
- * 3. In-memory LRU stream cache (15-minute TTL)
- */
+/** Resolves current Invidious stream metadata through the same-origin API route. */
 
-import type { AudioStreamInfo } from "../audio/types";
-import { getHealthyInstances, markInstanceFailed, markInstanceSuccess } from "./instance-discovery";
-import { selectBestAudioStream, extractDurationFromUrl } from "./stream-selector";
+import type { AudioStreamInfo, CanonicalStreamCandidate } from "../audio/types";
+import { extractDurationFromUrl, isCurrentCanonicalSource } from "./stream-selector";
 
-interface CachedStream {
-  stream: AudioStreamInfo;
-  timestamp: number;
+interface InFlightResolution {
+  controller: AbortController;
+  promise: Promise<AudioStreamInfo>;
+  subscribers: number;
+  settled: boolean;
 }
 
-const STREAM_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
-const streamCache = new Map<string, CachedStream>();
+interface StreamFailureContext {
+  providerOrigin: string;
+  generation: number;
+}
 
-function isStreamUrlExpired(url: string): boolean {
-  if (!url) return true;
-  try {
-    const u = new URL(url);
-    const exp = u.searchParams.get("expire");
-    if (exp) {
-      const expSec = Number(exp);
-      if (!isNaN(expSec) && Date.now() / 1000 >= expSec - 60) {
-        return true;
-      }
-    }
-  } catch {
-    // If invalid URL, consider not expired
+const inFlightResolutions = new Map<string, InFlightResolution>();
+
+function abortError(): DOMException {
+  return new DOMException("The user aborted a request.", "AbortError");
+}
+
+function parseCurrentResponse(data: unknown, videoId: string): AudioStreamInfo {
+  if (!data || typeof data !== "object") {
+    throw new Error("Invidious stream resolver returned invalid metadata");
   }
-  return false;
-}
-
-export function clearStreamCache(videoId?: string): void {
-  if (videoId) {
-    streamCache.delete(videoId);
-  } else {
-    streamCache.clear();
+  const response = data as Record<string, unknown>;
+  const now = Date.now() / 1000;
+  if (
+    response.schema_version !== 1 ||
+    response.video_id !== videoId ||
+    !Number.isSafeInteger(response.generation) ||
+    (response.generation as number) < 1 ||
+    !Number.isFinite(response.refreshed_at) ||
+    (response.refreshed_at as number) > now ||
+    !Array.isArray(response.sources)
+  ) {
+    throw new Error("Invidious stream resolver returned no current canonical sources");
   }
+
+  const sources: CanonicalStreamCandidate[] = [];
+  const seenModes = new Set<string>();
+  for (const source of response.sources) {
+    if (!isCurrentCanonicalSource(source, now, videoId)) continue;
+    if (seenModes.has(source.mode)) continue;
+    seenModes.add(source.mode);
+    sources.push(source);
+  }
+  sources.sort((a, b) => (a.mode === "direct" ? -1 : 1) - (b.mode === "direct" ? -1 : 1));
+  const direct = sources.find((source) => source.mode === "direct");
+  const proxy = sources.find((source) => source.mode === "proxy");
+  const primary = direct || proxy;
+  if (!primary) {
+    throw new Error("Invidious stream resolver returned no current playable source");
+  }
+
+  const bitrate = Number.isFinite(primary.bitrate) && (primary.bitrate ?? 0) > 0
+    ? Math.round(primary.bitrate as number)
+    : 128000;
+  const mediaType = primary.mime_type.split(";", 1)[0].trim().toLowerCase();
+  const duration = typeof response.duration === "number" && response.duration > 0
+    ? response.duration
+    : extractDurationFromUrl(primary.url) || undefined;
+
+  return {
+    url: primary.url,
+    direct_url: direct?.url,
+    proxy_url: proxy?.url,
+    status: direct ? "READY" : "DEGRADED",
+    schema_version: 1,
+    video_id: videoId,
+    generation: response.generation as number,
+    refreshed_at: response.refreshed_at as number,
+    sources,
+    format: mediaType === "audio/mp4" ? "M4A" : "WEBM_OPUS",
+    quality: `${Math.round(bitrate / 1000)}kbps`,
+    mimeType: primary.mime_type,
+    codec: primary.codec || "",
+    bitrate,
+    duration,
+    title: typeof response.title === "string" ? response.title : undefined,
+    cache_tier: typeof response.cache_tier === "string" ? response.cache_tier : undefined,
+  };
 }
 
-/**
- * Reports a failed direct or proxy stream to the backend for selective invalidation/demotion.
- */
-export async function reportStreamFailure(
+async function resolveFromRoute(
   videoId: string,
-  source: "direct" | "all" = "direct"
-): Promise<void> {
-  const cleanId = (videoId || "").trim();
-  if (!cleanId) return;
+  forceFresh: boolean,
+  signal: AbortSignal,
+): Promise<AudioStreamInfo> {
+  const route = `/api/stream?v=${encodeURIComponent(videoId)}${forceFresh ? "&force_fresh=true" : ""}`;
+  const response = await fetch(route, {
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok) throw new Error(`Invidious stream resolver failed with HTTP ${response.status}`);
+  return parseCurrentResponse(await response.json(), videoId);
+}
 
-  // Evict or demote in local cache
-  const cached = streamCache.get(cleanId);
-  if (cached) {
-    if (source === "direct" && cached.stream.proxy_url && cached.stream.proxy_url !== cached.stream.url) {
-      cached.stream.url = cached.stream.proxy_url;
-      cached.stream.status = "DEGRADED";
-    } else {
-      streamCache.delete(cleanId);
+function createResolution(videoId: string, forceFresh: boolean, key: string): InFlightResolution {
+  const controller = new AbortController();
+  const flight: InFlightResolution = {
+    controller,
+    promise: resolveFromRoute(videoId, forceFresh, controller.signal),
+    subscribers: 0,
+    settled: false,
+  };
+  inFlightResolutions.set(key, flight);
+  const clear = () => {
+    flight.settled = true;
+    if (inFlightResolutions.get(key) === flight) inFlightResolutions.delete(key);
+  };
+  void flight.promise.then(clear, clear);
+  return flight;
+}
+
+function subscribeToResolution(flight: InFlightResolution, signal?: AbortSignal): Promise<AudioStreamInfo> {
+  if (signal?.aborted) return Promise.reject(abortError());
+  flight.subscribers += 1;
+
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    const release = (aborted: boolean) => {
+      if (finished) return;
+      finished = true;
+      signal?.removeEventListener("abort", onAbort);
+      flight.subscribers -= 1;
+      if (aborted && flight.subscribers === 0 && !flight.settled) flight.controller.abort();
+    };
+    const onAbort = () => {
+      release(true);
+      reject(abortError());
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
     }
-  }
-
-  // Notify backend API non-blocking
-  if (typeof window !== "undefined") {
-    try {
-      fetch(`/api/stream/cache/flush?v=${encodeURIComponent(cleanId)}&source=${source}`, {
-        method: "POST",
-      }).catch(() => {});
-    } catch {}
-  }
+    flight.promise.then(
+      (stream) => {
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+        release(false);
+        resolve(stream);
+      },
+      (error) => {
+        release(false);
+        reject(error);
+      },
+    );
+  });
 }
 
 /**
- * Resolves an audio stream for a given YouTube video ID.
+ * Resolves an audio stream. Completed URLs are never retained in the browser;
+ * only identical concurrent requests share one metadata resolution.
  */
 export async function fetchPipedStream(
   videoId: string,
-  audioElement?: HTMLAudioElement | null,
+  _audioElement?: HTMLAudioElement | null,
   signal?: AbortSignal,
-  forceFresh: boolean = false
+  forceFresh = false,
 ): Promise<AudioStreamInfo> {
-  const cleanId = videoId.trim();
-  if (!cleanId) {
-    throw new Error("Invalid videoId provided");
+  const cleanId = (videoId || "").trim();
+  if (!cleanId) throw new Error("Invalid videoId provided");
+  if (signal?.aborted) throw abortError();
+  if (typeof window === "undefined") {
+    throw new Error("Invidious stream resolution requires the same-origin route");
   }
 
-  if (signal?.aborted) {
-    throw new DOMException("The user aborted a request.", "AbortError");
+  const key = `${cleanId}:${forceFresh ? "refresh" : "current"}`;
+  let flight = inFlightResolutions.get(key);
+  if (!flight || flight.controller.signal.aborted) {
+    flight = createResolution(cleanId, forceFresh, key);
+  }
+  return subscribeToResolution(flight, signal);
+}
+
+/** Reports failed-candidate telemetry from the active attempt metadata. */
+export async function reportStreamFailure(
+  videoId: string,
+  mode: "direct" | "proxy",
+  reason: string,
+  context?: StreamFailureContext,
+): Promise<void> {
+  const cleanId = (videoId || "").trim();
+  const generation = context?.generation;
+  const provider = context?.providerOrigin;
+  if (
+    !cleanId ||
+    !provider ||
+    provider.length > 200 ||
+    !Number.isSafeInteger(generation) ||
+    (generation ?? 0) < 1
+  ) return;
+
+  try {
+    const origin = new URL(provider);
+    if (origin.protocol !== "https:" || origin.origin !== provider || origin.pathname !== "/") return;
+  } catch {
+    return;
   }
 
-  if (forceFresh) {
-    streamCache.delete(cleanId);
-  } else {
-    // Check in-memory cache
-    const cached = streamCache.get(cleanId);
-    if (cached && Date.now() - cached.timestamp < STREAM_CACHE_TTL_MS && !isStreamUrlExpired(cached.stream.url)) {
-      return cached.stream;
-    }
-  }
-
-  // 1. Primary path: query same-origin /api/stream if running in browser
   if (typeof window !== "undefined") {
     try {
-      if (signal?.aborted) {
-        throw new DOMException("The user aborted a request.", "AbortError");
-      }
-      const res = await fetch(
-        `/api/stream?v=${encodeURIComponent(cleanId)}${forceFresh ? "&force_fresh=true" : ""}`,
-        {
-          headers: { Accept: "application/json" },
-          signal,
-        }
-      );
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.url && !isStreamUrlExpired(data.url)) {
-          const durationVal =
-            typeof data.duration === "number" && data.duration > 0
-              ? data.duration
-              : extractDurationFromUrl(data.url) || undefined;
-
-          const stream: AudioStreamInfo = {
-            url: data.url,
-            direct_url: data.direct_url,
-            proxy_url: data.proxy_url,
-            status: data.status,
-            sources: data.sources,
-            format: data.format || "M4A",
-            quality: data.quality || "128kbps",
-            mimeType: data.mimeType || 'audio/mp4; codecs="mp4a.40.2"',
-            codec: data.codec || "mp4a.40.2",
-            bitrate: data.bitrate || 128000,
-            duration: durationVal,
-            title: data.title,
-            cache_tier: data.cache_tier,
-          };
-
-          streamCache.set(cleanId, {
-            stream,
-            timestamp: Date.now(),
-          });
-          return stream;
-        } else if (data && data.audioStreams && data.audioStreams.length > 0) {
-          const best = data.audioStreams[0];
-          const durationVal =
-            typeof data.duration === "number" && data.duration > 0
-              ? data.duration
-              : extractDurationFromUrl(best.url) || undefined;
-
-          const stream: AudioStreamInfo = {
-            url: best.url,
-            format: best.format || "M4A",
-            quality: best.quality || "128kbps",
-            mimeType: best.mimeType || 'audio/mp4; codecs="mp4a.40.2"',
-            codec: best.codec || "mp4a.40.2",
-            bitrate: best.bitrate || 128000,
-            duration: durationVal,
-          };
-          streamCache.set(cleanId, {
-            stream,
-            timestamp: Date.now(),
-          });
-          return stream;
-        }
-      }
-    } catch (err: any) {
-      if (err?.name === "AbortError" || signal?.aborted) {
-        throw err;
-      }
-      console.warn("[StreamClient] Same-origin /api/stream fallback to direct instances:", err);
-    }
-  }
-
-  if (signal?.aborted) {
-    throw new DOMException("The user aborted a request.", "AbortError");
-  }
-
-  // 2. Fallback path: query instances directly (supports test env or offline server route)
-  const instances = await getHealthyInstances();
-  let lastError: Error | null = null;
-  const attempts = Math.min(4, instances.length);
-
-  for (let i = 0; i < attempts; i++) {
-    if (signal?.aborted) {
-      throw new DOMException("The user aborted a request.", "AbortError");
-    }
-    const instance = instances[i];
-    const isPiped = instance.apiUrl.includes("piped");
-    const streamEndpoint = isPiped
-      ? `${instance.apiUrl}/streams/${cleanId}`
-      : `${instance.apiUrl}/api/v1/videos/${cleanId}?fields=title,adaptiveFormats,formatStreams`;
-
-    try {
-      const controller = new AbortController();
-      const onAbort = () => {
-        try { controller.abort("Parent signal aborted"); } catch { /* ignore */ }
-      };
-      if (signal) {
-        signal.addEventListener("abort", onAbort, { once: true });
-      }
-      const timeoutId = setTimeout(() => {
-        try { controller.abort("Upstream resolution timed out"); } catch { /* ignore */ }
-      }, 5000);
-
-      const response = await fetch(streamEndpoint, {
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
+      await fetch("/api/stream/source-failure", {
+        method: "POST",
+        cache: "no-store",
+        keepalive: true,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          video_id: cleanId,
+          mode,
+          provider,
+          generation,
+          reason: (reason || "unknown").slice(0, 120),
+        }),
       });
-      clearTimeout(timeoutId);
-      if (signal) {
-        signal.removeEventListener("abort", onAbort);
-      }
-
-      if (signal?.aborted) {
-        throw new DOMException("The user aborted a request.", "AbortError");
-      }
-
-      if (!response.ok) {
-        markInstanceFailed(instance.apiUrl);
-        lastError = new Error(`Instance ${instance.name} returned HTTP ${response.status}`);
-        continue;
-      }
-
-      const data = await response.json();
-      let normalizedStreams: AudioStreamInfo[] = [];
-
-      if (data.audioStreams && Array.isArray(data.audioStreams) && data.audioStreams.length > 0) {
-        normalizedStreams = data.audioStreams.map((s: any) => ({
-          url: s.url,
-          format: s.format || "M4A",
-          quality: s.quality || "128kbps",
-          mimeType: s.mimeType || 'audio/mp4; codecs="mp4a.40.2"',
-          codec: s.codec || "mp4a.40.2",
-          bitrate: typeof s.bitrate === "number" ? s.bitrate : 128000,
-        }));
-      } else if (data.adaptiveFormats && Array.isArray(data.adaptiveFormats) && data.adaptiveFormats.length > 0) {
-        const adaptive = data.adaptiveFormats.filter(
-          (f: any) => (f.type || "").includes("audio") && f.url
-        );
-        normalizedStreams = adaptive.map((f: any) => ({
-          url: f.url,
-          format: (f.type || "").includes("mp4") ? "M4A" : "WEBM_OPUS",
-          quality: f.audioQuality || "128kbps",
-          mimeType: f.type || 'audio/mp4; codecs="mp4a.40.2"',
-          codec: (f.type || "").includes("mp4") ? "mp4a.40.2" : "opus",
-          bitrate: f.bitrate || 128000,
-        }));
-      }
-
-      if (normalizedStreams.length === 0) {
-        markInstanceFailed(instance.apiUrl);
-        lastError = new Error(`Instance ${instance.name} returned no pure audio streams`);
-        continue;
-      }
-
-      const bestStream = selectBestAudioStream(normalizedStreams, audioElement);
-      if (!bestStream) {
-        markInstanceFailed(instance.apiUrl);
-        continue;
-      }
-
-      if (!bestStream.duration) {
-        bestStream.duration =
-          Number(data.lengthSeconds || data.duration || 0) ||
-          extractDurationFromUrl(bestStream.url) ||
-          undefined;
-      }
-
-      markInstanceSuccess(instance.apiUrl);
-      streamCache.set(cleanId, {
-        stream: bestStream,
-        timestamp: Date.now(),
-      });
-
-      return bestStream;
-    } catch (err: any) {
-      if (signal?.aborted || err?.name === "AbortError") {
-        throw err;
-      }
-      markInstanceFailed(instance.apiUrl);
-      lastError = err instanceof Error ? err : new Error(String(err));
+    } catch {
+      // Telemetry never blocks playback.
     }
   }
-
-  throw lastError || new Error(`Failed to resolve audio stream for video ${cleanId}`);
 }
