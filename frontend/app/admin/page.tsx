@@ -374,6 +374,16 @@ function StatusDisplayCard({
   const telemetry = data?.telemetry;
   const coord = data?.distributed_coordination;
 
+  const readyCount = useMemo(() => {
+    if (!catalog) return 0;
+    if (typeof catalog.stream_ready === "number" && catalog.stream_ready > 0) {
+      return catalog.stream_ready;
+    }
+    const missing = catalog.stream_missing ?? 0;
+    const failed = catalog.stream_failed ?? 0;
+    return Math.max(0, (catalog.eligible_songs ?? 0) - missing - failed);
+  }, [catalog]);
+
   const badgeStyles = {
     amber: "bg-amber-500/10 text-amber-300 border-amber-500/20",
     sky: "bg-sky-500/10 text-sky-300 border-sky-500/20",
@@ -455,7 +465,7 @@ function StatusDisplayCard({
           <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
             <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Prewarmed Inventory</div>
             <div className="text-lg font-extrabold text-sky-400">
-              {catalog ? `${catalog.stream_ready} / ${catalog.eligible_songs}` : "—"}
+              {catalog ? `${readyCount} / ${catalog.eligible_songs}` : "—"}
             </div>
             <div className="text-xs text-gray-300">
               <span className="text-sky-300 font-bold">{catalog?.stream_readiness_percent ?? 0}%</span> Warm Streams
@@ -489,7 +499,7 @@ function StatusDisplayCard({
               {catalog ? `${catalog.stream_readiness_percent}%` : "—"}
             </div>
             <div className="text-xs text-gray-300">
-              <span className="text-emerald-400 font-bold">{catalog?.stream_ready ?? 0}</span> / {catalog?.eligible_songs ?? 0} Ready
+              <span className="text-emerald-400 font-bold">{readyCount}</span> / {catalog?.eligible_songs ?? 0} Ready
             </div>
             <div className="text-[10px] text-gray-500">
               Expiring (&lt;10m): <span className="text-amber-400">{catalog?.stream_expiring ?? 0}</span> | Missing: <span className="text-red-400">{catalog?.stream_missing ?? 0}</span>

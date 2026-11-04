@@ -452,7 +452,7 @@ class CatalogReconciliationService:
         enabled_songs = 0
         metadata_ready = 0
         metadata_incomplete = 0
-        stream_ready = 0
+        stream_direct_ready = 0
         stream_degraded = 0
         stream_expiring = 0
         stream_missing = 0
@@ -512,13 +512,15 @@ class CatalogReconciliationService:
                         elif status == "DEGRADED" or ("latest_version" in url or "comp" in url):
                             stream_degraded += 1
                         else:
-                            stream_ready += 1
+                            stream_direct_ready += 1
                     except Exception:
                         stream_missing += 1
                 else:
                     stream_missing += 1
         else:
             stream_missing = enabled_songs
+
+        total_stream_ready = stream_direct_ready + stream_degraded
 
         # Leader check
         current_leader = None
@@ -540,14 +542,15 @@ class CatalogReconciliationService:
                 "eligible_songs": enabled_songs,
                 "metadata_ready": metadata_ready,
                 "metadata_incomplete": metadata_incomplete,
-                "stream_ready": stream_ready,
+                "stream_ready": total_stream_ready,
+                "stream_direct_ready": stream_direct_ready,
                 "stream_degraded": stream_degraded,
                 "stream_expiring": stream_expiring,
                 "stream_missing": stream_missing,
                 "stream_failed": stream_failed,
                 "metadata_completeness_percent": round((metadata_ready / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
-                "stream_readiness_percent": round(((stream_ready + stream_degraded) / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
-                "true_direct_ready_percent": round((stream_ready / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
+                "stream_readiness_percent": round((total_stream_ready / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
+                "true_direct_ready_percent": round((stream_direct_ready / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
                 "is_reconciling": is_reconciling,
             },
             "distributed_coordination": {

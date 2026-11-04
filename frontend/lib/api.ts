@@ -289,8 +289,11 @@ export interface CatalogReadinessStatus {
     metadata_ready: number;
     metadata_incomplete: number;
     stream_ready: number;
+    stream_direct_ready?: number;
+    stream_degraded?: number;
     stream_expiring: number;
     stream_missing: number;
+    stream_failed?: number;
     metadata_completeness_percent: number;
     stream_readiness_percent: number;
     is_reconciling?: boolean;
