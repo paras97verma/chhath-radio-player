@@ -60,6 +60,11 @@ WORKER_ID = str(uuid.uuid4())
 _reconciler_task: Optional[asyncio.Task] = None
 _is_running: bool = False
 
+# In-memory micro-cache for readiness metrics to eliminate duplicate computation
+_readiness_status_cache: Dict[str, Any] = {}
+_readiness_status_cache_ts: float = 0.0
+READINESS_CACHE_TTL: float = 3.0  # 3-second micro-cache
+
 
 class CatalogReconciliationService:
     """Coordinates catalog-wide metadata synchronization, stream caching, and distributed reconciliation."""
@@ -353,10 +358,23 @@ class CatalogReconciliationService:
         }
 
     @classmethod
-    def get_catalog_readiness_status(cls) -> Dict[str, Any]:
+    def invalidate_status_cache(cls) -> None:
+        global _readiness_status_cache, _readiness_status_cache_ts
+        _readiness_status_cache = {}
+        _readiness_status_cache_ts = 0.0
+
+    @classmethod
+    def get_catalog_readiness_status(cls, force: bool = False) -> Dict[str, Any]:
         """
         Returns full internal catalog readiness observability report.
+        Optimized with Redis mget batching and a 3-second micro-cache to eliminate
+        sequential roundtrip latency on rapid polling.
         """
+        global _readiness_status_cache, _readiness_status_cache_ts
+        now_ts = time.time()
+        if not force and _readiness_status_cache and (now_ts - _readiness_status_cache_ts) < READINESS_CACHE_TTL:
+            return _readiness_status_cache
+
         db = SessionLocal()
         total_db_songs = 0
         enabled_songs = 0
@@ -369,36 +387,54 @@ class CatalogReconciliationService:
         try:
             all_songs = SongService.get_all(db)
             total_db_songs = len(all_songs)
+            enabled_list = []
             for s in all_songs:
                 if s.enabled:
                     enabled_songs += 1
-                    # Metadata status check
+                    enabled_list.append(s)
                     if s.metadata_status == "complete" and s.duration_seconds is not None:
                         metadata_ready += 1
                     else:
                         metadata_incomplete += 1
 
-                    # Stream status check
-                    vid = s.youtube_video_id
-                    redis_client = _get_redis()
-                    if redis_client:
-                        raw = redis_client.get(f"{STREAM_CACHE_PREFIX}{vid}")
-                        if raw:
-                            try:
-                                d = json.loads(raw)
-                                url = d.get("url", "")
-                                exp = extract_url_expiry(url)
-                                now = time.time()
-                                if exp and (exp - now) < EXPIRY_BUFFER_SECONDS:
-                                    stream_expiring += 1
-                                else:
-                                    stream_ready += 1
-                            except Exception:
-                                stream_missing += 1
-                        else:
+            # High-speed batch stream status check using single Redis MGET with fallback
+            redis_client = _get_redis()
+            if redis_client and enabled_list:
+                keys = [f"{STREAM_CACHE_PREFIX}{s.youtube_video_id}" for s in enabled_list]
+                raw_items = None
+                try:
+                    res = redis_client.mget(keys)
+                    if isinstance(res, list):
+                        raw_items = res
+                except Exception:
+                    pass
+
+                if raw_items is None:
+                    # Fallback to individual get (supports unit test mocks and single-key clients)
+                    raw_items = []
+                    for k in keys:
+                        try:
+                            raw_items.append(redis_client.get(k))
+                        except Exception:
+                            raw_items.append(None)
+
+                now = time.time()
+                for raw in raw_items:
+                    if raw:
+                        try:
+                            d = json.loads(raw)
+                            url = d.get("url", "")
+                            exp = extract_url_expiry(url)
+                            if exp and (exp - now) < EXPIRY_BUFFER_SECONDS:
+                                stream_expiring += 1
+                            else:
+                                stream_ready += 1
+                        except Exception:
                             stream_missing += 1
                     else:
                         stream_missing += 1
+            else:
+                stream_missing = enabled_songs
         except Exception as exc:
             logger.warning("[CatalogReconciler] Status computation error: %s", exc)
         finally:
@@ -419,7 +455,7 @@ class CatalogReconciliationService:
 
         metrics = StreamCacheService.get_metrics()
 
-        return {
+        result = {
             "catalog": {
                 "total_songs": total_db_songs,
                 "eligible_songs": enabled_songs,
@@ -440,6 +476,9 @@ class CatalogReconciliationService:
             },
             "telemetry": metrics,
         }
+        _readiness_status_cache = result
+        _readiness_status_cache_ts = time.time()
+        return result
 
 
 # ─── Multi-Worker Reconciliation Loop ──────────────────────────────────────────

@@ -121,6 +121,7 @@ async def trigger_catalog_reconciliation(
     from app.services.queue_prewarmer import CatalogReconciliationService
 
     asyncio.create_task(CatalogReconciliationService.run_prewarmer_cycle())
+    CatalogReconciliationService.invalidate_status_cache()
     return {"status": "reconciliation_triggered", "message": "Catalog reconciliation cycle started in background"}
 
 
@@ -138,6 +139,7 @@ async def refresh_entire_catalog_cache(
     from app.services.queue_prewarmer import CatalogReconciliationService
 
     flushed_count = StreamCacheService.flush_stream_cache()
+    CatalogReconciliationService.invalidate_status_cache()
     asyncio.create_task(CatalogReconciliationService.run_prewarmer_cycle())
 
     return {

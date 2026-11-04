@@ -71,6 +71,7 @@ app.add_middleware(
     allow_credentials=_raw_origins.strip() != "*",  # credentials not allowed with wildcard
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=86400,  # Cache CORS preflight for 24 hours to prevent redundant OPTIONS requests
 )
 
 # ---------------------------------------------------------------------------

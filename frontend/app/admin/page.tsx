@@ -15,7 +15,7 @@
  * - Single item enable/disable toggles & delete actions
  */
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   adminLogin,
   adminFetchSongs,
@@ -577,44 +577,54 @@ function CatalogStatusSection({ token }: { token: string }) {
   const [reconciling, setReconciling] = useState(false);
   const [reconcileMessage, setReconcileMessage] = useState<string | null>(null);
 
-  const fetchSongsStatus = useCallback(async () => {
-    setSongsLoading(true);
-    setSongsError(null);
+  const isFetchingRef = useRef(false);
+
+  const fetchBothStatuses = useCallback(async (isManual = false) => {
+    // Prevent overlapping requests from piling up in the browser connection queue
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    if (isManual) {
+      setSongsLoading(true);
+      setStreamLoading(true);
+    }
     const start = performance.now();
     try {
+      // Both status cards share the same unified telemetry.
+      // A single request satisfies both sections, cutting network traffic and preflight latency in half.
       const data = await adminFetchCatalogStatus(token);
-      setSongsLatency(Math.round(performance.now() - start));
+      const latency = Math.round(performance.now() - start);
+      setSongsLatency(latency);
+      setStreamLatency(latency);
       setSongsStatus(data);
+      setStreamStatus(data);
+      setSongsError(null);
+      setStreamError(null);
     } catch (err: unknown) {
-      setSongsError(err instanceof Error ? err.message : "Failed to fetch catalog status");
+      const msg = err instanceof Error ? err.message : "Failed to fetch status";
+      setSongsError(msg);
+      setStreamError(msg);
     } finally {
       setSongsLoading(false);
+      setStreamLoading(false);
+      isFetchingRef.current = false;
     }
   }, [token]);
+
+  const fetchSongsStatus = useCallback(async () => {
+    await fetchBothStatuses(true);
+  }, [fetchBothStatuses]);
 
   const fetchStreamStatus = useCallback(async () => {
-    setStreamLoading(true);
-    setStreamError(null);
-    const start = performance.now();
-    try {
-      const data = await adminFetchStreamStatus(token);
-      setStreamLatency(Math.round(performance.now() - start));
-      setStreamStatus(data);
-    } catch (err: unknown) {
-      setStreamError(err instanceof Error ? err.message : "Failed to fetch stream engine status");
-    } finally {
-      setStreamLoading(false);
-    }
-  }, [token]);
-
-  const fetchBothStatuses = useCallback(async () => {
-    await Promise.all([fetchSongsStatus(), fetchStreamStatus()]);
-  }, [fetchSongsStatus, fetchStreamStatus]);
+    await fetchBothStatuses(true);
+  }, [fetchBothStatuses]);
 
   useEffect(() => {
-    fetchBothStatuses();
+    fetchBothStatuses(false);
     const interval = setInterval(() => {
-      fetchBothStatuses();
+      // Auto-poll in background only if document is visible and not already fetching
+      if (typeof document !== "undefined" && !document.hidden) {
+        fetchBothStatuses(false);
+      }
     }, 5000);
     return () => clearInterval(interval);
   }, [fetchBothStatuses]);
@@ -630,13 +640,13 @@ function CatalogStatusSection({ token }: { token: string }) {
       let pollCount = 0;
       const pollInterval = setInterval(async () => {
         pollCount += 1;
-        await fetchBothStatuses();
+        await fetchBothStatuses(false);
         if (pollCount >= 6) {
           clearInterval(pollInterval);
           setReconciling(false);
           setReconcileMessage("Reconciliation complete: metadata synchronized and audio streams verified!");
         }
-      }, 1500);
+      }, 2000);
     } catch (err: unknown) {
       setReconcileMessage(err instanceof Error ? err.message : "Failed to trigger reconciliation");
       setReconciling(false);
@@ -657,13 +667,13 @@ function CatalogStatusSection({ token }: { token: string }) {
       let pollCount = 0;
       const pollInterval = setInterval(async () => {
         pollCount += 1;
-        await fetchBothStatuses();
+        await fetchBothStatuses(false);
         if (pollCount >= 8) {
           clearInterval(pollInterval);
           setFlushing(false);
           setReconcileMessage("Audio stream cache refreshed: all streams validated and ready!");
         }
-      }, 1500);
+      }, 2000);
     } catch (err: unknown) {
       setReconcileMessage(err instanceof Error ? err.message : "Failed to flush and refresh cache");
       setFlushing(false);
@@ -685,7 +695,7 @@ function CatalogStatusSection({ token }: { token: string }) {
 
         <div className="flex items-center gap-2 flex-nowrap shrink-0 overflow-x-auto pb-1 xl:pb-0">
           <button
-            onClick={fetchBothStatuses}
+            onClick={() => fetchBothStatuses(true)}
             disabled={songsLoading || streamLoading || reconciling || flushing}
             className="px-3 py-1.5 text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 rounded-lg transition-all disabled:opacity-50 whitespace-nowrap shrink-0"
           >

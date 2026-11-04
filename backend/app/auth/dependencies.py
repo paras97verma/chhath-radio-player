@@ -2,6 +2,8 @@
 FastAPI dependency for JWT-protected routes.
 Inject `get_current_admin` into any route that requires authentication.
 """
+import time
+from typing import Dict, Tuple
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -14,6 +16,10 @@ from app.models.admin import Admin
 # auto_error=False so we can return a proper 401 (not 403) when no token is provided
 bearer_scheme = HTTPBearer(auto_error=False)
 
+# In-memory verified admin cache to eliminate redundant PostgreSQL queries on every admin call
+_admin_cache: Dict[str, Tuple[Admin, float]] = {}
+ADMIN_CACHE_TTL = 60.0  # 60 seconds
+
 
 def get_current_admin(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
@@ -21,6 +27,7 @@ def get_current_admin(
 ) -> Admin:
     """
     FastAPI dependency that validates the Bearer JWT token and returns the Admin.
+    Caches verified admin records in memory for 60s to prevent roundtrip DB latency.
 
     Raises:
         HTTPException 401: If the token is missing, expired, or invalid.
@@ -49,7 +56,14 @@ def get_current_admin(
     except jwt.InvalidTokenError:
         raise credentials_exception
 
+    now = time.time()
+    cached = _admin_cache.get(email)
+    if cached and (now - cached[1]) < ADMIN_CACHE_TTL:
+        return cached[0]
+
     admin = db.query(Admin).filter(Admin.email == email).first()
     if admin is None:
         raise credentials_exception
+
+    _admin_cache[email] = (admin, now)
     return admin
