@@ -400,13 +400,13 @@ function StatusDisplayCard({
           <button
             onClick={onRefresh}
             disabled={loading}
-            className="px-2.5 py-1 text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 rounded-lg transition-all disabled:opacity-50"
+            className="h-8 px-3 text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 rounded-lg transition-all disabled:opacity-50 flex items-center justify-center min-w-[130px] whitespace-nowrap shrink-0"
           >
             {loading ? "Refreshing…" : type === "catalog" ? "🔄 Refresh Catalog" : "🔄 Refresh Cache"}
           </button>
           <button
             onClick={() => setShowJson((prev) => !prev)}
-            className="px-2 py-1 text-xs text-gray-400 hover:text-white bg-gray-900 rounded-lg border border-gray-800 transition-all"
+            className="h-8 px-3 text-xs font-semibold text-gray-300 hover:text-white bg-gray-900 hover:bg-gray-800 border border-gray-700 rounded-lg transition-all flex items-center justify-center min-w-[130px] whitespace-nowrap shrink-0"
           >
             {showJson ? "Close Details" : "Inspect Payload"}
           </button>
@@ -613,6 +613,10 @@ function CatalogStatusSection({ token }: { token: string }) {
 
   useEffect(() => {
     fetchBothStatuses();
+    const interval = setInterval(() => {
+      fetchBothStatuses();
+    }, 5000);
+    return () => clearInterval(interval);
   }, [fetchBothStatuses]);
 
   const handleTriggerReconcile = async () => {
@@ -669,21 +673,21 @@ function CatalogStatusSection({ token }: { token: string }) {
   return (
     <div className="bg-gray-900/90 border border-amber-500/30 rounded-2xl p-5 shadow-xl space-y-4">
       {/* Title & Global Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-800 pb-3">
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 border-b border-gray-800 pb-3">
         <div>
           <h2 className="text-base font-bold text-amber-400 flex items-center gap-2">
             <span>📡 Catalog Readiness & Audio Streaming Engine</span>
           </h2>
           <p className="text-xs text-gray-400">
-            Real-time catalog monitoring from PostgreSQL and Redis edge cache.
+            Real-time catalog monitoring from PostgreSQL and Redis edge cache. Auto-refreshes every 5s.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2 flex-nowrap shrink-0 overflow-x-auto pb-1 xl:pb-0">
           <button
             onClick={fetchBothStatuses}
             disabled={songsLoading || streamLoading || reconciling || flushing}
-            className="px-3 py-1.5 text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 rounded-lg transition-all disabled:opacity-50"
+            className="px-3 py-1.5 text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 rounded-lg transition-all disabled:opacity-50 whitespace-nowrap shrink-0"
           >
             {songsLoading || streamLoading ? "Refreshing Metrics…" : "🔄 Refresh All Metrics"}
           </button>
@@ -691,7 +695,7 @@ function CatalogStatusSection({ token }: { token: string }) {
           <button
             onClick={handleTriggerReconcile}
             disabled={reconciling || flushing}
-            className="px-3 py-1.5 text-xs font-semibold bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 rounded-lg transition-all flex items-center gap-1.5"
+            className="px-3 py-1.5 text-xs font-semibold bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
           >
             {reconciling ? (
               <>
@@ -706,7 +710,7 @@ function CatalogStatusSection({ token }: { token: string }) {
           <button
             onClick={handleFlushAndRefreshCache}
             disabled={reconciling || flushing}
-            className="px-3 py-1.5 text-xs font-semibold bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 rounded-lg transition-all flex items-center gap-1.5"
+            className="px-3 py-1.5 text-xs font-semibold bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
             title="Purge all cached audio streams from Redis and re-extract verified playable streams across the entire catalog"
           >
             {flushing ? (

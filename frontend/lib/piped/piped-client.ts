@@ -156,13 +156,13 @@ export async function fetchPipedStream(
     try {
       const controller = new AbortController();
       const onAbort = () => {
-        try { controller.abort(); } catch { /* ignore */ }
+        try { controller.abort("Parent signal aborted"); } catch { /* ignore */ }
       };
       if (signal) {
         signal.addEventListener("abort", onAbort, { once: true });
       }
       const timeoutId = setTimeout(() => {
-        try { controller.abort(); } catch { /* ignore */ }
+        try { controller.abort("Upstream resolution timed out"); } catch { /* ignore */ }
       }, 5000);
 
       const response = await fetch(streamEndpoint, {

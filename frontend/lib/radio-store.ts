@@ -717,7 +717,11 @@ export const useRadioStore = create<RadioState>((set, get) => ({
           const nextIdx = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
           const nextSong = queue[nextIdx];
           if (nextSong) {
-            adapter.preloadNextSong(nextSong);
+            try {
+              adapter.preloadNextSong(nextSong).catch(() => {});
+            } catch {
+              /* ignore */
+            }
           }
         }
         break;

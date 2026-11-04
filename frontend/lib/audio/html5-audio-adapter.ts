@@ -280,7 +280,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     // 1. Cancel any in-flight background preload so it does not contend with live playback
     if (this.preloadAbortController) {
       try {
-        this.preloadAbortController.abort();
+        this.preloadAbortController.abort("Playback track load started");
       } catch {
         /* ignore */
       }
@@ -290,7 +290,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     // 2. Cancel previous load request if in flight
     if (this.activeAbortController) {
       try {
-        this.activeAbortController.abort();
+        this.activeAbortController.abort("Superseded by new track selection");
       } catch {
         /* ignore */
       }
@@ -439,10 +439,11 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
     if (this.preloadAbortController) {
       try {
-        this.preloadAbortController.abort();
+        this.preloadAbortController.abort("Preload superseded by new track");
       } catch {
         /* ignore */
       }
+      this.preloadAbortController = null;
     }
     const controller = new AbortController();
     this.preloadAbortController = controller;
@@ -543,7 +544,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     this.isDestroyed = true;
     if (this.activeAbortController) {
       try {
-        this.activeAbortController.abort();
+        this.activeAbortController.abort("Adapter destroyed");
       } catch {
         /* ignore */
       }
@@ -551,7 +552,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     }
     if (this.preloadAbortController) {
       try {
-        this.preloadAbortController.abort();
+        this.preloadAbortController.abort("Adapter destroyed");
       } catch {
         /* ignore */
       }
@@ -589,6 +590,12 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
   private _emitState(state: PlayerState): void {
     this.currentState = state;
-    this.stateListeners.forEach((cb) => cb(state));
+    this.stateListeners.forEach((cb) => {
+      try {
+        cb(state);
+      } catch (err) {
+        console.warn("[Html5AudioAdapter] Error in state listener:", err);
+      }
+    });
   }
 }
