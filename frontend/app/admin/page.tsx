@@ -342,137 +342,78 @@ function EditSongModal({
   );
 }
 
-// ─── Catalog Status Section ──────────────────────────────────────────────────
+// ─── Catalog & Stream Status Section ─────────────────────────────────────────
 
-function CatalogStatusSection({ token }: { token: string }) {
-  const [statusData, setStatusData] = useState<CatalogReadinessStatus | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [activeEndpoint, setActiveEndpoint] = useState<string>("/api/admin/songs/status");
-  const [latencyMs, setLatencyMs] = useState<number | null>(null);
-  const [reconciling, setReconciling] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+function StatusDisplayCard({
+  endpoint,
+  title,
+  subtitle,
+  data,
+  loading,
+  error,
+  latencyMs,
+  onRefresh,
+}: {
+  endpoint: string;
+  title: string;
+  subtitle: string;
+  data: CatalogReadinessStatus | null;
+  loading: boolean;
+  error: string | null;
+  latencyMs: number | null;
+  onRefresh: () => void;
+}) {
   const [showJson, setShowJson] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchStatus = useCallback(
-    async (endpoint: "/api/admin/songs/status" | "/api/stream/catalog/status") => {
-      setLoading(true);
-      setError(null);
-      setMessage(null);
-      setActiveEndpoint(endpoint);
-      const start = performance.now();
-      try {
-        const data =
-          endpoint === "/api/admin/songs/status"
-            ? await adminFetchCatalogStatus(token)
-            : await adminFetchStreamStatus(token);
-        setLatencyMs(Math.round(performance.now() - start));
-        setStatusData(data);
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Failed to fetch status");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [token]
-  );
-
-  useEffect(() => {
-    fetchStatus("/api/admin/songs/status");
-  }, [fetchStatus]);
-
-  const handleTriggerReconcile = async () => {
-    setReconciling(true);
-    setMessage(null);
-    try {
-      const res = await adminTriggerReconcile(token);
-      setMessage(res.message || "Reconciliation triggered in background!");
-      setTimeout(() => {
-        fetchStatus(activeEndpoint as "/api/admin/songs/status" | "/api/stream/catalog/status");
-      }, 2000);
-    } catch (err: unknown) {
-      setMessage(err instanceof Error ? err.message : "Failed to trigger reconciliation");
-    } finally {
-      setReconciling(false);
-    }
-  };
-
-  const catalog = statusData?.catalog;
-  const telemetry = statusData?.telemetry;
-  const coord = statusData?.distributed_coordination;
+  const catalog = data?.catalog;
+  const telemetry = data?.telemetry;
+  const coord = data?.distributed_coordination;
 
   return (
-    <div className="bg-gray-900/90 border border-amber-500/30 rounded-2xl p-5 shadow-xl space-y-4">
-      {/* Title & Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-800 pb-3">
+    <div className="bg-gray-950/70 border border-gray-800 rounded-xl p-4 space-y-3 shadow-lg">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-800/80 pb-3">
         <div>
-          <h2 className="text-base font-bold text-amber-400 flex items-center gap-2">
-            <span>📡 Catalog Readiness & Audio Streaming Engine</span>
-          </h2>
-          <p className="text-xs text-gray-400">
-            Real-time status from Redis & PostgreSQL. Fast lookup latency: &lt; 0.1ms.
-          </p>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
+              {endpoint}
+            </span>
+            <h3 className="text-sm font-bold text-gray-200">{title}</h3>
+          </div>
+          <p className="text-xs text-gray-400 mt-0.5">{subtitle}</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
+          {latencyMs !== null && (
+            <span className="text-xs text-emerald-400 font-mono">({latencyMs}ms)</span>
+          )}
           <button
-            onClick={() => fetchStatus("/api/admin/songs/status")}
+            onClick={onRefresh}
             disabled={loading}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
-              activeEndpoint === "/api/admin/songs/status"
-                ? "bg-amber-500/20 text-amber-300 border-amber-500/40 shadow"
-                : "bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700"
-            }`}
+            className="px-2.5 py-1 text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 rounded-lg transition-all disabled:opacity-50"
           >
-            {loading && activeEndpoint === "/api/admin/songs/status" ? "Fetching…" : "GET /api/admin/songs/status"}
+            {loading ? "Refreshing…" : "🔄 Refresh"}
           </button>
-
-          <button
-            onClick={() => fetchStatus("/api/stream/catalog/status")}
-            disabled={loading}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
-              activeEndpoint === "/api/stream/catalog/status"
-                ? "bg-amber-500/20 text-amber-300 border-amber-500/40 shadow"
-                : "bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700"
-            }`}
-          >
-            {loading && activeEndpoint === "/api/stream/catalog/status" ? "Fetching…" : "GET /api/stream/catalog/status"}
-          </button>
-
-          <button
-            onClick={handleTriggerReconcile}
-            disabled={reconciling}
-            className="px-3 py-1.5 text-xs font-semibold bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 rounded-lg transition-all"
-          >
-            {reconciling ? "Starting…" : "⚡ Trigger Reconcile"}
-          </button>
-
           <button
             onClick={() => setShowJson((prev) => !prev)}
-            className="px-2.5 py-1.5 text-xs font-medium text-gray-400 hover:text-white bg-gray-800/80 rounded-lg border border-gray-700 hover:bg-gray-700"
+            className="px-2 py-1 text-xs text-gray-400 hover:text-white bg-gray-900 rounded-lg border border-gray-800 transition-all"
           >
             {showJson ? "Hide JSON" : "Raw JSON"}
           </button>
         </div>
       </div>
 
-      {/* Latency and message bar */}
-      <div className="flex flex-wrap items-center justify-between text-xs text-gray-400 gap-2">
-        <div>
-          <span>Active endpoint: </span>
-          <code className="text-amber-300 font-mono bg-gray-800 px-1.5 py-0.5 rounded">{activeEndpoint}</code>
-          {latencyMs !== null && <span className="ml-2 text-emerald-400 font-mono">({latencyMs}ms response)</span>}
+      {error && (
+        <div className="text-xs text-red-400 bg-red-950/40 border border-red-800/50 rounded-lg p-2.5">
+          {error}
         </div>
-        {message && <span className="text-emerald-300 font-medium">{message}</span>}
-        {error && <span className="text-red-400 font-medium">{error}</span>}
-      </div>
+      )}
 
-      {/* KPI Metrics Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
         {/* Stream Readiness Card */}
-        <div className="bg-gray-950/60 border border-gray-800 rounded-xl p-3.5 space-y-1">
-          <div className="text-[11px] text-gray-400 font-medium uppercase tracking-wider">Stream Readiness</div>
-          <div className="text-xl font-extrabold text-emerald-400">
+        <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
+          <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Stream Readiness</div>
+          <div className="text-lg font-extrabold text-emerald-400">
             {catalog ? `${catalog.stream_readiness_percent}%` : "—"}
           </div>
           <div className="text-xs text-gray-300">
@@ -484,9 +425,9 @@ function CatalogStatusSection({ token }: { token: string }) {
         </div>
 
         {/* Metadata Completeness Card */}
-        <div className="bg-gray-950/60 border border-gray-800 rounded-xl p-3.5 space-y-1">
-          <div className="text-[11px] text-gray-400 font-medium uppercase tracking-wider">Metadata Sync</div>
-          <div className="text-xl font-extrabold text-amber-400">
+        <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
+          <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Metadata Sync</div>
+          <div className="text-lg font-extrabold text-amber-400">
             {catalog ? `${catalog.metadata_completeness_percent}%` : "—"}
           </div>
           <div className="text-xs text-gray-300">
@@ -498,9 +439,9 @@ function CatalogStatusSection({ token }: { token: string }) {
         </div>
 
         {/* Cache Telemetry Card */}
-        <div className="bg-gray-950/60 border border-gray-800 rounded-xl p-3.5 space-y-1">
-          <div className="text-[11px] text-gray-400 font-medium uppercase tracking-wider">Cache Hit Ratio</div>
-          <div className="text-xl font-extrabold text-sky-400">
+        <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
+          <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Cache Hit Ratio</div>
+          <div className="text-lg font-extrabold text-sky-400">
             {telemetry ? `${(telemetry.hit_ratio * 100).toFixed(1)}%` : "—"}
           </div>
           <div className="text-xs text-gray-300">
@@ -512,9 +453,9 @@ function CatalogStatusSection({ token }: { token: string }) {
         </div>
 
         {/* Multi-Worker Coordination Card */}
-        <div className="bg-gray-950/60 border border-gray-800 rounded-xl p-3.5 space-y-1">
-          <div className="text-[11px] text-gray-400 font-medium uppercase tracking-wider">Worker Coordination</div>
-          <div className="text-sm font-bold text-violet-400 flex items-center gap-1.5 pt-0.5">
+        <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
+          <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Worker Coordination</div>
+          <div className="text-xs font-bold text-violet-400 flex items-center gap-1.5 pt-0.5">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
             {coord?.is_current_worker_leader ? "Leader Active" : coord?.active_leader_id ? "Leader Lease Active" : "Standby"}
           </div>
@@ -529,21 +470,159 @@ function CatalogStatusSection({ token }: { token: string }) {
 
       {/* Raw JSON Accordion */}
       {showJson && (
-        <div className="bg-gray-950 border border-gray-800 rounded-xl p-3 space-y-2">
+        <div className="bg-black/60 border border-gray-800 rounded-lg p-3 space-y-2">
           <div className="flex items-center justify-between text-xs text-gray-400">
-            <span>Raw Response ({activeEndpoint})</span>
+            <span>Raw Response ({endpoint})</span>
             <button
-              onClick={() => navigator.clipboard.writeText(JSON.stringify(statusData, null, 2))}
+              onClick={() => navigator.clipboard.writeText(JSON.stringify(data, null, 2))}
               className="text-amber-400 hover:text-amber-300 text-[11px]"
             >
               Copy JSON
             </button>
           </div>
-          <pre className="text-[11px] font-mono text-gray-300 overflow-x-auto max-h-60 p-2 bg-black/40 rounded-lg">
-            {JSON.stringify(statusData, null, 2)}
+          <pre className="text-[11px] font-mono text-gray-300 overflow-x-auto max-h-60 p-2 bg-black/50 rounded">
+            {JSON.stringify(data, null, 2)}
           </pre>
         </div>
       )}
+    </div>
+  );
+}
+
+function CatalogStatusSection({ token }: { token: string }) {
+  // State for GET /api/admin/songs/status
+  const [songsStatus, setSongsStatus] = useState<CatalogReadinessStatus | null>(null);
+  const [songsLoading, setSongsLoading] = useState(false);
+  const [songsLatency, setSongsLatency] = useState<number | null>(null);
+  const [songsError, setSongsError] = useState<string | null>(null);
+
+  // State for GET /api/stream/catalog/status
+  const [streamStatus, setStreamStatus] = useState<CatalogReadinessStatus | null>(null);
+  const [streamLoading, setStreamLoading] = useState(false);
+  const [streamLatency, setStreamLatency] = useState<number | null>(null);
+  const [streamError, setStreamError] = useState<string | null>(null);
+
+  const [reconciling, setReconciling] = useState(false);
+  const [reconcileMessage, setReconcileMessage] = useState<string | null>(null);
+
+  const fetchSongsStatus = useCallback(async () => {
+    setSongsLoading(true);
+    setSongsError(null);
+    const start = performance.now();
+    try {
+      const data = await adminFetchCatalogStatus(token);
+      setSongsLatency(Math.round(performance.now() - start));
+      setSongsStatus(data);
+    } catch (err: unknown) {
+      setSongsError(err instanceof Error ? err.message : "Failed to fetch songs catalog status");
+    } finally {
+      setSongsLoading(false);
+    }
+  }, [token]);
+
+  const fetchStreamStatus = useCallback(async () => {
+    setStreamLoading(true);
+    setStreamError(null);
+    const start = performance.now();
+    try {
+      const data = await adminFetchStreamStatus(token);
+      setStreamLatency(Math.round(performance.now() - start));
+      setStreamStatus(data);
+    } catch (err: unknown) {
+      setStreamError(err instanceof Error ? err.message : "Failed to fetch stream catalog status");
+    } finally {
+      setStreamLoading(false);
+    }
+  }, [token]);
+
+  const fetchBothStatuses = useCallback(async () => {
+    await Promise.all([fetchSongsStatus(), fetchStreamStatus()]);
+  }, [fetchSongsStatus, fetchStreamStatus]);
+
+  useEffect(() => {
+    fetchBothStatuses();
+  }, [fetchBothStatuses]);
+
+  const handleTriggerReconcile = async () => {
+    setReconciling(true);
+    setReconcileMessage(null);
+    try {
+      const res = await adminTriggerReconcile(token);
+      setReconcileMessage(res.message || "Reconciliation triggered in background!");
+      setTimeout(() => {
+        fetchBothStatuses();
+      }, 2000);
+    } catch (err: unknown) {
+      setReconcileMessage(err instanceof Error ? err.message : "Failed to trigger reconciliation");
+    } finally {
+      setReconciling(false);
+    }
+  };
+
+  return (
+    <div className="bg-gray-900/90 border border-amber-500/30 rounded-2xl p-5 shadow-xl space-y-4">
+      {/* Title & Global Controls */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-800 pb-3">
+        <div>
+          <h2 className="text-base font-bold text-amber-400 flex items-center gap-2">
+            <span>📡 Catalog Readiness & Audio Streaming Engine</span>
+          </h2>
+          <p className="text-xs text-gray-400">
+            Real-time status from Redis & PostgreSQL. Both endpoints monitored directly from this admin portal.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={fetchBothStatuses}
+            disabled={songsLoading || streamLoading}
+            className="px-3 py-1.5 text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 rounded-lg transition-all disabled:opacity-50"
+          >
+            {songsLoading || streamLoading ? "Refreshing Both…" : "🔄 Refresh Both Statuses"}
+          </button>
+
+          <button
+            onClick={handleTriggerReconcile}
+            disabled={reconciling}
+            className="px-3 py-1.5 text-xs font-semibold bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 rounded-lg transition-all"
+          >
+            {reconciling ? "Starting…" : "⚡ Trigger Reconcile"}
+          </button>
+        </div>
+      </div>
+
+      {reconcileMessage && (
+        <div className="text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-800/40 rounded-lg p-2.5 font-medium">
+          {reconcileMessage}
+        </div>
+      )}
+
+      {/* Both sections rendered directly and simultaneously */}
+      <div className="space-y-4">
+        {/* Section 1: GET /api/admin/songs/status */}
+        <StatusDisplayCard
+          endpoint="GET /api/admin/songs/status"
+          title="Songs Catalog Readiness & Database Status"
+          subtitle="Tracks overall database catalog eligibility, metadata readiness, and prewarmed stream inventory."
+          data={songsStatus}
+          loading={songsLoading}
+          error={songsError}
+          latencyMs={songsLatency}
+          onRefresh={fetchSongsStatus}
+        />
+
+        {/* Section 2: GET /api/stream/catalog/status */}
+        <StatusDisplayCard
+          endpoint="GET /api/stream/catalog/status"
+          title="Audio Stream Cache & Engine Status"
+          subtitle="Monitors L1 in-memory stream cache, L2 Redis stream cache, expiration tracking, and hit ratios."
+          data={streamStatus}
+          loading={streamLoading}
+          error={streamError}
+          latencyMs={streamLatency}
+          onRefresh={fetchStreamStatus}
+        />
+      </div>
     </div>
   );
 }
