@@ -80,21 +80,49 @@ describe("MediaSession Module", () => {
 
     const setActionHandlerSpy = vi.spyOn(navigator.mediaSession, "setActionHandler");
 
+    const onSeekBackward = vi.fn();
+    const onSeekForward = vi.fn();
+
     expect(() => {
       registerMediaSessionHandlers({
         onPlay: vi.fn(),
         onPause: vi.fn(),
         onNext: vi.fn(),
         onPrev: vi.fn(),
+        onSeekBackward,
+        onSeekForward,
       });
     }).not.toThrow();
 
     expect(setActionHandlerSpy).toHaveBeenCalledWith("previoustrack", expect.any(Function));
     expect(setActionHandlerSpy).toHaveBeenCalledWith("nexttrack", expect.any(Function));
-    expect(setActionHandlerSpy).toHaveBeenCalledWith("seekbackward", null);
-    expect(setActionHandlerSpy).toHaveBeenCalledWith("seekforward", null);
+    expect(setActionHandlerSpy).toHaveBeenCalledWith("seekbackward", expect.any(Function));
+    expect(setActionHandlerSpy).toHaveBeenCalledWith("seekforward", expect.any(Function));
 
     expect(() => reassertMediaSessionHandlers()).not.toThrow();
+  });
+
+  it("disables seekbackward and seekforward on iOS to preserve track skip buttons", () => {
+    const originalUA = navigator.userAgent;
+    try {
+      Object.defineProperty(navigator, "userAgent", {
+        value: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15",
+        configurable: true,
+      });
+
+      const setActionHandlerSpy = vi.spyOn(navigator.mediaSession, "setActionHandler");
+      reassertMediaSessionHandlers();
+
+      expect(setActionHandlerSpy).toHaveBeenCalledWith("seekbackward", null);
+      expect(setActionHandlerSpy).toHaveBeenCalledWith("seekforward", null);
+      expect(setActionHandlerSpy).toHaveBeenCalledWith("previoustrack", expect.any(Function));
+      expect(setActionHandlerSpy).toHaveBeenCalledWith("nexttrack", expect.any(Function));
+    } finally {
+      Object.defineProperty(navigator, "userAgent", {
+        value: originalUA,
+        configurable: true,
+      });
+    }
   });
 
   it("can update metadata with a valid song and null", () => {

@@ -89,6 +89,7 @@ export async function fetchPipedStream(
 
           const stream: AudioStreamInfo = {
             url: data.url,
+            proxy_url: data.proxy_url,
             format: data.format || "M4A",
             quality: data.quality || "128kbps",
             mimeType: data.mimeType || 'audio/mp4; codecs="mp4a.40.2"',
@@ -155,13 +156,13 @@ export async function fetchPipedStream(
     try {
       const controller = new AbortController();
       const onAbort = () => {
-        try { controller.abort(); } catch { /* ignore */ }
+        try { controller.abort("Parent signal aborted"); } catch { /* ignore */ }
       };
       if (signal) {
         signal.addEventListener("abort", onAbort, { once: true });
       }
       const timeoutId = setTimeout(() => {
-        try { controller.abort(); } catch { /* ignore */ }
+        try { controller.abort("Upstream resolution timed out"); } catch { /* ignore */ }
       }, 5000);
 
       const response = await fetch(streamEndpoint, {
@@ -209,22 +210,9 @@ export async function fetchPipedStream(
         }));
       }
 
-      // If audioStreams is empty, check videoStreams with audio
-      if (normalizedStreams.length === 0 && data.videoStreams) {
-        const muxed = (data.videoStreams || []).filter((v: any) => !v.videoOnly && v.url);
-        normalizedStreams = muxed.map((v: any) => ({
-          url: v.url,
-          format: v.format || "MP4",
-          quality: v.quality || "360p",
-          mimeType: v.mimeType || "video/mp4",
-          codec: "mp4",
-          bitrate: 128000,
-        }));
-      }
-
       if (normalizedStreams.length === 0) {
         markInstanceFailed(instance.apiUrl);
-        lastError = new Error(`Instance ${instance.name} returned no audio streams`);
+        lastError = new Error(`Instance ${instance.name} returned no pure audio streams`);
         continue;
       }
 

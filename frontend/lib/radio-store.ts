@@ -261,6 +261,8 @@ interface RadioState {
   pausePlayback: () => Promise<void>;
   nextSong: () => Promise<void>;
   prevSong: () => Promise<void>;
+  playSongAtIndex: (index: number) => Promise<void>;
+  playSong: (song: Song) => Promise<void>;
   handleAdapterStateChange: (state: PlayerState, sessionId: string) => Promise<void>;
   currentSong: () => Song | null;
   upNextSongs: (count?: number) => Song[];
@@ -419,8 +421,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     };
 
     // Register OS Media Session controls (Lock screen, Control Center, Bluetooth headsets).
-    // Omitting onSeekBack/onSeekFwd preserves [⏮ Previous Track] and [⏭ Next Track] buttons on mobile OS lock screens.
-    // Seeking is performed exclusively via the lock screen scrubber progress bar (onSeekTo).
+    // Standardizes prev, next, seekto, seekbackward, seekforward across Android, iOS, and desktop.
     registerMediaSessionHandlers({
       onPlay: async () => {
         const { adapter, startPlayback } = get();
@@ -440,6 +441,14 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       onPrev: () => get().prevSong(),
       onSeekTo: (time) => {
         get().seekTo(time);
+      },
+      onSeekBackward: (offset = 10) => {
+        const { currentTime, seekTo } = get();
+        seekTo(Math.max(0, currentTime - offset));
+      },
+      onSeekForward: (offset = 10) => {
+        const { currentTime, duration, seekTo } = get();
+        seekTo(Math.min(duration || Infinity, currentTime + offset));
       },
     });
 
@@ -634,18 +643,89 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     }
   },
 
+  playSongAtIndex: async (index: number) => {
+    const { queue, adapter } = get();
+    if (!adapter || index < 0 || index >= queue.length) return;
+    const targetSong = queue[index];
+    adapter.primeAudio?.();
+    set({
+      currentIndex: index,
+      playState: "BUFFERING",
+      userIntent: "playing",
+      error: null,
+      consecutiveErrors: 0,
+    });
+    updateMediaSessionMetadata(targetSong, true);
+    try {
+      await adapter.loadVideo(targetSong.youtube_video_id);
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        set({ playState: "ERROR", error: "Could not play track" });
+      }
+    }
+  },
+
+  playSong: async (song: Song) => {
+    const { queue, playSongAtIndex } = get();
+    const idx = queue.findIndex(
+      (s) => s.id === song.id || s.youtube_video_id === song.youtube_video_id
+    );
+    if (idx !== -1) {
+      await playSongAtIndex(idx);
+    } else {
+      const newQueue = [song, ...queue];
+      set({ queue: newQueue });
+      const { adapter } = get();
+      if (!adapter) return;
+      adapter.primeAudio?.();
+      set({
+        currentIndex: 0,
+        playState: "BUFFERING",
+        userIntent: "playing",
+        error: null,
+        consecutiveErrors: 0,
+      });
+      updateMediaSessionMetadata(song, true);
+      try {
+        await adapter.loadVideo(song.youtube_video_id);
+      } catch (err: any) {
+        if (err?.name !== "AbortError") {
+          set({ playState: "ERROR", error: "Could not play track" });
+        }
+      }
+    }
+  },
+
   handleAdapterStateChange: async (state, sessionId) => {
     const { radioSessionId, queue, currentIndex, adapter, userIntent } = get();
 
     if (sessionId !== radioSessionId) return;
 
     switch (state) {
-      case "PLAYING":
+      case "PLAYING": {
         set({ playState: "PLAYING", userIntent: "playing", error: null, consecutiveErrors: 0 });
-        updateMediaSessionMetadata(queue[currentIndex], true);
+        const dur = adapter?.getDuration?.() || get().duration;
+        const cur = adapter?.getCurrentTime?.() || get().currentTime;
+        updateMediaSessionMetadata(queue[currentIndex], true, dur, cur);
         reassertMediaSessionHandlers();
         onPlaybackStateChange(true);
+
+        // Proactively prewarm the next track immediately after playback begins
+        // so lockscreen and manual skips transition with 0-second latency
+        if (queue.length > 1 && adapter?.preloadNextSong) {
+          const { isShuffleEnabled } = get();
+          const nextIdx = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
+          const nextSong = queue[nextIdx];
+          if (nextSong) {
+            try {
+              adapter.preloadNextSong(nextSong).catch(() => {});
+            } catch {
+              /* ignore */
+            }
+          }
+        }
         break;
+      }
 
       case "PAUSED": {
         set({ playState: "PAUSED" });
@@ -659,6 +739,8 @@ export const useRadioStore = create<RadioState>((set, get) => ({
         break;
 
       case "ENDED": {
+        // Prevent duplicate transition if already buffering or loading the next track
+        if (get().playState === "BUFFERING") return;
         if (queue.length > 0) {
           const { isShuffleEnabled } = get();
           const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);

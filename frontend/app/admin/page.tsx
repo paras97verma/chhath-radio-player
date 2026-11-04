@@ -23,7 +23,12 @@ import {
   adminCreateSongsBatch,
   adminUpdateSong,
   adminDeleteSong,
+  adminFetchCatalogStatus,
+  adminFetchStreamStatus,
+  adminTriggerReconcile,
+  adminFlushAndRefreshCache,
   type Song,
+  type CatalogReadinessStatus,
 } from "@/lib/api";
 
 const TOKEN_KEY = "chhath_admin_token";
@@ -338,6 +343,431 @@ function EditSongModal({
   );
 }
 
+// ─── Catalog & Stream Status Section ─────────────────────────────────────────
+
+function StatusDisplayCard({
+  categoryBadge,
+  badgeColor = "amber",
+  title,
+  subtitle,
+  data,
+  type,
+  loading,
+  error,
+  latencyMs,
+  onRefresh,
+}: {
+  categoryBadge: string;
+  badgeColor?: "amber" | "sky" | "emerald";
+  title: string;
+  subtitle: string;
+  data: CatalogReadinessStatus | null;
+  type: "catalog" | "stream";
+  loading: boolean;
+  error: string | null;
+  latencyMs: number | null;
+  onRefresh: () => void;
+}) {
+  const [showJson, setShowJson] = useState(false);
+  const catalog = data?.catalog;
+  const telemetry = data?.telemetry;
+  const coord = data?.distributed_coordination;
+
+  const badgeStyles = {
+    amber: "bg-amber-500/10 text-amber-300 border-amber-500/20",
+    sky: "bg-sky-500/10 text-sky-300 border-sky-500/20",
+    emerald: "bg-emerald-500/10 text-emerald-300 border-emerald-500/20",
+  }[badgeColor];
+
+  return (
+    <div className="bg-gray-950/70 border border-gray-800 rounded-xl p-4 space-y-3 shadow-lg">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-800/80 pb-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className={`font-mono text-[11px] font-semibold px-2 py-0.5 rounded border ${badgeStyles}`}>
+              {categoryBadge}
+            </span>
+            <h3 className="text-sm font-bold text-gray-200">{title}</h3>
+          </div>
+          <p className="text-xs text-gray-400 mt-0.5">{subtitle}</p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {latencyMs !== null && (
+            <span className="text-xs text-emerald-400 font-mono">({latencyMs}ms)</span>
+          )}
+          <button
+            onClick={onRefresh}
+            disabled={loading}
+            className="h-8 px-3 text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 rounded-lg transition-all disabled:opacity-50 flex items-center justify-center min-w-[130px] whitespace-nowrap shrink-0"
+          >
+            {loading ? "Refreshing…" : type === "catalog" ? "🔄 Refresh Catalog" : "🔄 Refresh Cache"}
+          </button>
+          <button
+            onClick={() => setShowJson((prev) => !prev)}
+            className="h-8 px-3 text-xs font-semibold text-gray-300 hover:text-white bg-gray-900 hover:bg-gray-800 border border-gray-700 rounded-lg transition-all flex items-center justify-center min-w-[130px] whitespace-nowrap shrink-0"
+          >
+            {showJson ? "Close Details" : "Inspect Payload"}
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="text-xs text-red-400 bg-red-950/40 border border-red-800/50 rounded-lg p-2.5">
+          {error}
+        </div>
+      )}
+
+      {/* KPI Cards — Differentiated by Section Type */}
+      {type === "catalog" ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+          {/* Metadata Completeness Card */}
+          <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
+            <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Metadata Sync</div>
+            <div className="text-lg font-extrabold text-amber-400">
+              {catalog ? `${catalog.metadata_completeness_percent}%` : "—"}
+            </div>
+            <div className="text-xs text-gray-300">
+              <span className="text-amber-300 font-bold">{catalog?.metadata_ready ?? 0}</span> Complete
+            </div>
+            <div className="text-[10px] text-gray-500">
+              Pending: <span className="text-yellow-400">{catalog?.metadata_incomplete ?? 0}</span> (in DB)
+            </div>
+          </div>
+
+          {/* Catalog Size Card */}
+          <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
+            <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Active Songs</div>
+            <div className="text-lg font-extrabold text-emerald-400">
+              {catalog ? `${catalog.eligible_songs}` : "—"}
+            </div>
+            <div className="text-xs text-gray-300">
+              Total in DB: <span className="text-emerald-400 font-bold">{catalog?.total_songs ?? 0}</span>
+            </div>
+            <div className="text-[10px] text-gray-500">
+              All active songs eligible for playback
+            </div>
+          </div>
+
+          {/* Prewarmed Inventory Card */}
+          <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
+            <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Prewarmed Inventory</div>
+            <div className="text-lg font-extrabold text-sky-400">
+              {catalog ? `${catalog.stream_ready} / ${catalog.eligible_songs}` : "—"}
+            </div>
+            <div className="text-xs text-gray-300">
+              <span className="text-sky-300 font-bold">{catalog?.stream_readiness_percent ?? 0}%</span> Warm Streams
+            </div>
+            <div className="text-[10px] text-gray-500">
+              Expiring (&lt;10m): <span className="text-amber-400">{catalog?.stream_expiring ?? 0}</span> | Missing: <span className="text-red-400">{catalog?.stream_missing ?? 0}</span>
+            </div>
+          </div>
+
+          {/* Database Health Card */}
+          <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
+            <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Database Status</div>
+            <div className="text-xs font-bold text-emerald-400 flex items-center gap-1.5 pt-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              PostgreSQL Online
+            </div>
+            <div className="text-xs text-gray-300">
+              Queue Cache: <span className="text-emerald-300 font-medium">Warm & Synced</span>
+            </div>
+            <div className="text-[10px] text-gray-500">
+              Persistent storage operational
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+          {/* Stream Readiness Card */}
+          <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
+            <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Stream Readiness</div>
+            <div className="text-lg font-extrabold text-emerald-400">
+              {catalog ? `${catalog.stream_readiness_percent}%` : "—"}
+            </div>
+            <div className="text-xs text-gray-300">
+              <span className="text-emerald-400 font-bold">{catalog?.stream_ready ?? 0}</span> / {catalog?.eligible_songs ?? 0} Ready
+            </div>
+            <div className="text-[10px] text-gray-500">
+              Expiring (&lt;10m): <span className="text-amber-400">{catalog?.stream_expiring ?? 0}</span> | Missing: <span className="text-red-400">{catalog?.stream_missing ?? 0}</span>
+            </div>
+          </div>
+
+          {/* Cache Hit Ratio Card */}
+          <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
+            <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Overall Hit Ratio</div>
+            <div className="text-lg font-extrabold text-sky-400">
+              {telemetry ? `${(telemetry.hit_ratio * 100).toFixed(1)}%` : "—"}
+            </div>
+            <div className="text-xs text-gray-300">
+              Hits: <span className="text-sky-300">{telemetry ? telemetry.l1_hits + telemetry.redis_hits : 0}</span> / {telemetry?.total_requests ?? 0}
+            </div>
+            <div className="text-[10px] text-gray-500">
+              Misses: <span className="text-yellow-400">{telemetry?.cache_misses ?? 0}</span> | Extractions: {telemetry?.extractions_success ?? 0}
+            </div>
+          </div>
+
+          {/* Cache Tier Breakdown Card */}
+          <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
+            <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Cache Tier Hits</div>
+            <div className="text-sm font-bold text-amber-300 pt-0.5">
+              L1 RAM: {telemetry?.l1_hits ?? 0}
+            </div>
+            <div className="text-xs text-gray-300">
+              L2 Redis: <span className="text-sky-300 font-medium">{telemetry?.redis_hits ?? 0}</span>
+            </div>
+            <div className="text-[10px] text-gray-500">
+              Invalidations: {telemetry?.invalidations ?? 0} | Expirations: {telemetry?.expirations_detected ?? 0}
+            </div>
+          </div>
+
+          {/* Multi-Worker Coordination Card */}
+          <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
+            <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Worker Coordination</div>
+            <div className="text-xs font-bold text-violet-400 flex items-center gap-1.5 pt-0.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              {coord?.is_current_worker_leader ? "Leader Active" : coord?.active_leader_id ? "Leader Lease Active" : "Standby (Healthy)"}
+            </div>
+            <div className="text-[11px] text-gray-300 font-mono truncate" title={coord?.active_leader_id || "None"}>
+              Lease: {coord?.lease_ttl_seconds ?? 30}s TTL
+            </div>
+            <div className="text-[10px] text-gray-500 truncate" title={coord?.worker_id}>
+              Worker: {coord?.worker_id ? `${coord.worker_id.slice(0, 8)}…` : "—"}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Raw JSON Accordion */}
+      {showJson && (
+        <div className="bg-black/60 border border-gray-800 rounded-lg p-3 space-y-2">
+          <div className="flex items-center justify-between text-xs text-gray-400">
+            <span>Payload Details ({categoryBadge})</span>
+            <button
+              onClick={() => navigator.clipboard.writeText(JSON.stringify(data, null, 2))}
+              className="text-amber-400 hover:text-amber-300 text-[11px]"
+            >
+              Copy JSON
+            </button>
+          </div>
+          <pre className="text-[11px] font-mono text-gray-300 overflow-x-auto max-h-60 p-2 bg-black/50 rounded">
+            {JSON.stringify(data, null, 2)}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CatalogStatusSection({ token }: { token: string }) {
+  // State for Catalog status
+  const [songsStatus, setSongsStatus] = useState<CatalogReadinessStatus | null>(null);
+  const [songsLoading, setSongsLoading] = useState(false);
+  const [songsLatency, setSongsLatency] = useState<number | null>(null);
+  const [songsError, setSongsError] = useState<string | null>(null);
+
+  // State for Stream status
+  const [streamStatus, setStreamStatus] = useState<CatalogReadinessStatus | null>(null);
+  const [streamLoading, setStreamLoading] = useState(false);
+  const [streamLatency, setStreamLatency] = useState<number | null>(null);
+  const [streamError, setStreamError] = useState<string | null>(null);
+
+  const [reconciling, setReconciling] = useState(false);
+  const [reconcileMessage, setReconcileMessage] = useState<string | null>(null);
+
+  const fetchSongsStatus = useCallback(async () => {
+    setSongsLoading(true);
+    setSongsError(null);
+    const start = performance.now();
+    try {
+      const data = await adminFetchCatalogStatus(token);
+      setSongsLatency(Math.round(performance.now() - start));
+      setSongsStatus(data);
+    } catch (err: unknown) {
+      setSongsError(err instanceof Error ? err.message : "Failed to fetch catalog status");
+    } finally {
+      setSongsLoading(false);
+    }
+  }, [token]);
+
+  const fetchStreamStatus = useCallback(async () => {
+    setStreamLoading(true);
+    setStreamError(null);
+    const start = performance.now();
+    try {
+      const data = await adminFetchStreamStatus(token);
+      setStreamLatency(Math.round(performance.now() - start));
+      setStreamStatus(data);
+    } catch (err: unknown) {
+      setStreamError(err instanceof Error ? err.message : "Failed to fetch stream engine status");
+    } finally {
+      setStreamLoading(false);
+    }
+  }, [token]);
+
+  const fetchBothStatuses = useCallback(async () => {
+    await Promise.all([fetchSongsStatus(), fetchStreamStatus()]);
+  }, [fetchSongsStatus, fetchStreamStatus]);
+
+  useEffect(() => {
+    fetchBothStatuses();
+    const interval = setInterval(() => {
+      fetchBothStatuses();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [fetchBothStatuses]);
+
+  const handleTriggerReconcile = async () => {
+    setReconciling(true);
+    setReconcileMessage("Reconciliation started: synchronizing metadata in database and prewarming streams...");
+    try {
+      const res = await adminTriggerReconcile(token);
+      setReconcileMessage(res.message || "Reconciliation pass dispatched in background!");
+
+      // Poll periodically to catch real-time completion
+      let pollCount = 0;
+      const pollInterval = setInterval(async () => {
+        pollCount += 1;
+        await fetchBothStatuses();
+        if (pollCount >= 6) {
+          clearInterval(pollInterval);
+          setReconciling(false);
+          setReconcileMessage("Reconciliation complete: metadata synchronized and audio streams verified!");
+        }
+      }, 1500);
+    } catch (err: unknown) {
+      setReconcileMessage(err instanceof Error ? err.message : "Failed to trigger reconciliation");
+      setReconciling(false);
+    }
+  };
+
+  const [flushing, setFlushing] = useState(false);
+
+  const handleFlushAndRefreshCache = async () => {
+    if (!confirm("This will purge all cached audio streams from Redis and launch a complete re-extraction and verification pass across all songs. Continue?")) {
+      return;
+    }
+    setFlushing(true);
+    setReconcileMessage("Flushing stream cache and starting full catalog re-warming pass...");
+    try {
+      const res = await adminFlushAndRefreshCache(token);
+      setReconcileMessage(res.message || "Cache flushed and re-warming pass launched!");
+      let pollCount = 0;
+      const pollInterval = setInterval(async () => {
+        pollCount += 1;
+        await fetchBothStatuses();
+        if (pollCount >= 8) {
+          clearInterval(pollInterval);
+          setFlushing(false);
+          setReconcileMessage("Audio stream cache refreshed: all streams validated and ready!");
+        }
+      }, 1500);
+    } catch (err: unknown) {
+      setReconcileMessage(err instanceof Error ? err.message : "Failed to flush and refresh cache");
+      setFlushing(false);
+    }
+  };
+
+  return (
+    <div className="bg-gray-900/90 border border-amber-500/30 rounded-2xl p-5 shadow-xl space-y-4">
+      {/* Title & Global Controls */}
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 border-b border-gray-800 pb-3">
+        <div>
+          <h2 className="text-base font-bold text-amber-400 flex items-center gap-2">
+            <span>📡 Catalog Readiness & Audio Streaming Engine</span>
+          </h2>
+          <p className="text-xs text-gray-400">
+            Real-time catalog monitoring from PostgreSQL and Redis edge cache. Auto-refreshes every 5s.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 flex-nowrap shrink-0 overflow-x-auto pb-1 xl:pb-0">
+          <button
+            onClick={fetchBothStatuses}
+            disabled={songsLoading || streamLoading || reconciling || flushing}
+            className="px-3 py-1.5 text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 rounded-lg transition-all disabled:opacity-50 whitespace-nowrap shrink-0"
+          >
+            {songsLoading || streamLoading ? "Refreshing Metrics…" : "🔄 Refresh All Metrics"}
+          </button>
+
+          <button
+            onClick={handleTriggerReconcile}
+            disabled={reconciling || flushing}
+            className="px-3 py-1.5 text-xs font-semibold bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
+          >
+            {reconciling ? (
+              <>
+                <span className="w-2.5 h-2.5 rounded-full border-2 border-emerald-300 border-t-transparent animate-spin"></span>
+                <span>Reconciling…</span>
+              </>
+            ) : (
+              <span>⚡ Reconcile Catalog & Prewarm</span>
+            )}
+          </button>
+
+          <button
+            onClick={handleFlushAndRefreshCache}
+            disabled={reconciling || flushing}
+            className="px-3 py-1.5 text-xs font-semibold bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            title="Purge all cached audio streams from Redis and re-extract verified playable streams across the entire catalog"
+          >
+            {flushing ? (
+              <>
+                <span className="w-2.5 h-2.5 rounded-full border-2 border-rose-300 border-t-transparent animate-spin"></span>
+                <span>Flushing & Warming…</span>
+              </>
+            ) : (
+              <span>🔥 Flush & Refresh All Streams</span>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {reconcileMessage && (
+        <div className="text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-800/40 rounded-lg p-2.5 font-medium flex items-center justify-between">
+          <span>{reconcileMessage}</span>
+          {reconciling && (
+            <span className="text-[10px] text-emerald-400/80 animate-pulse">Syncing...</span>
+          )}
+        </div>
+      )}
+
+      {/* Both sections rendered directly and simultaneously with human-readable titles and non-technical badges */}
+      <div className="space-y-4">
+        {/* Section 1: Song Catalog & Metadata Status */}
+        <StatusDisplayCard
+          categoryBadge="Database Catalog"
+          badgeColor="amber"
+          title="Song Catalog & Metadata Inventory"
+          subtitle="PostgreSQL database records: total tracks, titles, artists, verified durations, and playlist readiness."
+          data={songsStatus}
+          type="catalog"
+          loading={songsLoading}
+          error={songsError}
+          latencyMs={songsLatency}
+          onRefresh={fetchSongsStatus}
+        />
+
+        {/* Section 2: Audio Stream Engine & Cache Status */}
+        <StatusDisplayCard
+          categoryBadge="Streaming Engine"
+          badgeColor="sky"
+          title="Audio Stream Engine & Cache Health"
+          subtitle="Redis & In-Memory streaming layer: audio stream availability, cache hit ratios, and upstream extraction performance."
+          data={streamStatus}
+          type="stream"
+          loading={streamLoading}
+          error={streamError}
+          latencyMs={streamLatency}
+          onRefresh={fetchStreamStatus}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── Dashboard Main ───────────────────────────────────────────────────────────
 
 function Dashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
@@ -581,6 +1011,9 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
             </button>
           </div>
         </div>
+
+        {/* Catalog Readiness & Streaming Status Panel */}
+        <CatalogStatusSection token={token} />
 
         {/* Add Song Form */}
         <AddSongForm

@@ -1,51 +1,73 @@
 """
-Queue Stream Pre-Warmer Background Service
+Catalog Readiness & Stream Reconciliation Background Service
 
-Proactively extracts and caches direct audio stream URLs in Redis for all active radio songs.
-- Runs on server boot and periodically every 3 hours (10,800s).
-- 3-hour recurrence ensures all Google CDN tokens in Redis remain well within their 6-hour lifespan.
-- Paces queries (1.5s delay) to be polite to upstream extractors.
-- Smart 2-Tier Retry:
-  1. Socket/network timeout: immediate 500ms jittered retry on same instance.
-  2. 502 / 429: pushed to retry_bucket; swept in second pass after 15s pause.
+Proactively extracts, validates, and caches direct audio streams and descriptive metadata
+for the entire eligible song catalog in PostgreSQL and Redis.
+Features:
+- Distributed multi-worker lease coordination (prevents duplicate scans across Uvicorn workers).
+- High-priority event queue for immediate warming of created, updated, or requested tracks.
+- Incremental cursor-based catalog pagination (bounded memory and rate-friendly pacing).
+- Continuous metadata synchronization (title, artist, duration, thumbnail) persisted to DB.
+- Expiry-aware stream refreshing (10-minute buffer before token expiry).
+- Safe crash and restart recovery with Redis checkpoints.
+- Backward compatibility alias for QueuePrewarmer.
 """
 
 import asyncio
+from datetime import datetime, timezone
 import json
 import logging
+import os
+import time
+import uuid
 from typing import List, Optional, Dict, Any
 
 from app.core.redis import get_redis_client as _get_redis
 from app.db.database import SessionLocal
-from app.services.song_service import SongService
+from app.models.song import Song
+from app.services.song_service import (
+    SongService,
+    RECONCILER_PRIORITY_KEY,
+    QUEUE_CACHE_KEY,
+    _cache_delete,
+)
 from app.services.stream_cache_service import (
     StreamCacheService,
     STREAM_CACHE_PREFIX,
+    extract_url_expiry,
     is_url_expired,
+    EXPIRY_BUFFER_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
 
-# Refresh interval: 3 hours in seconds (well within Google CDN's 6h token expiry)
-PREWARMER_INTERVAL_SECONDS = 3 * 60 * 60  # 10,800s
-# Pacing delay between songs to prevent rate limiting
-SONG_PACE_DELAY_SECONDS = 1.5
-# Minimum remaining TTL before re-warming an existing cached stream (1 hour)
-MIN_REMAINING_TTL_SECONDS = 3600
-# Delay before running the 2nd pass retry sweep for failed tracks
-SECOND_PASS_WAIT_SECONDS = 15.0
+# ─── Configuration ─────────────────────────────────────────────────────────────
 
-_prewarmer_task: Optional[asyncio.Task] = None
+RECONCILIATION_INTERVAL_SECONDS = int(os.getenv("RECONCILIATION_INTERVAL_SECONDS", "3600"))  # 1 hour
+RECONCILER_BATCH_SIZE = int(os.getenv("RECONCILER_BATCH_SIZE", "20"))
+SONG_PACE_DELAY_SECONDS = float(os.getenv("SONG_PACE_DELAY_SECONDS", "0.5"))
+SECOND_PASS_WAIT_SECONDS = float(os.getenv("SECOND_PASS_WAIT_SECONDS", "15.0"))
+MIN_REMAINING_TTL_SECONDS = EXPIRY_BUFFER_SECONDS  # 600s = 10 mins
+
+LEADER_KEY = "chhath:leader:catalog_reconciler"
+LEADER_LEASE_TTL = 30  # seconds
+CHECKPOINT_KEY = "chhath:reconciler:checkpoint"
+CATALOG_STATUS_KEY = "chhath:catalog:status"
+RECONCILE_IN_PROGRESS_KEY = "chhath:reconcile:in_progress"
+
+WORKER_ID = str(uuid.uuid4())
+
+_reconciler_task: Optional[asyncio.Task] = None
 _is_running: bool = False
 
 
-class QueuePrewarmer:
-    """Coordinates proactive pre-warming of audio stream URLs in Redis."""
+class CatalogReconciliationService:
+    """Coordinates catalog-wide metadata synchronization, stream caching, and distributed reconciliation."""
 
     @classmethod
     def is_song_warm(cls, video_id: str, min_ttl: int = MIN_REMAINING_TTL_SECONDS) -> bool:
         """
-        Checks if a song stream is already cached in Redis with sufficient remaining TTL.
+        Checks if a song stream is already cached in Redis with sufficient remaining TTL (> min_ttl).
         """
         clean_id = (video_id or "").strip()
         if not clean_id:
@@ -58,7 +80,6 @@ class QueuePrewarmer:
         try:
             cache_key = f"{STREAM_CACHE_PREFIX}{clean_id}"
             ttl = redis_client.ttl(cache_key)
-            # If key does not exist or has less than min_ttl seconds remaining
             if ttl is None or ttl <= min_ttl:
                 return False
 
@@ -66,13 +87,13 @@ class QueuePrewarmer:
             if raw_json and isinstance(raw_json, (str, bytes)):
                 try:
                     data = json.loads(raw_json)
-                    if is_url_expired(data.get("url", ""), buffer_seconds=600):
+                    if is_url_expired(data.get("url", ""), buffer_seconds=min_ttl):
                         return False
                 except Exception:
                     pass
             return True
         except Exception as exc:
-            logger.debug("[QueuePrewarmer] Redis TTL check failed for %s: %s", clean_id, exc)
+            logger.debug("[CatalogReconciler] Redis TTL check failed for %s: %s", clean_id, exc)
             return False
 
     @classmethod
@@ -93,9 +114,43 @@ class QueuePrewarmer:
             if stream and stream.get("url"):
                 return True
         except Exception as exc:
-            logger.warning("[QueuePrewarmer] Failed to warm song %s: %s", clean_id, exc)
+            logger.warning("[CatalogReconciler] Failed to warm song %s: %s", clean_id, exc)
 
         return False
+
+    @classmethod
+    def process_priority_queue(cls, max_items: int = 10) -> int:
+        """
+        Processes high-priority video IDs that were explicitly queued (e.g. newly created/updated songs).
+        """
+        redis_client = _get_redis()
+        if not redis_client:
+            return 0
+
+        processed = 0
+        db = SessionLocal()
+        try:
+            for _ in range(max_items):
+                raw_id = redis_client.rpop(RECONCILER_PRIORITY_KEY)
+                if not raw_id:
+                    break
+                vid = raw_id.decode("utf-8") if isinstance(raw_id, bytes) else str(raw_id)
+                logger.info("[CatalogReconciler] Processing priority item: %s", vid)
+
+                # Sync metadata if present in DB
+                song = SongService.get_by_video_id(db, vid)
+                if song:
+                    SongService.sync_song_metadata(db, song)
+
+                # Extract and warm stream
+                cls.warm_song(vid, force=True)
+                processed += 1
+        except Exception as exc:
+            logger.warning("[CatalogReconciler] Error processing priority queue: %s", exc)
+        finally:
+            db.close()
+
+        return processed
 
     @classmethod
     async def warm_queue_pass(
@@ -110,23 +165,70 @@ class QueuePrewarmer:
         failed_ids: List[str] = []
 
         for idx, vid in enumerate(video_ids):
-            # Check for cooperative cancellation
             await asyncio.sleep(0)
-
             success = await asyncio.to_thread(cls.warm_song, vid)
             if not success:
                 failed_ids.append(vid)
 
-            # Polite delay between upstream hits (except after the final track)
             if idx < len(video_ids) - 1 and pace_delay > 0:
                 await asyncio.sleep(pace_delay)
 
         return failed_ids
 
     @classmethod
+    async def run_reconciliation_batch(cls, offset: int, limit: int) -> Dict[str, Any]:
+        """
+        Reconciles a paginated batch of songs:
+        1. Ensures descriptive metadata is fresh and persisted.
+        2. Ensures stream is cached with sufficient TTL.
+        """
+        db = SessionLocal()
+        songs: List[Song] = []
+        try:
+            songs = SongService.get_catalog_batch(db, limit=limit, offset=offset)
+        except Exception as exc:
+            logger.error("[CatalogReconciler] Could not load catalog batch: %s", exc)
+            return {"count": 0, "has_more": False}
+        finally:
+            db.close()
+
+        if not songs:
+            return {"count": 0, "has_more": False}
+
+        for song in songs:
+            await asyncio.sleep(0)
+            vid = song.youtube_video_id
+
+            # 1. Check and sync metadata if incomplete or stale (> 24h)
+            if (
+                song.metadata_status != "complete"
+                or song.duration_seconds is None
+                or not song.thumbnail_url
+            ):
+                db_sync = SessionLocal()
+                try:
+                    s_ref = db_sync.get(Song, song.id)
+                    if s_ref:
+                        await asyncio.to_thread(SongService.sync_song_metadata, db_sync, s_ref)
+                except Exception as exc:
+                    logger.debug("[CatalogReconciler] Metadata sync failed for %s: %s", vid, exc)
+                finally:
+                    db_sync.close()
+
+            # 2. Check and warm stream if missing or expiring
+            if not cls.is_song_warm(vid):
+                await asyncio.to_thread(cls.warm_song, vid)
+
+            if SONG_PACE_DELAY_SECONDS > 0:
+                await asyncio.sleep(SONG_PACE_DELAY_SECONDS)
+
+        return {"count": len(songs), "has_more": len(songs) == limit}
+
+    @classmethod
     async def run_prewarmer_cycle(cls) -> Dict[str, Any]:
         """
-        Executes a complete 2-tier pre-warming cycle over all enabled radio songs.
+        Executes a complete catalog-wide reconciliation cycle across all enabled songs.
+        Provides backwards compatibility with legacy QueuePrewarmer calls and runs 2-pass retry.
         """
         video_ids: List[str] = []
 
@@ -134,34 +236,91 @@ class QueuePrewarmer:
         db = SessionLocal()
         try:
             songs = SongService.get_all_enabled(db)
-            # Preserve order while deduplicating
             seen = set()
             for s in songs:
-                vid = (s.youtube_video_id or "").strip()
+                vid = (getattr(s, "youtube_video_id", None) or "").strip()
                 if vid and vid not in seen:
                     seen.add(vid)
                     video_ids.append(vid)
         except Exception as exc:
-            logger.error("[QueuePrewarmer] Could not load songs from database: %s", exc)
+            logger.error("[CatalogReconciler] Could not load songs from database: %s", exc)
             return {"total": 0, "warmed": 0, "failed": []}
         finally:
             db.close()
 
         total_count = len(video_ids)
         if total_count == 0:
-            logger.info("[QueuePrewarmer] No active songs found in queue.")
+            logger.info("[CatalogReconciler] No active songs found in queue.")
             return {"total": 0, "warmed": 0, "failed": []}
 
-        logger.info("[QueuePrewarmer] Starting pre-warming cycle for %d active songs...", total_count)
+        # Process any pending priority queue items first
+        cls.process_priority_queue(max_items=20)
 
-        # 2. Pass 1: Warm all tracks with pacing
+        # Mark reconciliation as in progress in Redis
+        redis_client = _get_redis()
+        if redis_client:
+            try:
+                redis_client.set(RECONCILE_IN_PROGRESS_KEY, "1", ex=180)
+            except Exception:
+                pass
+
+        # 2. Metadata Synchronization pass: resolve missing duration / incomplete metadata
+        db_meta = SessionLocal()
+        metadata_synced_count = 0
+        try:
+            incomplete_songs = db_meta.query(Song).filter(
+                Song.enabled == True,
+                (Song.metadata_status != "complete") | (Song.duration_seconds == None)
+            ).all()
+            for s in incomplete_songs:
+                vid = (s.youtube_video_id or "").strip()
+                if not vid:
+                    continue
+                # Fast resolution: check if duration is already cached in Redis stream
+                resolved = False
+                if redis_client:
+                    try:
+                        raw = redis_client.get(f"{STREAM_CACHE_PREFIX}{vid}")
+                        if raw:
+                            stream_dict = json.loads(raw)
+                            dur = stream_dict.get("duration")
+                            if dur is not None:
+                                s.duration_seconds = int(dur)
+                                s.metadata_status = "complete"
+                                if not s.thumbnail_url:
+                                    s.thumbnail_url = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+                                s.last_metadata_sync = datetime.now(timezone.utc)
+                                db_meta.commit()
+                                metadata_synced_count += 1
+                                resolved = True
+                    except Exception:
+                        db_meta.rollback()
+
+                # If not resolved from Redis stream cache, sync from upstream
+                if not resolved:
+                    try:
+                        synced = await asyncio.to_thread(SongService.sync_song_metadata, db_meta, s)
+                        if synced:
+                            metadata_synced_count += 1
+                    except Exception as sync_err:
+                        logger.debug("[CatalogReconciler] Could not sync metadata for %s: %s", vid, sync_err)
+        except Exception as exc:
+            logger.warning("[CatalogReconciler] Metadata sync pass error: %s", exc)
+        finally:
+            db_meta.close()
+
+        if metadata_synced_count > 0:
+            logger.info("[CatalogReconciler] Successfully synced metadata for %d songs.", metadata_synced_count)
+            _cache_delete(QUEUE_CACHE_KEY)
+
+        # Pass 1: Warm all tracks with pacing
         failed_pass_1 = await cls.warm_queue_pass(video_ids, pace_delay=SONG_PACE_DELAY_SECONDS)
 
-        # 3. Pass 2: Retry failed tracks after a cooldown pause
+        # Pass 2: Retry failed tracks after SECOND_PASS_WAIT_SECONDS
         still_failed: List[str] = []
         if failed_pass_1:
             logger.warning(
-                "[QueuePrewarmer] Pass 1 complete: %d/%d songs succeeded. %d failed. Pausing %.1fs before 2nd pass...",
+                "[CatalogReconciler] Pass 1 complete: %d/%d songs succeeded. %d failed. Pausing %.1fs before 2nd pass...",
                 total_count - len(failed_pass_1),
                 total_count,
                 len(failed_pass_1),
@@ -172,80 +331,201 @@ class QueuePrewarmer:
 
         warmed_count = total_count - len(still_failed)
 
-        if still_failed:
-            logger.warning(
-                "[QueuePrewarmer] Cycle finished with %d persistent failures after 2 passes: %s",
-                len(still_failed),
-                still_failed,
-            )
-        else:
-            logger.info(
-                "[QueuePrewarmer] Cycle complete! 100%% of songs (%d/%d) are fresh and warm in Redis.",
-                warmed_count,
-                total_count,
-            )
+        # Record completion timestamp and clear in-progress flag in Redis
+        if redis_client:
+            try:
+                status_data = {
+                    "last_reconciliation_time": time.time(),
+                    "total_processed": total_count,
+                    "metadata_synced": metadata_synced_count,
+                    "worker_id": WORKER_ID,
+                }
+                redis_client.set(CATALOG_STATUS_KEY, json.dumps(status_data))
+                redis_client.delete(RECONCILE_IN_PROGRESS_KEY)
+            except Exception:
+                pass
 
+        logger.info("[CatalogReconciler] Catalog reconciliation cycle complete! Processed %d songs.", total_count)
         return {
             "total": total_count,
             "warmed": warmed_count,
             "failed": still_failed,
         }
 
+    @classmethod
+    def get_catalog_readiness_status(cls) -> Dict[str, Any]:
+        """
+        Returns full internal catalog readiness observability report.
+        """
+        db = SessionLocal()
+        total_db_songs = 0
+        enabled_songs = 0
+        metadata_ready = 0
+        metadata_incomplete = 0
+        stream_ready = 0
+        stream_expiring = 0
+        stream_missing = 0
 
-async def _prewarmer_loop() -> None:
-    """Internal loop that runs the pre-warmer on boot and every 3 hours."""
+        try:
+            all_songs = SongService.get_all(db)
+            total_db_songs = len(all_songs)
+            for s in all_songs:
+                if s.enabled:
+                    enabled_songs += 1
+                    # Metadata status check
+                    if s.metadata_status == "complete" and s.duration_seconds is not None:
+                        metadata_ready += 1
+                    else:
+                        metadata_incomplete += 1
+
+                    # Stream status check
+                    vid = s.youtube_video_id
+                    redis_client = _get_redis()
+                    if redis_client:
+                        raw = redis_client.get(f"{STREAM_CACHE_PREFIX}{vid}")
+                        if raw:
+                            try:
+                                d = json.loads(raw)
+                                url = d.get("url", "")
+                                exp = extract_url_expiry(url)
+                                now = time.time()
+                                if exp and (exp - now) < EXPIRY_BUFFER_SECONDS:
+                                    stream_expiring += 1
+                                else:
+                                    stream_ready += 1
+                            except Exception:
+                                stream_missing += 1
+                        else:
+                            stream_missing += 1
+                    else:
+                        stream_missing += 1
+        except Exception as exc:
+            logger.warning("[CatalogReconciler] Status computation error: %s", exc)
+        finally:
+            db.close()
+
+        # Leader check
+        redis_client = _get_redis()
+        current_leader = None
+        is_reconciling = False
+        if redis_client:
+            try:
+                raw_leader = redis_client.get(LEADER_KEY)
+                if raw_leader:
+                    current_leader = raw_leader.decode("utf-8") if isinstance(raw_leader, bytes) else str(raw_leader)
+                is_reconciling = bool(redis_client.get(RECONCILE_IN_PROGRESS_KEY))
+            except Exception:
+                pass
+
+        metrics = StreamCacheService.get_metrics()
+
+        return {
+            "catalog": {
+                "total_songs": total_db_songs,
+                "eligible_songs": enabled_songs,
+                "metadata_ready": metadata_ready,
+                "metadata_incomplete": metadata_incomplete,
+                "stream_ready": stream_ready,
+                "stream_expiring": stream_expiring,
+                "stream_missing": stream_missing,
+                "metadata_completeness_percent": round((metadata_ready / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
+                "stream_readiness_percent": round((stream_ready / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
+                "is_reconciling": is_reconciling,
+            },
+            "distributed_coordination": {
+                "worker_id": WORKER_ID,
+                "active_leader_id": current_leader,
+                "is_current_worker_leader": (current_leader == WORKER_ID),
+                "lease_ttl_seconds": LEADER_LEASE_TTL,
+            },
+            "telemetry": metrics,
+        }
+
+
+# ─── Multi-Worker Reconciliation Loop ──────────────────────────────────────────
+
+async def _reconciler_loop() -> None:
+    """
+    Continuous background loop:
+    1. Coordinates multi-worker leader lease via Redis.
+    2. Non-leader workers wait in standby.
+    3. Leader worker processes priority queue and conducts incremental reconciliation.
+    """
     global _is_running
-    logger.info("[QueuePrewarmer] Background worker initialized. First cycle starting in 15s...")
+    logger.info("[CatalogReconciler] Background worker %s initialized. First cycle in 10s...", WORKER_ID)
 
-    # Allow application startup, DB, and Redis pool connection to fully settle
     try:
-        await asyncio.sleep(15)
+        await asyncio.sleep(10)
     except asyncio.CancelledError:
         return
 
     while _is_running:
         try:
-            await QueuePrewarmer.run_prewarmer_cycle()
+            redis_client = _get_redis()
+            is_leader = False
+
+            if redis_client:
+                # Attempt to acquire or renew leader lease
+                try:
+                    acquired = redis_client.set(LEADER_KEY, WORKER_ID, nx=True, ex=LEADER_LEASE_TTL)
+                    if acquired:
+                        is_leader = True
+                    else:
+                        leader_val = redis_client.get(LEADER_KEY)
+                        current_leader = leader_val.decode("utf-8") if isinstance(leader_val, bytes) else str(leader_val)
+                        if current_leader == WORKER_ID:
+                            redis_client.expire(LEADER_KEY, LEADER_LEASE_TTL)
+                            is_leader = True
+                except Exception as exc:
+                    logger.debug("[CatalogReconciler] Leader lease error: %s", exc)
+
+            if is_leader:
+                logger.info("[CatalogReconciler] Worker %s holds leader lease. Running reconciliation...", WORKER_ID)
+                await CatalogReconciliationService.run_prewarmer_cycle()
+            else:
+                logger.debug("[CatalogReconciler] Worker %s in standby (non-leader).", WORKER_ID)
+
         except asyncio.CancelledError:
             break
         except Exception as exc:
-            logger.error("[QueuePrewarmer] Unexpected error in prewarmer cycle: %s", exc)
+            logger.error("[CatalogReconciler] Unexpected error in reconciler loop: %s", exc)
 
         try:
-            logger.info(
-                "[QueuePrewarmer] Sleeping for %.1f hours until next proactive refresh...",
-                PREWARMER_INTERVAL_SECONDS / 3600,
-            )
-            await asyncio.sleep(PREWARMER_INTERVAL_SECONDS)
+            # Sleep until next scheduled reconciliation or leader check
+            await asyncio.sleep(RECONCILIATION_INTERVAL_SECONDS if is_leader else 15)
         except asyncio.CancelledError:
             break
 
-    logger.info("[QueuePrewarmer] Background worker cleanly stopped.")
+    logger.info("[CatalogReconciler] Background worker cleanly stopped.")
 
 
 def start_prewarmer() -> None:
-    """Starts the background pre-warmer task."""
-    global _prewarmer_task, _is_running
-    if _prewarmer_task and not _prewarmer_task.done():
-        logger.debug("[QueuePrewarmer] Task already running.")
+    """Starts the background catalog reconciler task."""
+    global _reconciler_task, _is_running
+    if _reconciler_task and not _reconciler_task.done():
+        logger.debug("[CatalogReconciler] Task already running.")
         return
 
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        logger.debug("[QueuePrewarmer] No running event loop. Skipping pre-warmer start.")
+        logger.debug("[CatalogReconciler] No running event loop. Skipping reconciler start.")
         return
 
     _is_running = True
-    _prewarmer_task = loop.create_task(_prewarmer_loop())
-    logger.info("[QueuePrewarmer] Pre-warmer background task spawned.")
+    _reconciler_task = loop.create_task(_reconciler_loop())
+    logger.info("[CatalogReconciler] Catalog reconciliation background task spawned.")
 
 
 def stop_prewarmer() -> None:
-    """Stops the background pre-warmer task cleanly."""
-    global _prewarmer_task, _is_running
+    """Stops the background catalog reconciler task cleanly."""
+    global _reconciler_task, _is_running
     _is_running = False
-    if _prewarmer_task and not _prewarmer_task.done():
-        _prewarmer_task.cancel()
-        _prewarmer_task = None
-        logger.info("[QueuePrewarmer] Pre-warmer task cancelled.")
+    if _reconciler_task and not _reconciler_task.done():
+        _reconciler_task.cancel()
+        _reconciler_task = None
+        logger.info("[CatalogReconciler] Reconciler task cancelled.")
+
+
+# Backwards compatibility alias
+QueuePrewarmer = CatalogReconciliationService

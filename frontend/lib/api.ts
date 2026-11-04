@@ -281,3 +281,71 @@ export async function adminDeleteSong(token: string, songId: string): Promise<vo
   });
   if (!res.ok) throw new Error("Failed to delete song");
 }
+
+export interface CatalogReadinessStatus {
+  catalog: {
+    total_songs: number;
+    eligible_songs: number;
+    metadata_ready: number;
+    metadata_incomplete: number;
+    stream_ready: number;
+    stream_expiring: number;
+    stream_missing: number;
+    metadata_completeness_percent: number;
+    stream_readiness_percent: number;
+    is_reconciling?: boolean;
+  };
+  distributed_coordination: {
+    worker_id: string;
+    active_leader_id: string | null;
+    is_current_worker_leader: boolean;
+    lease_ttl_seconds: number;
+  };
+  telemetry: {
+    l1_hits: number;
+    redis_hits: number;
+    cache_misses: number;
+    extractions_success: number;
+    extractions_failed: number;
+    expirations_detected: number;
+    invalidations: number;
+    hit_ratio: number;
+    total_requests: number;
+  };
+}
+
+export async function adminFetchCatalogStatus(token: string): Promise<CatalogReadinessStatus> {
+  const res = await fetch(`${API_BASE}/api/admin/songs/status`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error("Failed to fetch catalog status");
+  return res.json();
+}
+
+export async function adminFetchStreamStatus(token: string): Promise<CatalogReadinessStatus> {
+  const res = await fetch(`${API_BASE}/api/stream/catalog/status`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error("Failed to fetch stream catalog status");
+  return res.json();
+}
+
+export async function adminTriggerReconcile(token: string): Promise<{ status: string; message: string }> {
+  const res = await fetch(`${API_BASE}/api/admin/songs/reconcile`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Failed to trigger catalog reconciliation");
+  return res.json();
+}
+
+export async function adminFlushAndRefreshCache(token: string): Promise<{ status: string; message: string; flushed_count: number }> {
+  const res = await fetch(`${API_BASE}/api/admin/songs/cache/refresh`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Failed to flush and refresh audio stream cache");
+  return res.json();
+}

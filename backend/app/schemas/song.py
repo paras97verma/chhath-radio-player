@@ -27,6 +27,8 @@ class SongBase(BaseModel):
     artist: str = Field(..., min_length=1, max_length=255)
     category: str | None = Field(default=None, max_length=100)
     sort_order: int = Field(default=0, ge=0)
+    duration_seconds: int | None = Field(default=None, ge=0)
+    thumbnail_url: str | None = Field(default=None, max_length=1024)
 
 
 class SongCreate(BaseModel):
@@ -36,6 +38,8 @@ class SongCreate(BaseModel):
     artist: str | None = Field(default=None, max_length=255)
     category: str | None = Field(default=None, max_length=100)
     sort_order: int = Field(default=0, ge=0)
+    duration_seconds: int | None = Field(default=None, ge=0)
+    thumbnail_url: str | None = Field(default=None, max_length=1024)
 
     @field_validator("title", "artist")
     @classmethod
@@ -67,6 +71,8 @@ class SongUpdate(BaseModel):
     enabled: bool | None = None
     sort_order: int | None = Field(default=None, ge=0)
     youtube_url: str | None = None
+    duration_seconds: int | None = Field(default=None, ge=0)
+    thumbnail_url: str | None = Field(default=None, max_length=1024)
 
     @field_validator("youtube_url")
     @classmethod
@@ -85,5 +91,6 @@ class SongPublic(SongBase):
     youtube_video_id: str
     youtube_url: str | None
     enabled: bool
+    metadata_status: str | None = "pending"
 
     model_config = {"from_attributes": True}

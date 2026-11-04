@@ -529,3 +529,59 @@ describe("TestOfferingCountsPersistence", () => {
     expect(migrated["☀️"]).toBe(10);
   });
 });
+
+describe("TestArbitrarySongSelection", () => {
+  it("plays any song at given index immediately", async () => {
+    const adapter = new MockYouTubePlayerAdapter();
+    const songs = makeSongs(5);
+    await getStore().loadQueue(songs, adapter);
+
+    // Arbitrarily pick song 4 (index 3)
+    await getStore().playSongAtIndex(3);
+
+    const state = getStore();
+    expect(state.currentIndex).toBe(3);
+    expect(state.currentSong()?.title).toBe("Song 4");
+    expect(state.userIntent).toBe("playing");
+  });
+
+  it("plays arbitrary song object directly", async () => {
+    const adapter = new MockYouTubePlayerAdapter();
+    const songs = makeSongs(3);
+    await getStore().loadQueue(songs, adapter);
+
+    await getStore().playSong(songs[1]);
+
+    const state = getStore();
+    expect(state.currentIndex).toBe(1);
+    expect(state.currentSong()?.title).toBe("Song 2");
+  });
+});
+
+describe("TestArbitrarySongSelection", () => {
+  it("plays any song at given index immediately", async () => {
+    const adapter = new MockYouTubePlayerAdapter();
+    const songs = makeSongs(5);
+    await getStore().loadQueue(songs, adapter);
+
+    // Arbitrarily pick song 4 (index 3)
+    await getStore().playSongAtIndex(3);
+
+    const state = getStore();
+    expect(state.currentIndex).toBe(3);
+    expect(state.currentSong()?.title).toBe("Song 4");
+    expect(state.userIntent).toBe("playing");
+  });
+
+  it("plays arbitrary song object directly", async () => {
+    const adapter = new MockYouTubePlayerAdapter();
+    const songs = makeSongs(3);
+    await getStore().loadQueue(songs, adapter);
+
+    await getStore().playSong(songs[1]);
+
+    const state = getStore();
+    expect(state.currentIndex).toBe(1);
+    expect(state.currentSong()?.title).toBe("Song 2");
+  });
+});

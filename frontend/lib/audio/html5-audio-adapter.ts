@@ -13,6 +13,7 @@ import type { Song } from "../api";
 import type { AudioPlayerAdapter, PlayerState } from "./types";
 import { fetchPipedStream } from "../piped/piped-client";
 import { extractDurationFromUrl } from "../piped/stream-selector";
+import { updateMediaSessionPositionState } from "../media-session";
 
 export class Html5AudioAdapter implements AudioPlayerAdapter {
   private primaryAudio: HTMLAudioElement | null = null;
@@ -30,6 +31,9 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   private hasUserInteracted = false;
   private isPriming = false;
   private currentVideoId: string | null = null;
+  private currentProxyUrl: string | null = null;
+  private hasTriedProxyForCurrentSong = false;
+  private hasEndedEmitted = false;
 
   // Request sequencing and cooperative cancellation
   private activeRequestId = 0;
@@ -153,27 +157,58 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       const dur = this.getDuration() || audio.duration;
       if (Number.isFinite(dur) && dur > 0) {
         this._emitProgress(audio.currentTime, dur);
+        updateMediaSessionPositionState(audio.currentTime, dur, audio.playbackRate || 1);
       }
     };
     const onPause = () => {
       // Avoid emitting PAUSED if track just ended or if hardware is silently priming
-      if (this.isPriming || audio.ended) return;
+      if (this.isPriming || audio.ended || this.hasEndedEmitted) return;
       this._emitState("PAUSED");
+      const dur = this.getDuration() || audio.duration;
+      if (Number.isFinite(dur) && dur > 0) {
+        updateMediaSessionPositionState(audio.currentTime, dur, 0);
+      }
     };
     const onWaiting = () => {
       if (this.isPriming) return;
       this._emitState("BUFFERING");
     };
     const onEnded = () => {
-      if (this.isPriming) return;
+      if (this.isPriming || this.hasEndedEmitted) return;
+      this.hasEndedEmitted = true;
       this._emitState("ENDED");
     };
-    const onError = () => {
+    const onError = async () => {
       // If a newer load request is active or audio element was reset, ignore stale errors
       if (this.isPriming || this.activeAbortController?.signal.aborted || this.isDestroyed) return;
       // If user has not interacted yet, or error is MEDIA_ERR_ABORTED (code 1), ignore
       if (!this.hasUserInteracted || audio.error?.code === 1) return;
-      console.warn("[Html5AudioAdapter] Audio playback error:", audio.error);
+      console.warn(`[Html5AudioAdapter] Audio error encountered for ${this.currentVideoId}:`, audio.error);
+
+      // Automatic Invidious Proxy Fallback on playback error (e.g. 403 Forbidden on direct googlevideo URL)
+      if (this.currentProxyUrl && !this.hasTriedProxyForCurrentSong && this.primaryAudio) {
+        this.hasTriedProxyForCurrentSong = true;
+        const proxyTarget = this.currentProxyUrl;
+        console.warn(`[Html5AudioAdapter] Direct stream playback failed (403/media error). Switching to proxy fallback:`, proxyTarget);
+
+        // Invalidate the broken direct stream in backend cache so subsequent plays get a fresh working stream
+        if (this.currentVideoId) {
+          fetch(`/api/stream/cache/flush?v=${encodeURIComponent(this.currentVideoId)}`, { method: "POST" }).catch(() => {});
+        }
+
+        try {
+          this.primaryAudio.src = proxyTarget;
+          this.primaryAudio.load();
+          await this.primaryAudio.play();
+          if (!this.isDestroyed) {
+            this._emitState("PLAYING");
+            return;
+          }
+        } catch (proxyPlayErr) {
+          console.warn("[Html5AudioAdapter] Proxy fallback playback failed:", proxyPlayErr);
+        }
+      }
+
       this._emitState("ERROR");
     };
 
@@ -182,9 +217,10 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       const cur = audio.currentTime;
       if (Number.isFinite(dur) && dur > 0 && Number.isFinite(cur)) {
         this._emitProgress(cur, dur);
+        updateMediaSessionPositionState(cur, dur, audio.playbackRate || 1);
         // If authoritative duration is known, end song when within 0.4s of the end
         // to prevent iOS Safari CoreAudio from playing 5 minutes of trailing silence!
-        if (this.streamDuration && cur >= this.streamDuration - 0.4 && !audio.paused && !audio.ended) {
+        if (this.streamDuration && cur >= this.streamDuration - 0.4 && !audio.paused && !audio.ended && !this.hasEndedEmitted) {
           onEnded();
         }
       }
@@ -195,6 +231,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       const cur = audio.currentTime;
       if (Number.isFinite(dur) && dur > 0) {
         this._emitProgress(Number.isFinite(cur) ? cur : 0, dur);
+        updateMediaSessionPositionState(Number.isFinite(cur) ? cur : 0, dur, audio.playbackRate || 1);
       }
     };
 
@@ -237,10 +274,13 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   async loadVideo(videoId: string): Promise<void> {
     if (!videoId) return;
 
+    // Reset completion emission flag for newly requested song
+    this.hasEndedEmitted = false;
+
     // 1. Cancel any in-flight background preload so it does not contend with live playback
     if (this.preloadAbortController) {
       try {
-        this.preloadAbortController.abort();
+        this.preloadAbortController.abort("Playback track load started");
       } catch {
         /* ignore */
       }
@@ -250,7 +290,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     // 2. Cancel previous load request if in flight
     if (this.activeAbortController) {
       try {
-        this.activeAbortController.abort();
+        this.activeAbortController.abort("Superseded by new track selection");
       } catch {
         /* ignore */
       }
@@ -261,13 +301,13 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     const controller = new AbortController();
     this.activeAbortController = controller;
 
-    // Check if the secondary audio element already has this song pre-buffered
+    // Check if the secondary audio element already has this song pre-buffered or has a resolved src
     if (
       this.preloadedSongId === videoId &&
       this.secondaryAudio &&
-      this.secondaryAudio.src &&
-      this.secondaryAudio.readyState >= 2 // HAVE_CURRENT_DATA or higher
+      this.secondaryAudio.src
     ) {
+      this.hasEndedEmitted = false;
       // Instant seamless handoff! Swap primary and secondary
       const oldPrimary = this.primaryAudio;
       const newPrimary = this.secondaryAudio;
@@ -285,8 +325,12 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       this._applyVolume(this.primaryAudio);
 
       this._emitState("PLAYING");
-      // Start new audio first to maintain continuous audio session on iOS lockscreen
+      // Start new audio first to maintain continuous audio session on iOS/Android lockscreen
       await this.primaryAudio.play();
+
+      if (this.streamDuration && this.streamDuration > 0) {
+        updateMediaSessionPositionState(0, this.streamDuration, 1);
+      }
 
       // Only after new audio has started playing, clean up the previous audio element
       if (oldPrimary) {
@@ -311,10 +355,16 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
       this.hasUserInteracted = true;
       this.currentVideoId = videoId;
+      this.currentProxyUrl = stream.proxy_url || null;
+      this.hasTriedProxyForCurrentSong = false;
       this.streamDuration = stream.duration ?? extractDurationFromUrl(stream.url) ?? null;
       this.primaryAudio.src = stream.url;
       this.primaryAudio.preload = "auto";
       this._applyVolume(this.primaryAudio);
+
+      if (this.streamDuration && this.streamDuration > 0) {
+        updateMediaSessionPositionState(0, this.streamDuration, 1);
+      }
 
       try {
         await this.primaryAudio.play();
@@ -326,6 +376,21 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
           console.warn("[Html5AudioAdapter] Autoplay restricted by browser, waiting for user gesture:", playErr);
           this._emitState("PAUSED");
           return;
+        }
+        // Direct stream failed to play (e.g. 403 or decode error) — attempt Invidious proxy fallback
+        if (stream.proxy_url && this.primaryAudio && !controller.signal.aborted) {
+          try {
+            console.warn(`[Html5AudioAdapter] Direct stream playback failed for ${videoId}. Attempting proxy fallback:`, stream.proxy_url);
+            this.primaryAudio.src = stream.proxy_url;
+            this.primaryAudio.load();
+            await this.primaryAudio.play();
+            if (this.activeRequestId === requestId && !this.isDestroyed) {
+              this._emitState("PLAYING");
+              return;
+            }
+          } catch (proxyErr) {
+            console.warn("[Html5AudioAdapter] Proxy fallback also failed:", proxyErr);
+          }
         }
         throw playErr;
       }
@@ -340,6 +405,33 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     }
   }
 
+  /**
+   * Attempts automatic recovery for a stalled or failed stream, preserving playback position.
+   */
+  async recoverPlayback(videoId: string, lastPosition: number = 0): Promise<boolean> {
+    if (!videoId || this.isDestroyed) return false;
+    try {
+      this._emitState("BUFFERING");
+      const stream = await fetchPipedStream(videoId, this.primaryAudio);
+      if (!this.primaryAudio) return false;
+      this.primaryAudio.src = stream.url;
+      if (lastPosition > 0) {
+        try {
+          this.primaryAudio.currentTime = lastPosition;
+        } catch {
+          /* ignore */
+        }
+      }
+      await this.primaryAudio.play();
+      this._emitState("PLAYING");
+      return true;
+    } catch (err) {
+      console.warn(`[Html5AudioAdapter] Recovery failed for ${videoId}:`, err);
+      this._emitState("ERROR");
+      return false;
+    }
+  }
+
   async preloadNextSong(song: Song): Promise<void> {
     if (!song?.youtube_video_id || !this.secondaryAudio) return;
     if (this.preloadedSongId === song.youtube_video_id) return; // already preloaded
@@ -347,10 +439,11 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
     if (this.preloadAbortController) {
       try {
-        this.preloadAbortController.abort();
+        this.preloadAbortController.abort("Preload superseded by new track");
       } catch {
         /* ignore */
       }
+      this.preloadAbortController = null;
     }
     const controller = new AbortController();
     this.preloadAbortController = controller;
@@ -451,7 +544,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     this.isDestroyed = true;
     if (this.activeAbortController) {
       try {
-        this.activeAbortController.abort();
+        this.activeAbortController.abort("Adapter destroyed");
       } catch {
         /* ignore */
       }
@@ -459,7 +552,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     }
     if (this.preloadAbortController) {
       try {
-        this.preloadAbortController.abort();
+        this.preloadAbortController.abort("Adapter destroyed");
       } catch {
         /* ignore */
       }
@@ -497,6 +590,12 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
   private _emitState(state: PlayerState): void {
     this.currentState = state;
-    this.stateListeners.forEach((cb) => cb(state));
+    this.stateListeners.forEach((cb) => {
+      try {
+        cb(state);
+      } catch (err) {
+        console.warn("[Html5AudioAdapter] Error in state listener:", err);
+      }
+    });
   }
 }

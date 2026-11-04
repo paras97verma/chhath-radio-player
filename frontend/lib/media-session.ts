@@ -16,6 +16,8 @@ export interface MediaSessionCallbacks {
   onNext: () => Promise<void> | void;
   onPrev: () => Promise<void> | void;
   onSeekTo?: (time: number) => void;
+  onSeekBackward?: (offset: number) => void;
+  onSeekForward?: (offset: number) => void;
 }
 
 let registeredCallbacks: MediaSessionCallbacks | null = null;
@@ -24,17 +26,24 @@ export function isMediaSessionSupported(): boolean {
   return typeof navigator !== "undefined" && "mediaSession" in navigator;
 }
 
+function isIosDevice(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  return /iPad|iPhone|iPod/.test(ua) || (ua.includes("Mac") && typeof document !== "undefined" && "ontouchend" in document);
+}
+
 /**
  * Re-assert OS media action handlers (Lock screen, Control Center, Bluetooth controls).
- * On iOS Safari / WebKit, action handlers must be active when playback starts and updates,
- * otherwise WebKit defaults to 10s/15s relative skip buttons.
- * Explicitly setting 'seekbackward' and 'seekforward' to null forces iOS to display
- * the Previous Track (⏮) and Next Track (⏭) buttons.
+ * On Android: Configures play, pause, prev, next, stop, seekto, seekbackward, seekforward.
+ * On iOS: WebKit lock screen UI limits bottom buttons to 3 slots; preserving seekbackward=null
+ * keeps Previous Track (⏮) and Next Track (⏭) buttons intact while seeking is handled via
+ * the lock screen scrubber progress bar (seekto).
  */
 export function reassertMediaSessionHandlers(): void {
   if (!isMediaSessionSupported() || !registeredCallbacks) return;
 
   const ms = navigator.mediaSession;
+  const isIos = isIosDevice();
 
   const safeSetHandler = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
     try {
@@ -80,10 +89,27 @@ export function reassertMediaSessionHandlers(): void {
     }
   });
 
-  // Explicitly disable seek backward / forward buttons on lock screen so iOS WebKit
-  // forces track navigation buttons (⏮ / ⏭) instead of ±10s/15s relative skip buttons.
-  safeSetHandler("seekbackward", null);
-  safeSetHandler("seekforward", null);
+  if (isIos) {
+    // Explicitly disable seek backward / forward buttons on iOS lock screen so iOS WebKit
+    // forces track navigation buttons (⏮ / ⏭) instead of ±10s/15s relative skip buttons.
+    safeSetHandler("seekbackward", null);
+    safeSetHandler("seekforward", null);
+  } else {
+    // Android, Windows SMTC, macOS, Linux: Support fast-seeking in notification and headsets
+    safeSetHandler("seekbackward", (details) => {
+      const offset = details.seekOffset || 10;
+      if (registeredCallbacks?.onSeekBackward) {
+        registeredCallbacks.onSeekBackward(offset);
+      }
+    });
+
+    safeSetHandler("seekforward", (details) => {
+      const offset = details.seekOffset || 10;
+      if (registeredCallbacks?.onSeekForward) {
+        registeredCallbacks.onSeekForward(offset);
+      }
+    });
+  }
 }
 
 /**
@@ -98,7 +124,12 @@ export function registerMediaSessionHandlers(callbacks: MediaSessionCallbacks): 
 /**
  * Update media metadata displayed on lock screens and notification centers.
  */
-export function updateMediaSessionMetadata(song: Song | null, isPlaying = true): void {
+export function updateMediaSessionMetadata(
+  song: Song | null,
+  isPlaying = true,
+  duration?: number,
+  currentTime?: number
+): void {
   if (!isMediaSessionSupported()) return;
 
   const ms = navigator.mediaSession;
@@ -185,6 +216,12 @@ export function updateMediaSessionMetadata(song: Song | null, isPlaying = true):
   // Re-assert action handlers whenever metadata updates so WebKit/iOS Lock Screen
   // binds previoustrack and nexttrack to the newly active media item
   reassertMediaSessionHandlers();
+
+  // If duration is provided, update position state immediately so Android notification
+  // instantly renders the seekbar without awaiting animation frame cycles
+  if (typeof duration === "number" && duration > 0) {
+    updateMediaSessionPositionState(currentTime ?? 0, duration, isPlaying ? 1 : 0);
+  }
 }
 
 /**

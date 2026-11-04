@@ -72,5 +72,32 @@ describe("Audio Stream Selector", () => {
     expect(best?.format).toBe("M4A");
     expect(best?.mimeType).toContain("mp4");
   });
+
+  it("strictly filters out any video streams (audio-only requirement)", () => {
+    const videoAndAudioStreams: AudioStreamInfo[] = [
+      {
+        url: "https://example.com/video.mp4",
+        format: "MP4",
+        quality: "720p",
+        mimeType: "video/mp4",
+        codec: "avc1.64001f",
+        bitrate: 1500000,
+      },
+      {
+        url: "https://example.com/stream-m4a.m4a",
+        format: "M4A",
+        quality: "128kbps",
+        mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+        codec: "mp4a.40.2",
+        bitrate: 128000,
+      },
+    ];
+
+    const best = selectBestAudioStream(videoAndAudioStreams);
+    expect(best).not.toBeNull();
+    expect(best?.format).toBe("M4A");
+    expect(best?.mimeType).toContain("audio");
+    expect(best?.mimeType).not.toContain("video");
+  });
 });
 
