@@ -355,6 +355,31 @@ class StreamCacheService:
         return cls._extract_upstream(video_id)
 
     @staticmethod
+    def _resolve_final_proxy_url(proxy_url: str, timeout: float = 4.0) -> Optional[str]:
+        """
+        Follows Invidious 302 redirects ahead of time during background extraction.
+        Eliminates 2 round-trip redirects (3-5s delay) so the browser directly streams
+        from the final companion audio endpoint with 0 redirects and immediate TTFB.
+        """
+        if not proxy_url:
+            return None
+        try:
+            req = urllib.request.Request(
+                proxy_url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Range": "bytes=0-0"},
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                final_url = resp.geturl()
+                if final_url and ("videoplayback" in final_url or "companion" in final_url):
+                    return final_url
+        except urllib.error.HTTPError as exc:
+            if exc.code in (200, 206) and hasattr(exc, "url") and exc.url:
+                return exc.url
+        except Exception as e:
+            logger.warning("[StreamCache] Could not pre-resolve proxy redirect: %s", e)
+        return proxy_url
+
+    @staticmethod
     def _check_url_accessibility(url: str, timeout: float = 2.0) -> bool:
         """
         Lightweight probe to verify if direct stream URL is accessible or IP-blocked (403).
@@ -441,8 +466,9 @@ class StreamCacheService:
                                 # Verify if direct_url is accessible or IP-restricted (returns 403)
                                 is_direct_accessible = cls._check_url_accessibility(direct_url)
                                 if not is_direct_accessible and proxy_url:
-                                    logger.info("[StreamCache] Direct stream for %s returned 403 (IP-bound). Using proxy fallback as primary.", video_id)
-                                    stream_url = proxy_url
+                                    logger.info("[StreamCache] Direct stream for %s returned 403 (IP-bound). Pre-resolving proxy to eliminate client redirects.", video_id)
+                                    resolved_url = cls._resolve_final_proxy_url(proxy_url)
+                                    stream_url = resolved_url or proxy_url
                                 else:
                                     stream_url = direct_url
 
