@@ -89,6 +89,7 @@ export async function fetchPipedStream(
 
           const stream: AudioStreamInfo = {
             url: data.url,
+            proxy_url: data.proxy_url,
             format: data.format || "M4A",
             quality: data.quality || "128kbps",
             mimeType: data.mimeType || 'audio/mp4; codecs="mp4a.40.2"',

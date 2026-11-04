@@ -3,6 +3,7 @@ import { extractDurationFromUrl } from "@/lib/piped/stream-selector";
 
 interface CachedStreamResult {
   url: string;
+  proxy_url?: string;
   format: string;
   mimeType: string;
   bitrate: number;
@@ -53,7 +54,7 @@ export async function GET(request: NextRequest) {
   // 2. Primary: query FastAPI Backend with Redis high-concurrency stream caching
   try {
     const backendRes = await fetch(
-      `${BACKEND_URL}/api/stream?v=${encodeURIComponent(videoId)}`,
+      `${BACKEND_URL}/api/stream?v=${encodeURIComponent(videoId)}&priority=high`,
       {
         headers: { Accept: "application/json" },
         signal: AbortSignal.timeout(12000),
@@ -70,6 +71,7 @@ export async function GET(request: NextRequest) {
 
         const result: CachedStreamResult = {
           url: data.url,
+          proxy_url: data.proxy_url,
           format: data.format || "M4A",
           mimeType: data.mimeType || 'audio/mp4; codecs="mp4a.40.2"',
           bitrate: data.bitrate || 128000,

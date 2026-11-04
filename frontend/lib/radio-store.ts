@@ -261,6 +261,8 @@ interface RadioState {
   pausePlayback: () => Promise<void>;
   nextSong: () => Promise<void>;
   prevSong: () => Promise<void>;
+  playSongAtIndex: (index: number) => Promise<void>;
+  playSong: (song: Song) => Promise<void>;
   handleAdapterStateChange: (state: PlayerState, sessionId: string) => Promise<void>;
   currentSong: () => Song | null;
   upNextSongs: (count?: number) => Song[];
@@ -638,6 +640,59 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       await adapter.loadVideo(queue[prevIndex].youtube_video_id);
     } catch {
       set({ playState: "ERROR", error: "Could not load previous track" });
+    }
+  },
+
+  playSongAtIndex: async (index: number) => {
+    const { queue, adapter } = get();
+    if (!adapter || index < 0 || index >= queue.length) return;
+    const targetSong = queue[index];
+    adapter.primeAudio?.();
+    set({
+      currentIndex: index,
+      playState: "BUFFERING",
+      userIntent: "playing",
+      error: null,
+      consecutiveErrors: 0,
+    });
+    updateMediaSessionMetadata(targetSong, true);
+    try {
+      await adapter.loadVideo(targetSong.youtube_video_id);
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        set({ playState: "ERROR", error: "Could not play track" });
+      }
+    }
+  },
+
+  playSong: async (song: Song) => {
+    const { queue, playSongAtIndex } = get();
+    const idx = queue.findIndex(
+      (s) => s.id === song.id || s.youtube_video_id === song.youtube_video_id
+    );
+    if (idx !== -1) {
+      await playSongAtIndex(idx);
+    } else {
+      const newQueue = [song, ...queue];
+      set({ queue: newQueue });
+      const { adapter } = get();
+      if (!adapter) return;
+      adapter.primeAudio?.();
+      set({
+        currentIndex: 0,
+        playState: "BUFFERING",
+        userIntent: "playing",
+        error: null,
+        consecutiveErrors: 0,
+      });
+      updateMediaSessionMetadata(song, true);
+      try {
+        await adapter.loadVideo(song.youtube_video_id);
+      } catch (err: any) {
+        if (err?.name !== "AbortError") {
+          set({ playState: "ERROR", error: "Could not play track" });
+        }
+      }
     }
   },
 

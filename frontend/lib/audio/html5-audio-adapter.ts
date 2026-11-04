@@ -348,6 +348,21 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
           this._emitState("PAUSED");
           return;
         }
+        // Direct stream failed to play (e.g. 403 or decode error) — attempt Invidious proxy fallback
+        if (stream.proxy_url && this.primaryAudio && !controller.signal.aborted) {
+          try {
+            console.warn(`[Html5AudioAdapter] Direct stream playback failed for ${videoId}. Attempting proxy fallback:`, stream.proxy_url);
+            this.primaryAudio.src = stream.proxy_url;
+            this.primaryAudio.load();
+            await this.primaryAudio.play();
+            if (this.activeRequestId === requestId && !this.isDestroyed) {
+              this._emitState("PLAYING");
+              return;
+            }
+          } catch (proxyErr) {
+            console.warn("[Html5AudioAdapter] Proxy fallback also failed:", proxyErr);
+          }
+        }
         throw playErr;
       }
     } catch (err: any) {
@@ -358,6 +373,33 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       console.error(`[Html5AudioAdapter] Failed to play video ${videoId}:`, err);
       this._emitState("ERROR");
       throw err;
+    }
+  }
+
+  /**
+   * Attempts automatic recovery for a stalled or failed stream, preserving playback position.
+   */
+  async recoverPlayback(videoId: string, lastPosition: number = 0): Promise<boolean> {
+    if (!videoId || this.isDestroyed) return false;
+    try {
+      this._emitState("BUFFERING");
+      const stream = await fetchPipedStream(videoId, this.primaryAudio);
+      if (!this.primaryAudio) return false;
+      this.primaryAudio.src = stream.url;
+      if (lastPosition > 0) {
+        try {
+          this.primaryAudio.currentTime = lastPosition;
+        } catch {
+          /* ignore */
+        }
+      }
+      await this.primaryAudio.play();
+      this._emitState("PLAYING");
+      return true;
+    } catch (err) {
+      console.warn(`[Html5AudioAdapter] Recovery failed for ${videoId}:`, err);
+      this._emitState("ERROR");
+      return false;
     }
   }
 

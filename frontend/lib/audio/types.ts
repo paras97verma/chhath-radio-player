@@ -18,6 +18,7 @@ export type PlayerState =
 
 export interface AudioStreamInfo {
   url: string;
+  proxy_url?: string;
   format: string; // e.g. "WEBM_OPUS", "M4A"
   quality: string; // e.g. "160kbps", "128kbps"
   mimeType: string; // e.g. 'audio/webm; codecs="opus"', 'audio/mp4; codecs="mp4a.40.2"'

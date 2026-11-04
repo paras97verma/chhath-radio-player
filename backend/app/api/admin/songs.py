@@ -107,3 +107,31 @@ def delete_song(
     if not song:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Song not found.")
     SongService.delete(db, song)
+
+
+@router.post("/reconcile", status_code=status.HTTP_200_OK)
+async def trigger_catalog_reconciliation(
+    _admin: Admin = Depends(get_current_admin),
+) -> dict:
+    """
+    POST /api/admin/songs/reconcile
+    Triggers an on-demand catalog reconciliation cycle.
+    """
+    import asyncio
+    from app.services.queue_prewarmer import CatalogReconciliationService
+
+    asyncio.create_task(CatalogReconciliationService.run_prewarmer_cycle())
+    return {"status": "reconciliation_triggered", "message": "Catalog reconciliation cycle started in background"}
+
+
+@router.get("/status", status_code=status.HTTP_200_OK)
+def get_admin_catalog_status(
+    _admin: Admin = Depends(get_current_admin),
+) -> dict:
+    """
+    GET /api/admin/songs/status
+    Returns complete catalog readiness and telemetry metrics.
+    """
+    from app.services.queue_prewarmer import CatalogReconciliationService
+
+    return CatalogReconciliationService.get_catalog_readiness_status()

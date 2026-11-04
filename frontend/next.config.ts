@@ -49,6 +49,8 @@ const nextConfig: NextConfig = {
     "*.loca.lt",
     "192.168.1.249",
     "192.168.1.249:3000",
+    "192.168.31.120",
+    "192.168.31.120:3000"
   ],
 
   // Proxy /api/* to the FastAPI backend
