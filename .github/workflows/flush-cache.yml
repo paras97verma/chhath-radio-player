@@ -1,0 +1,109 @@
+# =============================================================================
+# Chhath Radio — Manual Flush Redis Stream Cache Workflow
+#
+# Provides a 1-click GitHub Actions workflow_dispatch to purge expired/stale
+# stream URLs from Redis and trigger background re-warming of active songs.
+# =============================================================================
+
+name: Flush Stream Cache
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: 'Specific YouTube Video ID to flush (leave empty to flush ALL cached streams)'
+        required: false
+        default: ''
+
+jobs:
+  flush:
+    name: Flush Redis Stream Cache
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install redis requests
+
+      - name: Flush Redis Cache Directly
+        env:
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          VIDEO_ID: ${{ github.event.inputs.video_id }}
+        run: |
+          python -c "
+          import os, redis
+          redis_url = os.environ.get('REDIS_URL', '').strip()
+          if not redis_url:
+              print('Notice: REDIS_URL secret not provided. Skipping direct Redis flush.')
+              exit(0)
+
+          try:
+              r = redis.from_url(redis_url, decode_responses=True)
+              vid = os.environ.get('VIDEO_ID', '').strip()
+
+              if vid:
+                  key = f'chhath:stream:{vid}'
+                  deleted = r.delete(key)
+                  print(f'Direct Redis: Flushed {deleted} key for video: {vid}')
+              else:
+                  deleted = 0
+                  cursor = 0
+                  while True:
+                      cursor, keys = r.scan(cursor=cursor, match='chhath:stream:*', count=100)
+                      if keys:
+                          deleted += r.delete(*keys)
+                      if cursor == 0:
+                          break
+
+                  # Also clear active stream lock keys
+                  cursor = 0
+                  while True:
+                      cursor, keys = r.scan(cursor=cursor, match='chhath:lock:stream:*', count=100)
+                      if keys:
+                          r.delete(*keys)
+                      if cursor == 0:
+                          break
+
+                  print(f'Direct Redis: Flushed {deleted} stream cache keys.')
+          except Exception as e:
+              print(f'Direct Redis warning: {e}')
+          "
+
+      - name: Flush Backend API Cache Endpoint
+        env:
+          API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          VIDEO_ID: ${{ github.event.inputs.video_id }}
+        run: |
+          python -c "
+          import os, requests
+          api_url = os.environ.get('API_URL', '').strip().rstrip('/')
+          if not api_url:
+              api_url = 'https://chhath-radio-api.onrender.com'
+
+          secret_key = os.environ.get('SECRET_KEY', '').strip()
+          vid = os.environ.get('VIDEO_ID', '').strip()
+
+          endpoint = f'{api_url}/api/stream/cache/flush'
+          params = {}
+          if vid:
+              params['v'] = vid
+
+          headers = {}
+          if secret_key:
+              headers['X-Admin-Secret'] = secret_key
+              params['token'] = secret_key
+
+          print(f'Sending flush request to: {endpoint}')
+          try:
+              res = requests.post(endpoint, params=params, headers=headers, timeout=20)
+              print(f'Backend API response [{res.status_code}]: {res.text}')
+              if res.status_code == 200:
+                  print('Stream cache successfully flushed and pre-warming initiated!')
+          except Exception as e:
+              print(f'Backend API request warning: {e}')
+          "

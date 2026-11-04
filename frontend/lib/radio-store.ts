@@ -244,6 +244,7 @@ interface RadioState {
   adapter: AudioPlayerAdapter | null;
   /** Internal: cleanup fn returned by adapter.onStateChange — stored here to avoid hacks */
   _adapterUnsubscribe: (() => void) | null;
+  consecutiveErrors: number;
 
   // Persistent Player UI & Sync State
   isReady: boolean;
@@ -296,6 +297,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   radioSessionId: uuidv4(),
   adapter: null,
   _adapterUnsubscribe: null,
+  consecutiveErrors: 0,
 
   isReady: false,
   volume: loadVolumeFromStorage(),
@@ -543,7 +545,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const { adapter, queue, currentIndex } = get();
     if (!adapter || queue.length === 0) return;
 
-    set({ userIntent: "playing", error: null });
+    set({ userIntent: "playing", error: null, consecutiveErrors: 0 });
     onPlaybackStateChange(true);
 
     const song = queue[currentIndex];
@@ -639,7 +641,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
 
     switch (state) {
       case "PLAYING":
-        set({ playState: "PLAYING", userIntent: "playing", error: null });
+        set({ playState: "PLAYING", userIntent: "playing", error: null, consecutiveErrors: 0 });
         updateMediaSessionMetadata(queue[currentIndex], true);
         reassertMediaSessionHandlers();
         onPlaybackStateChange(true);
@@ -676,21 +678,41 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       }
 
       case "ERROR": {
+        const errCount = (get().consecutiveErrors || 0) + 1;
         console.warn(
-          `[RadioController] Audio error for song at index ${currentIndex}. Skipping.`
+          `[RadioController] Audio error for song at index ${currentIndex} (consecutive: ${errCount}).`
         );
-        if (queue.length > 1) {
-          const { isShuffleEnabled } = get();
-          const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
-          set({ currentIndex: nextIndex, playState: "BUFFERING", userIntent: "playing", error: null });
-          updateMediaSessionMetadata(queue[nextIndex], true);
-          try {
-            await adapter?.loadVideo(queue[nextIndex].youtube_video_id);
-          } catch {
-            set({ playState: "ERROR", userIntent: "idle", error: "Playback error on track" });
-          }
-        } else {
-          set({ playState: "ERROR", userIntent: "idle", error: "Could not play track" });
+
+        // Circuit breaker: halt auto-skipping if multiple consecutive tracks fail
+        if (errCount >= 3 || queue.length <= 1) {
+          console.warn(
+            "[RadioController] Too many consecutive audio playback failures. Halting auto-skip."
+          );
+          set({
+            playState: "ERROR",
+            userIntent: "idle",
+            error: "Playback failed. Tap Play to retry.",
+            consecutiveErrors: 0,
+          });
+          onPlaybackStateChange(false);
+          setMediaSessionPlaybackState("none");
+          break;
+        }
+
+        const { isShuffleEnabled } = get();
+        const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
+        set({
+          currentIndex: nextIndex,
+          playState: "BUFFERING",
+          userIntent: "playing",
+          error: null,
+          consecutiveErrors: errCount,
+        });
+        updateMediaSessionMetadata(queue[nextIndex], true);
+        try {
+          await adapter?.loadVideo(queue[nextIndex].youtube_video_id);
+        } catch {
+          set({ playState: "ERROR", userIntent: "idle", error: "Playback error on track", consecutiveErrors: 0 });
           onPlaybackStateChange(false);
           setMediaSessionPlaybackState("none");
         }

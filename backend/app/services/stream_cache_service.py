@@ -136,6 +136,27 @@ def _extract_duration(data: Dict[str, Any], best: Dict[str, Any]) -> float:
     return 0.0
 
 
+def extract_url_expiry(url: str) -> Optional[int]:
+    """Extract unix timestamp from expire= query parameter in stream URL."""
+    if not url:
+        return None
+    match = re.search(r"[?&]expire=([0-9]+)", url)
+    if match:
+        try:
+            return int(match.group(1))
+        except (ValueError, TypeError):
+            pass
+    return None
+
+
+def is_url_expired(url: str, buffer_seconds: int = 300) -> bool:
+    """Returns True if the URL's expire parameter is in the past or within buffer_seconds."""
+    expiry = extract_url_expiry(url)
+    if expiry is None:
+        return False
+    return time.time() >= (expiry - buffer_seconds)
+
+
 class StreamCacheService:
     """High-concurrency stream resolution service with Redis single-flight and caching."""
 
@@ -154,9 +175,13 @@ class StreamCacheService:
         _clean_l1_cache()
         if clean_id in _l1_cache and (now - _l1_cache_ts.get(clean_id, 0)) < L1_CACHE_TTL:
             cached_data = _l1_cache[clean_id]
-            cached_data["cached"] = True
-            cached_data["cache_tier"] = "L1_MEMORY"
-            return cached_data
+            if is_url_expired(cached_data.get("url", "")):
+                _l1_cache.pop(clean_id, None)
+                _l1_cache_ts.pop(clean_id, None)
+            else:
+                cached_data["cached"] = True
+                cached_data["cache_tier"] = "L1_MEMORY"
+                return cached_data
 
         # 2. Check L2 Redis Cache
         redis_client = _get_redis()
@@ -167,12 +192,18 @@ class StreamCacheService:
                 raw_json = redis_client.get(cache_key)
                 if raw_json:
                     stream_data = json.loads(raw_json)
-                    # Populate L1 cache for subsequent fast in-process hits
-                    _l1_cache[clean_id] = stream_data
-                    _l1_cache_ts[clean_id] = now
-                    stream_data["cached"] = True
-                    stream_data["cache_tier"] = "L2_REDIS"
-                    return stream_data
+                    if is_url_expired(stream_data.get("url", "")):
+                        logger.info("[StreamCache] Evicting expired stream from Redis for %s", clean_id)
+                        redis_client.delete(cache_key)
+                        _l1_cache.pop(clean_id, None)
+                        _l1_cache_ts.pop(clean_id, None)
+                    else:
+                        # Populate L1 cache for subsequent fast in-process hits
+                        _l1_cache[clean_id] = stream_data
+                        _l1_cache_ts[clean_id] = now
+                        stream_data["cached"] = True
+                        stream_data["cache_tier"] = "L2_REDIS"
+                        return stream_data
             except Exception as exc:
                 logger.warning("[StreamCache] Redis GET failed for %s: %s", clean_id, exc)
 
@@ -216,12 +247,20 @@ class StreamCacheService:
                 _l1_cache[video_id] = stream_result
                 _l1_cache_ts[video_id] = now
 
-                # Store in L2 Redis Cache (4-hour TTL)
+                # Store in L2 Redis Cache with TTL aligned to CDN expiry
                 if redis_client:
                     try:
+                        ttl = STREAM_CACHE_TTL
+                        exp = extract_url_expiry(stream_result.get("url", ""))
+                        if exp:
+                            rem = int(exp - time.time() - 300)
+                            if rem > 60:
+                                ttl = min(ttl, rem)
+                            else:
+                                ttl = 60
                         redis_client.setex(
                             cache_key,
-                            STREAM_CACHE_TTL,
+                            ttl,
                             json.dumps(stream_result),
                         )
                     except Exception as exc:
@@ -252,9 +291,10 @@ class StreamCacheService:
                 raw_json = redis_client.get(cache_key)
                 if raw_json:
                     data = json.loads(raw_json)
-                    data["cached"] = True
-                    data["cache_tier"] = "COALESCED_REDIS"
-                    return data
+                    if not is_url_expired(data.get("url", "")):
+                        data["cached"] = True
+                        data["cache_tier"] = "COALESCED_REDIS"
+                        return data
             except Exception:
                 pass
 
@@ -427,4 +467,50 @@ class StreamCacheService:
                 redis_client.delete(f"{STREAM_CACHE_PREFIX}{video_id}")
             except Exception:
                 pass
+
+    @classmethod
+    def flush_stream_cache(cls, video_id: Optional[str] = None) -> int:
+        """
+        Flushes stream cache entries from L1 in-memory and L2 Redis.
+        If video_id is provided, flushes only that track. Otherwise flushes all streams.
+        Returns the count of Redis keys deleted.
+        """
+        global _l1_cache, _l1_cache_ts
+        deleted_count = 0
+        redis_client = _get_redis()
+
+        if video_id:
+            clean_id = video_id.strip()
+            _l1_cache.pop(clean_id, None)
+            _l1_cache_ts.pop(clean_id, None)
+            if redis_client:
+                try:
+                    deleted_count = redis_client.delete(f"{STREAM_CACHE_PREFIX}{clean_id}")
+                except Exception as exc:
+                    logger.warning("[StreamCache] Redis delete failed for %s: %s", clean_id, exc)
+        else:
+            _l1_cache.clear()
+            _l1_cache_ts.clear()
+            if redis_client:
+                try:
+                    cursor = 0
+                    while True:
+                        cursor, keys = redis_client.scan(cursor=cursor, match=f"{STREAM_CACHE_PREFIX}*", count=100)
+                        if keys:
+                            deleted_count += redis_client.delete(*keys)
+                        if cursor == 0:
+                            break
+                    # Also clear any locks
+                    cursor = 0
+                    while True:
+                        cursor, keys = redis_client.scan(cursor=cursor, match=f"{STREAM_LOCK_PREFIX}*", count=100)
+                        if keys:
+                            redis_client.delete(*keys)
+                        if cursor == 0:
+                            break
+                except Exception as exc:
+                    logger.warning("[StreamCache] Redis flush all failed: %s", exc)
+
+        logger.info("[StreamCache] Flushed %d stream keys (video_id=%s)", deleted_count, video_id or "ALL")
+        return deleted_count
 

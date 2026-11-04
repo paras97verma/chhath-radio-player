@@ -19,6 +19,8 @@ from app.services.stream_cache_service import (
     STREAM_CACHE_PREFIX,
     STREAM_LOCK_PREFIX,
     RELEASE_LOCK_LUA,
+    extract_url_expiry,
+    is_url_expired,
 )
 
 
@@ -201,3 +203,64 @@ class TestStreamCacheService:
 
         # 5. Fallback zero
         assert _extract_duration({}, {}) == 0.0
+
+    def test_extract_url_expiry_and_is_expired(self):
+        # Expired in past
+        past_url = "https://googlevideo.com/videoplayback?expire=1000000&itag=140"
+        assert extract_url_expiry(past_url) == 1000000
+        assert is_url_expired(past_url) is True
+
+        # Valid far in future
+        future_url = "https://googlevideo.com/videoplayback?expire=9999999999&itag=140"
+        assert extract_url_expiry(future_url) == 9999999999
+        assert is_url_expired(future_url) is False
+
+        # No expire param
+        assert extract_url_expiry("https://googlevideo.com/videoplayback?id=123") is None
+        assert is_url_expired("https://googlevideo.com/videoplayback?id=123") is False
+
+    @patch("app.services.stream_cache_service._get_redis")
+    @patch.object(StreamCacheService, "_extract_upstream")
+    def test_evicts_expired_url_from_redis_cache_and_refetches(
+        self, mock_extract, mock_get_redis
+    ):
+        mock_redis = MagicMock()
+        mock_get_redis.return_value = mock_redis
+
+        # Stale cached URL with expire in the past
+        expired_payload = {
+            "url": "https://googlevideo.com/videoplayback?expire=1000000",
+            "format": "M4A",
+            "bitrate": 128000,
+        }
+        mock_redis.get.return_value = json.dumps(expired_payload)
+        mock_redis.set.return_value = True
+
+        fresh_payload = {
+            "url": "https://googlevideo.com/videoplayback?expire=9999999999",
+            "format": "M4A",
+            "bitrate": 128000,
+        }
+        mock_extract.return_value = fresh_payload
+
+        result = StreamCacheService.get_stream("vidExpired")
+
+        # Expired key must be deleted from Redis
+        mock_redis.delete.assert_called_with(f"{STREAM_CACHE_PREFIX}vidExpired")
+        # Fresh payload extracted and returned
+        assert result is not None
+        assert result["url"] == fresh_payload["url"]
+
+    @patch("app.services.stream_cache_service._get_redis")
+    def test_flush_stream_cache_all(self, mock_get_redis):
+        mock_redis = MagicMock()
+        mock_get_redis.return_value = mock_redis
+        mock_redis.scan.side_effect = [
+            (0, ["chhath:stream:vid1", "chhath:stream:vid2"]),
+            (0, ["chhath:lock:stream:vid1"]),
+        ]
+        mock_redis.delete.return_value = 2
+
+        count = StreamCacheService.flush_stream_cache()
+        assert count == 2
+        mock_redis.delete.assert_any_call("chhath:stream:vid1", "chhath:stream:vid2")

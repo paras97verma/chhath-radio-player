@@ -20,6 +20,23 @@ interface CachedStream {
 const STREAM_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const streamCache = new Map<string, CachedStream>();
 
+function isStreamUrlExpired(url: string): boolean {
+  if (!url) return true;
+  try {
+    const u = new URL(url);
+    const exp = u.searchParams.get("expire");
+    if (exp) {
+      const expSec = Number(exp);
+      if (!isNaN(expSec) && Date.now() / 1000 >= expSec - 60) {
+        return true;
+      }
+    }
+  } catch {
+    // If invalid URL, consider not expired
+  }
+  return false;
+}
+
 export function clearStreamCache(videoId?: string): void {
   if (videoId) {
     streamCache.delete(videoId);
@@ -47,7 +64,7 @@ export async function fetchPipedStream(
 
   // Check in-memory cache
   const cached = streamCache.get(cleanId);
-  if (cached && Date.now() - cached.timestamp < STREAM_CACHE_TTL_MS) {
+  if (cached && Date.now() - cached.timestamp < STREAM_CACHE_TTL_MS && !isStreamUrlExpired(cached.stream.url)) {
     return cached.stream;
   }
 
@@ -64,7 +81,7 @@ export async function fetchPipedStream(
 
       if (res.ok) {
         const data = await res.json();
-        if (data && data.url) {
+        if (data && data.url && !isStreamUrlExpired(data.url)) {
           const durationVal =
             typeof data.duration === "number" && data.duration > 0
               ? data.duration

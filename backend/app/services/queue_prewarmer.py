@@ -11,13 +11,18 @@ Proactively extracts and caches direct audio stream URLs in Redis for all active
 """
 
 import asyncio
+import json
 import logging
 from typing import List, Optional, Dict, Any
 
 from app.core.redis import get_redis_client as _get_redis
 from app.db.database import SessionLocal
 from app.services.song_service import SongService
-from app.services.stream_cache_service import StreamCacheService, STREAM_CACHE_PREFIX
+from app.services.stream_cache_service import (
+    StreamCacheService,
+    STREAM_CACHE_PREFIX,
+    is_url_expired,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +58,19 @@ class QueuePrewarmer:
         try:
             cache_key = f"{STREAM_CACHE_PREFIX}{clean_id}"
             ttl = redis_client.ttl(cache_key)
-            # If key exists and has more than min_ttl seconds remaining
-            return ttl is not None and ttl > min_ttl
+            # If key does not exist or has less than min_ttl seconds remaining
+            if ttl is None or ttl <= min_ttl:
+                return False
+
+            raw_json = redis_client.get(cache_key)
+            if raw_json and isinstance(raw_json, (str, bytes)):
+                try:
+                    data = json.loads(raw_json)
+                    if is_url_expired(data.get("url", ""), buffer_seconds=600):
+                        return False
+                except Exception:
+                    pass
+            return True
         except Exception as exc:
             logger.debug("[QueuePrewarmer] Redis TTL check failed for %s: %s", clean_id, exc)
             return False
@@ -97,7 +113,7 @@ class QueuePrewarmer:
             # Check for cooperative cancellation
             await asyncio.sleep(0)
 
-            success = cls.warm_song(vid)
+            success = await asyncio.to_thread(cls.warm_song, vid)
             if not success:
                 failed_ids.append(vid)
 
@@ -179,11 +195,11 @@ class QueuePrewarmer:
 async def _prewarmer_loop() -> None:
     """Internal loop that runs the pre-warmer on boot and every 3 hours."""
     global _is_running
-    logger.info("[QueuePrewarmer] Background worker initialized. First cycle starting in 5s...")
+    logger.info("[QueuePrewarmer] Background worker initialized. First cycle starting in 15s...")
 
-    # Allow application startup and Redis pool connection to fully settle
+    # Allow application startup, DB, and Redis pool connection to fully settle
     try:
-        await asyncio.sleep(5)
+        await asyncio.sleep(15)
     except asyncio.CancelledError:
         return
 

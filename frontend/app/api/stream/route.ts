@@ -21,6 +21,21 @@ const BACKEND_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   "http://localhost:8000";
 
+function isUrlExpired(url: string): boolean {
+  if (!url) return true;
+  try {
+    const u = new URL(url);
+    const exp = u.searchParams.get("expire");
+    if (exp) {
+      const expSec = Number(exp);
+      if (!isNaN(expSec) && Date.now() / 1000 >= expSec - 60) {
+        return true;
+      }
+    }
+  } catch {}
+  return false;
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const videoId = searchParams.get("v") || searchParams.get("videoId");
@@ -31,7 +46,7 @@ export async function GET(request: NextRequest) {
 
   // 1. Check in-memory Next.js server cache
   const cached = streamCache.get(videoId);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS && !isUrlExpired(cached.url)) {
     return NextResponse.json({ ...cached, cached: true, cache_tier: "NEXT_MEM" });
   }
 
@@ -47,7 +62,7 @@ export async function GET(request: NextRequest) {
 
     if (backendRes.ok) {
       const data = await backendRes.json();
-      if (data && data.url) {
+      if (data && data.url && !isUrlExpired(data.url)) {
         const streamDuration =
           typeof data.duration === "number" && data.duration > 0
             ? data.duration
