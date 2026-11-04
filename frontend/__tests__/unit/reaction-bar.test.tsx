@@ -69,3 +69,4 @@ describe("ReactionBar Component", () => {
     expect(screen.getByText("8")).toBeDefined();
   });
 });
+

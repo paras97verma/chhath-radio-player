@@ -16,8 +16,8 @@
  * - Integrated ReactionBar 🪔 on the right end
  */
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import { useRadioStore } from "@/lib/radio-store";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useRadioStore, getFavoriteSongs } from "@/lib/radio-store";
 import { updateMediaSessionPositionState, updateMediaSessionMetadata } from "@/lib/media-session";
 import type { Song } from "@/lib/api";
 
@@ -355,26 +355,28 @@ function PlaylistDrawer({
   onPlaySong,
 }: {
   onClose: () => void;
-  onPlaySong: (index: number, song: Song) => void;
+  onPlaySong: (songsList: Song[], index: number, song: Song) => void;
 }) {
-  const queue = useRadioStore((s) => s.queue);
   const allSongs = useRadioStore((s) => s.allSongs);
   const favorites = useRadioStore((s) => s.favorites);
   const activeFilter = useRadioStore((s) => s.activeFilter);
-  const currentIndex = useRadioStore((s) => s.currentIndex);
   const toggleFavorite = useRadioStore((s) => s.toggleFavorite);
   const isFavorite = useRadioStore((s) => s.isFavorite);
   const setFilter = useRadioStore((s) => s.setFilter);
+  const currentSong = useRadioStore((s) => s.currentSong());
 
-  const favoritedCount = allSongs.filter((s) => isFavorite(s.id)).length;
+  const favSongs = useMemo(() => getFavoriteSongs(allSongs, favorites), [allSongs, favorites]);
+  const favoritedCount = favSongs.length;
   const activeItemRef = useRef<HTMLDivElement | null>(null);
 
-  // Auto-scroll active song into view when playlist opens
+  const displaySongs = activeFilter === "favorites" ? favSongs : allSongs;
+
+  // Auto-scroll active song into view when playlist opens or tab switches
   useEffect(() => {
     if (activeItemRef.current && typeof activeItemRef.current.scrollIntoView === "function") {
       activeItemRef.current.scrollIntoView({ block: "center", behavior: "auto" });
     }
-  }, []);
+  }, [activeFilter]);
 
   return (
     <div className="absolute bottom-full left-0 right-0 mb-3 z-30">
@@ -391,7 +393,7 @@ function PlaylistDrawer({
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-orange-500/20">
           <span className="text-orange-400 font-semibold text-xs tracking-wide">
-            🎵 Playlist ({queue.length})
+            🎵 {activeFilter === "favorites" ? "Favorites" : "Playlist"} ({displaySongs.length})
           </span>
           <button onClick={onClose} className="text-white/40 hover:text-white/80 transition-colors p-1" aria-label="Close playlist">
             <IconClose />
@@ -425,14 +427,19 @@ function PlaylistDrawer({
 
         {/* Song List */}
         <div className="max-h-56 overflow-y-auto chat-scrollbar">
-          {queue.length === 0 ? (
+          {displaySongs.length === 0 ? (
             <div className="py-6 text-center text-white/30 text-xs">
               No favorite songs yet. Tap ♡ on any song to add!
             </div>
           ) : (
-            queue.map((song, i) => {
+            displaySongs.map((song, i) => {
               const favorited = isFavorite(song.id);
-              const isPlaying = i === currentIndex;
+              const isPlaying =
+                Boolean(currentSong) &&
+                (currentSong?.id === song.id ||
+                  (Boolean(currentSong?.youtube_video_id) &&
+                    currentSong?.youtube_video_id === song.youtube_video_id));
+
               return (
                 <div
                   key={song.id}
@@ -441,7 +448,7 @@ function PlaylistDrawer({
                     }`}
                 >
                   <button
-                    onClick={() => onPlaySong(i, song)}
+                    onClick={() => onPlaySong(displaySongs, i, song)}
                     className="flex items-center gap-3 px-4 py-2 text-left flex-1 min-w-0"
                   >
                     <span className={`text-[10px] w-4 text-right shrink-0 font-bold ${isPlaying ? "text-orange-400" : "text-white/30"}`}>
@@ -533,6 +540,7 @@ export default function RadioPlayer({
   const queue = useRadioStore((s) => s.queue);
   const currentIndex = useRadioStore((s) => s.currentIndex);
   const playState = useRadioStore((s) => s.playState);
+  const favorites = useRadioStore((s) => s.favorites);
   const startPlayback = useRadioStore((s) => s.startPlayback);
   const pausePlayback = useRadioStore((s) => s.pausePlayback);
   const nextSong = useRadioStore((s) => s.nextSong);
@@ -545,6 +553,7 @@ export default function RadioPlayer({
   const currentSong = queue[currentIndex] ?? null;
   const isPlaying = playState === "PLAYING";
   const isBuffering = playState === "BUFFERING";
+  const isCurrentSongFavorite = currentSong ? isFavorite(currentSong.id) : false;
 
   // Keyboard controls
   useEffect(() => {
@@ -620,11 +629,17 @@ export default function RadioPlayer({
     await state.prevSong();
   }, [triggerFlash]);
 
-  const handlePlaySong = useCallback(async (index: number, song: Song) => {
+  const handlePlaySong = useCallback(async (songsList: Song[], index: number, song: Song) => {
     const state = useRadioStore.getState();
     if (!state.adapter) return;
     state.adapter.primeAudio?.();
-    useRadioStore.setState({ currentIndex: index, playState: "BUFFERING", userIntent: "playing", error: null });
+    useRadioStore.setState({
+      queue: songsList,
+      currentIndex: index,
+      playState: "BUFFERING",
+      userIntent: "playing",
+      error: null,
+    });
     updateMediaSessionMetadata(song, true);
     try {
       await state.adapter.loadVideo(song.youtube_video_id);
@@ -668,19 +683,30 @@ export default function RadioPlayer({
         >
           {/* Song name & artist strip at top of pill (both desktop and mobile) */}
           <div
-            className="flex items-center justify-between px-4 sm:px-5 py-1.5 border-b h-12 shrink-0"
+            className="flex items-center justify-between px-4 sm:px-5 py-1.5 border-b h-12 shrink-0 relative"
             style={{ borderColor: "rgba(255,138,80,0.18)" }}
           >
-            <div className="min-w-0 flex-1 text-center px-2 flex flex-col justify-center h-full">
+            <div className="min-w-0 flex-1 text-center px-6 flex flex-col justify-center h-full">
               {error ? (
                 <p className="text-red-400 text-xs font-medium truncate" role="alert">{error}</p>
               ) : !isReady ? (
                 <p className="text-amber-200/50 text-xs animate-pulse tracking-wide font-medium">Tuning in…</p>
               ) : currentSong ? (
                 <>
-                  <p className="text-[#fff7ed] text-xs sm:text-sm font-semibold truncate leading-tight tracking-wide">
-                    {currentSong.title}
-                  </p>
+                  <div className="flex items-center justify-center gap-1.5 min-w-0">
+                    <p className="text-[#fff7ed] text-xs sm:text-sm font-semibold truncate leading-tight tracking-wide">
+                      {currentSong.title}
+                    </p>
+                    {isCurrentSongFavorite && (
+                      <span
+                        className="text-[11px] sm:text-xs shrink-0 select-none pointer-events-none cursor-default"
+                        title="In Favorites"
+                        aria-label="In Favorites"
+                      >
+                        ❤️
+                      </span>
+                    )}
+                  </div>
                   <p className="text-amber-200/70 text-[10px] sm:text-[11px] truncate mt-0.5 flex items-center justify-center gap-1.5 font-medium tracking-wide">
                     {isPlaying && (
                       <span
@@ -696,21 +722,6 @@ export default function RadioPlayer({
                 <p className="text-white/30 text-xs font-medium">No songs loaded</p>
               )}
             </div>
-
-            {currentSong && (
-              <button
-                onClick={() => toggleFavorite(currentSong.id)}
-                aria-label={isFavorite(currentSong.id) ? "Remove from favorites" : "Add to favorites"}
-                title={isFavorite(currentSong.id) ? "Remove from favorites" : "Add to favorites"}
-                className="p-1.5 rounded-full text-xs transition-all hover:scale-110 shrink-0 ml-2"
-                style={{
-                  color: isFavorite(currentSong.id) ? "#ef4444" : "rgba(255,255,255,0.35)",
-                  background: isFavorite(currentSong.id) ? "rgba(239,68,68,0.12)" : "transparent",
-                }}
-              >
-                {isFavorite(currentSong.id) ? "❤️" : "♡"}
-              </button>
-            )}
           </div>
 
           {/* Main row */}

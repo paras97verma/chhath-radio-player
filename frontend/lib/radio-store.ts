@@ -208,6 +208,24 @@ export type RadioPlayState =
 
 export type PlaylistFilter = "all" | "favorites";
 
+/**
+ * Returns the favorited songs from allSongs, ordered by the order in which they were favorited.
+ */
+export function getFavoriteSongs(allSongs: Song[], favorites: string[]): Song[] {
+  const favSongs: Song[] = [];
+  const seenIds = new Set<string>();
+
+  for (const favId of favorites) {
+    const song = allSongs.find((s) => s.id === favId || s.youtube_video_id === favId);
+    if (song && !seenIds.has(song.id)) {
+      seenIds.add(song.id);
+      favSongs.push(song);
+    }
+  }
+
+  return favSongs;
+}
+
 export type UserPlayIntent = "idle" | "playing" | "paused";
 
 interface RadioState {
@@ -349,32 +367,15 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     saveFavoritesToStorage(updatedFavs);
 
     if (activeFilter === "favorites") {
-      const currentPlayingSong = queue[currentIndex];
-      const isSongFav = (s: Song) =>
-        updatedFavs.includes(s.id) || (Boolean(s.youtube_video_id) && updatedFavs.includes(s.youtube_video_id));
-      const newFavQueue = allSongs.filter(isSongFav);
+      const newFavQueue = getFavoriteSongs(allSongs, updatedFavs);
 
       if (newFavQueue.length === 0) {
         set({
           favorites: updatedFavs,
           activeFilter: "all",
-          queue: allSongs,
-          currentIndex: currentPlayingSong
-            ? Math.max(0, allSongs.findIndex((s) => s.id === currentPlayingSong.id))
-            : 0,
         });
       } else {
-        const newIdx = currentPlayingSong
-          ? Math.max(0, newFavQueue.findIndex((s) => s.id === currentPlayingSong.id))
-          : 0;
-        set({
-          favorites: updatedFavs,
-          queue: newFavQueue,
-          currentIndex: newIdx,
-        });
-        if (!isFav && adapter && currentPlayingSong && newFavQueue[newIdx]?.id !== currentPlayingSong.id) {
-          adapter.loadSong(newFavQueue[newIdx]);
-        }
+        set({ favorites: updatedFavs });
       }
     } else {
       set({ favorites: updatedFavs });
@@ -382,38 +383,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   },
 
   setFilter: async (filter: PlaylistFilter) => {
-    const { allSongs, favorites, currentSong, adapter } = get();
-    const curSong = currentSong();
-
-    if (filter === "favorites") {
-      const isSongFav = (s: Song) =>
-        favorites.includes(s.id) || (Boolean(s.youtube_video_id) && favorites.includes(s.youtube_video_id));
-      const favQueue = allSongs.filter(isSongFav);
-      if (favQueue.length === 0) return;
-
-      const matchIdx = curSong ? favQueue.findIndex((s) => s.id === curSong.id) : 0;
-      const targetIdx = matchIdx >= 0 ? matchIdx : 0;
-
-      set({
-        activeFilter: "favorites",
-        queue: favQueue,
-        currentIndex: targetIdx,
-      });
-
-      if (adapter && favQueue[targetIdx]) {
-        set({ playState: "BUFFERING" });
-        await adapter.loadSong(favQueue[targetIdx]);
-      }
-    } else {
-      const matchIdx = curSong ? allSongs.findIndex((s) => s.id === curSong.id) : 0;
-      const targetIdx = matchIdx >= 0 ? matchIdx : 0;
-
-      set({
-        activeFilter: "all",
-        queue: allSongs,
-        currentIndex: targetIdx,
-      });
-    }
+    set({ activeFilter: filter });
   },
 
   loadQueue: async (songs, adapter) => {
@@ -430,7 +400,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
 
     const activeQueue =
       activeFilter === "favorites" && songs.some(isSongFav)
-        ? songs.filter(isSongFav)
+        ? getFavoriteSongs(songs, favorites)
         : songs;
 
     const unsubscribeState = adapter.onStateChange((state) => {
@@ -745,7 +715,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   },
 }));
 
-// Cross-tab synchronization for offering counts
+// Cross-tab synchronization for offering counts & favorites
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (e) => {
     if (e.key === OFFERINGS_STORAGE_KEY && e.newValue) {
@@ -753,6 +723,15 @@ if (typeof window !== "undefined") {
         const parsed = JSON.parse(e.newValue);
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
           useRadioStore.setState({ offeringCounts: parsed });
+        }
+      } catch {
+        /* ignore */
+      }
+    } else if (e.key === FAVORITES_STORAGE_KEY && e.newValue) {
+      try {
+        const parsed = JSON.parse(e.newValue);
+        if (Array.isArray(parsed)) {
+          useRadioStore.setState({ favorites: parsed });
         }
       } catch {
         /* ignore */

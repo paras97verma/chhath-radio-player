@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MockYouTubePlayerAdapter } from "../../lib/youtube-adapter";
-import { useRadioStore, loadOfferingsFromStorage } from "../../lib/radio-store";
+import { useRadioStore, loadOfferingsFromStorage, getFavoriteSongs } from "../../lib/radio-store";
 import type { Song } from "../../lib/api";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -415,10 +415,59 @@ describe("TestFavoritesPersistence", () => {
     // Even with the new database UUID, the song is still recognized as favorited!
     expect(getStore().isFavorite(redeployedSong.id)).toBe(true);
 
-    // Switching to favorites filter retains the song in the queue
+    // Switching filter updates activeFilter without abruptly changing or reloading playback
     await getStore().setFilter("favorites");
-    expect(getStore().queue.length).toBe(1);
-    expect(getStore().queue[0].id).toBe(redeployedSong.id);
+    expect(getStore().activeFilter).toBe("favorites");
+    const favSongs = getStore().allSongs.filter((s) => getStore().isFavorite(s.id));
+    expect(favSongs.length).toBe(1);
+    expect(favSongs[0].id).toBe(redeployedSong.id);
+  });
+
+  it("does not start playing a song or change track when switching to favorites filter", async () => {
+    const adapter = new MockYouTubePlayerAdapter();
+    const songs = makeSongs(3);
+    await getStore().loadQueue(songs, adapter);
+
+    // Favorite song 2 (index 2)
+    getStore().toggleFavorite(songs[2].id);
+
+    // Start playing song 0
+    await getStore().startPlayback();
+    expect(getStore().currentSong()?.id).toBe(songs[0].id);
+    expect(getStore().playState).toBe("PLAYING");
+
+    const loadSongSpy = vi.spyOn(adapter, "loadSong");
+
+    // Switch to favorites filter — should NOT load or play song 2
+    await getStore().setFilter("favorites");
+    expect(getStore().activeFilter).toBe("favorites");
+    expect(loadSongSpy).not.toHaveBeenCalled();
+
+    // The currently playing song remains song 0 uninterrupted
+    expect(getStore().currentSong()?.id).toBe(songs[0].id);
+    expect(getStore().playState).toBe("PLAYING");
+  });
+
+  it("orders favorite songs in the order they were marked by the user, not the main queue order", async () => {
+    const adapter = new MockYouTubePlayerAdapter();
+    const songs = makeSongs(5);
+    // songs are ordered: songs[0], songs[1], songs[2], songs[3], songs[4]
+    await getStore().loadQueue(songs, adapter);
+
+    // User favorites song 3 first, then song 1, then song 4
+    getStore().toggleFavorite(songs[3].id);
+    getStore().toggleFavorite(songs[1].id);
+    getStore().toggleFavorite(songs[4].id);
+
+    const orderedFavs = getFavoriteSongs(getStore().allSongs, getStore().favorites);
+    expect(orderedFavs.map((s) => s.id)).toEqual([songs[3].id, songs[1].id, songs[4].id]);
+
+    // Unfavorite song 1, then favorite song 0
+    getStore().toggleFavorite(songs[1].id);
+    getStore().toggleFavorite(songs[0].id);
+
+    const updatedOrderedFavs = getFavoriteSongs(getStore().allSongs, getStore().favorites);
+    expect(updatedOrderedFavs.map((s) => s.id)).toEqual([songs[3].id, songs[4].id, songs[0].id]);
   });
 });
 
