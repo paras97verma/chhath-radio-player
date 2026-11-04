@@ -341,10 +341,18 @@ export async function adminTriggerReconcile(token: string): Promise<{ status: st
   return res.json();
 }
 
-export async function adminFlushAndRefreshCache(token: string): Promise<{ status: string; message: string; flushed_count: number }> {
+export async function adminFlushAndRefreshCache(
+  token: string,
+  videoIds?: string | string[]
+): Promise<{ status: string; message: string; flushed_count: number; target?: string; video_ids?: string[] }> {
+  const body = videoIds ? JSON.stringify({ video_ids: videoIds }) : undefined;
   const res = await fetch(`${API_BASE}/api/admin/songs/cache/refresh`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    body,
   });
   if (!res.ok) throw new Error("Failed to flush and refresh audio stream cache");
   return res.json();

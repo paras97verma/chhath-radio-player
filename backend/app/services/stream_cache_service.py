@@ -23,7 +23,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 
 from app.core.redis import get_redis_client as _get_redis
 
@@ -592,28 +592,55 @@ class StreamCacheService:
                 logger.warning("[StreamCache] Failed to reset metrics key in Redis: %s", exc)
 
     @classmethod
-    def flush_stream_cache(cls, video_id: Optional[str] = None) -> int:
+    def flush_stream_cache(cls, video_id: Optional[Union[str, List[str]]] = None) -> int:
         """
         Flushes stream cache entries from L1 in-memory and L2 Redis.
-        If video_id is provided, flushes only that track. Otherwise flushes all streams
-        and resets resolution telemetry metrics so future measurements reflect clean state.
+        - If video_id(s) is provided (single ID, list, or comma/newline-separated string):
+          Flushes only those specific tracks, and PRESERVES overall telemetry hit/miss metrics.
+        - If video_id is None or empty:
+          Flushes ALL streams and RESETS telemetry metrics (hits, misses, extractions).
         Returns the count of Redis keys deleted.
         """
         global _l1_cache, _l1_cache_ts
         deleted_count = 0
         redis_client = _get_redis()
 
-        if video_id:
-            clean_id = video_id.strip()
-            _l1_cache.pop(clean_id, None)
-            _l1_cache_ts.pop(clean_id, None)
-            if redis_client:
-                try:
-                    deleted_count = redis_client.delete(f"{STREAM_CACHE_PREFIX}{clean_id}")
-                except Exception as exc:
-                    logger.warning("[StreamCache] Redis delete failed for %s: %s", clean_id, exc)
-            _record_metric("invalidations", 1)
+        clean_ids: List[str] = []
+        if video_id is not None:
+            if isinstance(video_id, list):
+                raw_list = video_id
+            else:
+                raw_list = re.split(r"[\s,\n\r;]+", str(video_id))
+
+            seen = set()
+            for item in raw_list:
+                item = (item or "").strip()
+                if not item:
+                    continue
+                # Extract 11-char ID if full YouTube URL was pasted
+                match = re.search(r"(?:v=|\/|be\/|embed\/)([0-9A-Za-z_-]{11})", item)
+                vid = match.group(1) if match else item
+                vid = vid.strip()
+                if vid and len(vid) >= 5 and vid not in seen:
+                    seen.add(vid)
+                    clean_ids.append(vid)
+
+        if clean_ids:
+            # SELECTIVE FLUSH: Invalidate only specified tracks. DO NOT reset telemetry metrics!
+            for cid in clean_ids:
+                _l1_cache.pop(cid, None)
+                _l1_cache_ts.pop(cid, None)
+                if redis_client:
+                    try:
+                        deleted = redis_client.delete(f"{STREAM_CACHE_PREFIX}{cid}")
+                        redis_client.delete(f"{STREAM_LOCK_PREFIX}{cid}")
+                        deleted_count += deleted
+                    except Exception as exc:
+                        logger.warning("[StreamCache] Redis delete failed for %s: %s", cid, exc)
+            _record_metric("invalidations", len(clean_ids))
+            logger.info("[StreamCache] Selectively flushed %d stream(s) for %d requested track(s). Telemetry preserved.", deleted_count, len(clean_ids))
         else:
+            # ENTIRE CATALOG FLUSH: Flush all cached streams and reset telemetry metrics.
             _l1_cache.clear()
             _l1_cache_ts.clear()
             if redis_client:
@@ -634,12 +661,13 @@ class StreamCacheService:
                         if cursor == 0:
                             break
 
-                    # Reset metrics counters on full on-demand cache flush
+                    # Reset metrics counters ONLY on full on-demand cache flush
                     redis_client.delete(STREAM_METRICS_KEY)
                 except Exception as exc:
                     logger.warning("[StreamCache] Redis flush all failed: %s", exc)
 
-        logger.info("[StreamCache] Flushed %d stream keys (video_id=%s) and reset metrics", deleted_count, video_id or "ALL")
+            logger.info("[StreamCache] Flushed entire stream cache (%d streams) and reset telemetry metrics.", deleted_count)
+
         return deleted_count
 
     @classmethod

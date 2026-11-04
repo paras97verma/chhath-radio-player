@@ -124,6 +124,29 @@ class CatalogReconciliationService:
         return False
 
     @classmethod
+    async def warm_specific_songs(cls, video_ids: List[str]) -> int:
+        """
+        Warms a targeted list of video IDs in background without triggering full catalog pass.
+        Invalidates readiness micro-cache upon completion.
+        """
+        warmed = 0
+        for vid in video_ids:
+            clean_id = (vid or "").strip()
+            if not clean_id or len(clean_id) < 5:
+                continue
+            try:
+                success = await asyncio.to_thread(cls.warm_song, clean_id, force=True)
+                if success:
+                    warmed += 1
+            except Exception as exc:
+                logger.warning("[CatalogReconciler] Failed warming specific song %s: %s", clean_id, exc)
+            await asyncio.sleep(0.05)
+
+        cls.invalidate_status_cache()
+        logger.info("[CatalogReconciler] Selectively warmed %d/%d tracks.", warmed, len(video_ids))
+        return warmed
+
+    @classmethod
     def process_priority_queue(cls, max_items: int = 10) -> int:
         """
         Processes high-priority video IDs that were explicitly queued (e.g. newly created/updated songs).
