@@ -26,6 +26,7 @@ import {
   adminFetchCatalogStatus,
   adminFetchStreamStatus,
   adminTriggerReconcile,
+  adminFlushAndRefreshCache,
   type Song,
   type CatalogReadinessStatus,
 } from "@/lib/api";
@@ -638,6 +639,33 @@ function CatalogStatusSection({ token }: { token: string }) {
     }
   };
 
+  const [flushing, setFlushing] = useState(false);
+
+  const handleFlushAndRefreshCache = async () => {
+    if (!confirm("This will purge all cached audio streams from Redis and launch a complete re-extraction and verification pass across all songs. Continue?")) {
+      return;
+    }
+    setFlushing(true);
+    setReconcileMessage("Flushing stream cache and starting full catalog re-warming pass...");
+    try {
+      const res = await adminFlushAndRefreshCache(token);
+      setReconcileMessage(res.message || "Cache flushed and re-warming pass launched!");
+      let pollCount = 0;
+      const pollInterval = setInterval(async () => {
+        pollCount += 1;
+        await fetchBothStatuses();
+        if (pollCount >= 8) {
+          clearInterval(pollInterval);
+          setFlushing(false);
+          setReconcileMessage("Audio stream cache refreshed: all streams validated and ready!");
+        }
+      }, 1500);
+    } catch (err: unknown) {
+      setReconcileMessage(err instanceof Error ? err.message : "Failed to flush and refresh cache");
+      setFlushing(false);
+    }
+  };
+
   return (
     <div className="bg-gray-900/90 border border-amber-500/30 rounded-2xl p-5 shadow-xl space-y-4">
       {/* Title & Global Controls */}
@@ -654,7 +682,7 @@ function CatalogStatusSection({ token }: { token: string }) {
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={fetchBothStatuses}
-            disabled={songsLoading || streamLoading || reconciling}
+            disabled={songsLoading || streamLoading || reconciling || flushing}
             className="px-3 py-1.5 text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 rounded-lg transition-all disabled:opacity-50"
           >
             {songsLoading || streamLoading ? "Refreshing Metrics…" : "🔄 Refresh All Metrics"}
@@ -662,7 +690,7 @@ function CatalogStatusSection({ token }: { token: string }) {
 
           <button
             onClick={handleTriggerReconcile}
-            disabled={reconciling}
+            disabled={reconciling || flushing}
             className="px-3 py-1.5 text-xs font-semibold bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 rounded-lg transition-all flex items-center gap-1.5"
           >
             {reconciling ? (
@@ -672,6 +700,22 @@ function CatalogStatusSection({ token }: { token: string }) {
               </>
             ) : (
               <span>⚡ Reconcile Catalog & Prewarm</span>
+            )}
+          </button>
+
+          <button
+            onClick={handleFlushAndRefreshCache}
+            disabled={reconciling || flushing}
+            className="px-3 py-1.5 text-xs font-semibold bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 rounded-lg transition-all flex items-center gap-1.5"
+            title="Purge all cached audio streams from Redis and re-extract verified playable streams across the entire catalog"
+          >
+            {flushing ? (
+              <>
+                <span className="w-2.5 h-2.5 rounded-full border-2 border-rose-300 border-t-transparent animate-spin"></span>
+                <span>Flushing & Warming…</span>
+              </>
+            ) : (
+              <span>🔥 Flush & Refresh All Streams</span>
             )}
           </button>
         </div>

@@ -124,6 +124,29 @@ async def trigger_catalog_reconciliation(
     return {"status": "reconciliation_triggered", "message": "Catalog reconciliation cycle started in background"}
 
 
+@router.post("/cache/refresh", status_code=status.HTTP_200_OK)
+async def refresh_entire_catalog_cache(
+    _admin: Admin = Depends(get_current_admin),
+) -> dict:
+    """
+    POST /api/admin/songs/cache/refresh
+    Flushes all stream cache entries from L1 in-memory and L2 Redis,
+    then launches a complete catalog reconciliation and stream prewarming pass.
+    """
+    import asyncio
+    from app.services.stream_cache_service import StreamCacheService
+    from app.services.queue_prewarmer import CatalogReconciliationService
+
+    flushed_count = StreamCacheService.flush_stream_cache()
+    asyncio.create_task(CatalogReconciliationService.run_prewarmer_cycle())
+
+    return {
+        "status": "cache_refreshed",
+        "flushed_count": flushed_count,
+        "message": f"Flushed {flushed_count} cached streams. Full re-warming and verification started in background.",
+    }
+
+
 @router.get("/status", status_code=status.HTTP_200_OK)
 def get_admin_catalog_status(
     _admin: Admin = Depends(get_current_admin),

@@ -31,6 +31,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   private hasUserInteracted = false;
   private isPriming = false;
   private currentVideoId: string | null = null;
+  private currentProxyUrl: string | null = null;
+  private hasTriedProxyForCurrentSong = false;
   private hasEndedEmitted = false;
 
   // Request sequencing and cooperative cancellation
@@ -176,12 +178,37 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       this.hasEndedEmitted = true;
       this._emitState("ENDED");
     };
-    const onError = () => {
+    const onError = async () => {
       // If a newer load request is active or audio element was reset, ignore stale errors
       if (this.isPriming || this.activeAbortController?.signal.aborted || this.isDestroyed) return;
       // If user has not interacted yet, or error is MEDIA_ERR_ABORTED (code 1), ignore
       if (!this.hasUserInteracted || audio.error?.code === 1) return;
-      console.warn("[Html5AudioAdapter] Audio playback error:", audio.error);
+      console.warn(`[Html5AudioAdapter] Audio error encountered for ${this.currentVideoId}:`, audio.error);
+
+      // Automatic Invidious Proxy Fallback on playback error (e.g. 403 Forbidden on direct googlevideo URL)
+      if (this.currentProxyUrl && !this.hasTriedProxyForCurrentSong && this.primaryAudio) {
+        this.hasTriedProxyForCurrentSong = true;
+        const proxyTarget = this.currentProxyUrl;
+        console.warn(`[Html5AudioAdapter] Direct stream playback failed (403/media error). Switching to proxy fallback:`, proxyTarget);
+
+        // Invalidate the broken direct stream in backend cache so subsequent plays get a fresh working stream
+        if (this.currentVideoId) {
+          fetch(`/api/stream/cache/flush?v=${encodeURIComponent(this.currentVideoId)}`, { method: "POST" }).catch(() => {});
+        }
+
+        try {
+          this.primaryAudio.src = proxyTarget;
+          this.primaryAudio.load();
+          await this.primaryAudio.play();
+          if (!this.isDestroyed) {
+            this._emitState("PLAYING");
+            return;
+          }
+        } catch (proxyPlayErr) {
+          console.warn("[Html5AudioAdapter] Proxy fallback playback failed:", proxyPlayErr);
+        }
+      }
+
       this._emitState("ERROR");
     };
 
@@ -328,6 +355,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
       this.hasUserInteracted = true;
       this.currentVideoId = videoId;
+      this.currentProxyUrl = stream.proxy_url || null;
+      this.hasTriedProxyForCurrentSong = false;
       this.streamDuration = stream.duration ?? extractDurationFromUrl(stream.url) ?? null;
       this.primaryAudio.src = stream.url;
       this.primaryAudio.preload = "auto";

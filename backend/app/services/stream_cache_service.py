@@ -354,6 +354,27 @@ class StreamCacheService:
         logger.info("[StreamCache] Single-flight poll timed out for %s. Extracting directly.", video_id)
         return cls._extract_upstream(video_id)
 
+    @staticmethod
+    def _check_url_accessibility(url: str, timeout: float = 2.0) -> bool:
+        """
+        Lightweight probe to verify if direct stream URL is accessible or IP-blocked (403).
+        """
+        if not url:
+            return False
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Range": "bytes=0-0"},
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status in (200, 206)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 403:
+                return False
+            return exc.code in (416, 302, 301)
+        except Exception:
+            return True
+
     @classmethod
     def _extract_upstream(cls, video_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -417,9 +438,17 @@ class StreamCacheService:
                                 # Immediate Invidious proxy fallback URL
                                 proxy_url = f"{origin}/latest_version?id={video_id}&itag=140&local=true" if origin else None
 
+                                # Verify if direct_url is accessible or IP-restricted (returns 403)
+                                is_direct_accessible = cls._check_url_accessibility(direct_url)
+                                if not is_direct_accessible and proxy_url:
+                                    logger.info("[StreamCache] Direct stream for %s returned 403 (IP-bound). Using proxy fallback as primary.", video_id)
+                                    stream_url = proxy_url
+                                else:
+                                    stream_url = direct_url
+
                                 cls._record_success(ext_name, latency_ms, redis_client)
                                 return {
-                                    "url": direct_url,
+                                    "url": stream_url,
                                     "proxy_url": proxy_url,
                                     "format": "M4A" if "mp4" in best.get("type", "") else "WEBM_OPUS",
                                     "mimeType": best.get("type") or 'audio/mp4; codecs="mp4a.40.2"',

@@ -340,3 +340,12 @@ export async function adminTriggerReconcile(token: string): Promise<{ status: st
   if (!res.ok) throw new Error("Failed to trigger catalog reconciliation");
   return res.json();
 }
+
+export async function adminFlushAndRefreshCache(token: string): Promise<{ status: string; message: string; flushed_count: number }> {
+  const res = await fetch(`${API_BASE}/api/admin/songs/cache/refresh`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Failed to flush and refresh audio stream cache");
+  return res.json();
+}
