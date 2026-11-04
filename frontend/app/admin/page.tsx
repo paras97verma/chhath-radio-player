@@ -578,9 +578,6 @@ function CatalogStatusSection({ token }: { token: string }) {
   const [reconciling, setReconciling] = useState(false);
   const [reconcileMessage, setReconcileMessage] = useState<string | null>(null);
   const [flushing, setFlushing] = useState(false);
-  const [showSelectiveModal, setShowSelectiveModal] = useState(false);
-  const [selectiveInput, setSelectiveInput] = useState("");
-  const [selectiveFlushing, setSelectiveFlushing] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -677,46 +674,6 @@ function CatalogStatusSection({ token }: { token: string }) {
     }
   };
 
-  // Helper to extract clean video IDs from comma, newline, or whitespace separated text
-  const detectedIds = useMemo(() => {
-    if (!selectiveInput) return [];
-    const parts = selectiveInput.split(/[\s,\n\r;]+/);
-    const seen = new Set<string>();
-    const ids: string[] = [];
-    for (const part of parts) {
-      const trimmed = part.trim();
-      if (!trimmed) continue;
-      const match = trimmed.match(/(?:v=|\/|be\/|embed\/)([0-9A-Za-z_-]{11})/);
-      const vid = match ? match[1] : trimmed;
-      if (vid && vid.length >= 5 && !seen.has(vid)) {
-        seen.add(vid);
-        ids.push(vid);
-      }
-    }
-    return ids;
-  }, [selectiveInput]);
-
-  const handleSelectiveFlush = async () => {
-    if (detectedIds.length === 0) {
-      alert("Please enter at least one valid YouTube Video ID or URL.");
-      return;
-    }
-    setSelectiveFlushing(true);
-    setReconcileMessage(`Selectively flushing ${detectedIds.length} track(s) and re-warming in background...`);
-    try {
-      const res = await adminFlushAndRefreshCache(token, detectedIds);
-      setReconcileMessage(res.message || `Flushed ${res.flushed_count} stream(s) for ${detectedIds.length} track(s)!`);
-      setSelectiveInput("");
-      setShowSelectiveModal(false);
-      await fetchBothStatuses(false);
-      await runActivePolling(3, 2000);
-    } catch (err: unknown) {
-      setReconcileMessage(err instanceof Error ? err.message : "Failed to selectively flush tracks");
-    } finally {
-      setSelectiveFlushing(false);
-    }
-  };
-
   const handleFlushAndRefreshCache = async () => {
     if (!confirm("This will purge all cached audio streams from Redis, reset hit/miss telemetry, and launch a complete re-extraction and verification pass across all songs. Continue?")) {
       return;
@@ -775,7 +732,7 @@ function CatalogStatusSection({ token }: { token: string }) {
 
           <button
             onClick={handleFlushAndRefreshCache}
-            disabled={reconciling || flushing || selectiveFlushing}
+            disabled={reconciling || flushing}
             className="px-3 py-1.5 text-xs font-semibold bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
             title="Purge all cached audio streams from Redis, reset hit/miss telemetry, and re-extract across the entire catalog"
           >
@@ -788,92 +745,8 @@ function CatalogStatusSection({ token }: { token: string }) {
               <span>🔥 Flush & Refresh All Streams</span>
             )}
           </button>
-
-          <button
-            onClick={() => setShowSelectiveModal(!showSelectiveModal)}
-            disabled={reconciling || flushing || selectiveFlushing}
-            className={`px-3 py-1.5 text-xs font-semibold border rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
-              showSelectiveModal
-                ? "bg-sky-500/30 text-sky-200 border-sky-400"
-                : "bg-sky-900/30 hover:bg-sky-800/40 text-sky-300 border-sky-700/50"
-            }`}
-            title="Selectively flush one or multiple tracks by video ID or URL without resetting telemetry metrics"
-          >
-            <span>🎯 Flush Specific Track(s)</span>
-          </button>
         </div>
       </div>
-
-      {/* Selective Flush Panel */}
-      {showSelectiveModal && (
-        <div className="bg-sky-950/30 border border-sky-600/40 rounded-xl p-4 space-y-3 shadow-lg">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold text-sky-300 flex items-center gap-1.5">
-              <span>🎯 Targeted Stream Cache Flush</span>
-              <span className="text-[10px] bg-sky-900/60 text-sky-300 px-2 py-0.5 rounded-full font-normal">
-                Telemetry Preserved
-              </span>
-            </h4>
-            <button
-              onClick={() => setShowSelectiveModal(false)}
-              className="text-gray-400 hover:text-gray-200 text-xs px-1.5 py-0.5 rounded transition-colors"
-            >
-              ✕ Close
-            </button>
-          </div>
-
-          <p className="text-[11px] text-gray-300 leading-relaxed">
-            Enter one or more YouTube Video IDs or URLs separated by <strong>comma</strong> or <strong>newline</strong>.
-            Only the specified tracks will be purged and re-warmed.
-            <span className="text-amber-400 font-medium ml-1">
-              (Overall Hit Ratio metrics will NOT be reset — metrics reset occurs ONLY when flushing the entire catalog).
-            </span>
-          </p>
-
-          <textarea
-            value={selectiveInput}
-            onChange={(e) => setSelectiveInput(e.target.value)}
-            placeholder="e.g. 3TIBnAw4nMU, ZceCoo2p9Tw&#10;or https://www.youtube.com/watch?v=GRC19OaLLUo&#10;GRC19OaLLUo"
-            rows={3}
-            className="w-full bg-gray-950/80 border border-gray-700 rounded-lg p-2.5 text-xs text-gray-100 placeholder-gray-500 font-mono focus:border-sky-400 focus:outline-none transition-colors"
-          />
-
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-1">
-            <div className="text-[11px] text-sky-300">
-              Detected: <strong>{detectedIds.length}</strong> valid track{detectedIds.length === 1 ? "" : "s"}
-              {detectedIds.length > 0 && (
-                <span className="text-gray-400 ml-1">
-                  ({detectedIds.slice(0, 3).join(", ")}{detectedIds.length > 3 ? "…" : ""})
-                </span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setSelectiveInput("")}
-                disabled={!selectiveInput || selectiveFlushing}
-                className="px-2.5 py-1 text-xs text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-40"
-              >
-                Clear
-              </button>
-              <button
-                onClick={handleSelectiveFlush}
-                disabled={detectedIds.length === 0 || selectiveFlushing}
-                className="px-3 py-1.5 text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white rounded-lg transition-all disabled:opacity-50 flex items-center gap-1.5 shadow"
-              >
-                {selectiveFlushing ? (
-                  <>
-                    <span className="w-2.5 h-2.5 rounded-full border-2 border-white border-t-transparent animate-spin"></span>
-                    <span>Flushing {detectedIds.length} Track{detectedIds.length === 1 ? "" : "s"}…</span>
-                  </>
-                ) : (
-                  <span>🔥 Flush {detectedIds.length} Track{detectedIds.length === 1 ? "" : "s"}</span>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {reconcileMessage && (
         <div className="text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-800/40 rounded-lg p-2.5 font-medium flex items-center justify-between">
