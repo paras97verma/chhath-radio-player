@@ -293,6 +293,7 @@ export interface CatalogReadinessStatus {
     stream_missing: number;
     metadata_completeness_percent: number;
     stream_readiness_percent: number;
+    is_reconciling?: boolean;
   };
   distributed_coordination: {
     worker_id: string;

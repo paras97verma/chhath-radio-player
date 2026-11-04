@@ -14,6 +14,7 @@ Features:
 """
 
 import asyncio
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -28,6 +29,7 @@ from app.services.song_service import (
     SongService,
     RECONCILER_PRIORITY_KEY,
     QUEUE_CACHE_KEY,
+    _cache_delete,
 )
 from app.services.stream_cache_service import (
     StreamCacheService,
@@ -51,6 +53,7 @@ LEADER_KEY = "chhath:leader:catalog_reconciler"
 LEADER_LEASE_TTL = 30  # seconds
 CHECKPOINT_KEY = "chhath:reconciler:checkpoint"
 CATALOG_STATUS_KEY = "chhath:catalog:status"
+RECONCILE_IN_PROGRESS_KEY = "chhath:reconcile:in_progress"
 
 WORKER_ID = str(uuid.uuid4())
 
@@ -253,6 +256,63 @@ class CatalogReconciliationService:
         # Process any pending priority queue items first
         cls.process_priority_queue(max_items=20)
 
+        # Mark reconciliation as in progress in Redis
+        redis_client = _get_redis()
+        if redis_client:
+            try:
+                redis_client.set(RECONCILE_IN_PROGRESS_KEY, "1", ex=180)
+            except Exception:
+                pass
+
+        # 2. Metadata Synchronization pass: resolve missing duration / incomplete metadata
+        db_meta = SessionLocal()
+        metadata_synced_count = 0
+        try:
+            incomplete_songs = db_meta.query(Song).filter(
+                Song.enabled == True,
+                (Song.metadata_status != "complete") | (Song.duration_seconds == None)
+            ).all()
+            for s in incomplete_songs:
+                vid = (s.youtube_video_id or "").strip()
+                if not vid:
+                    continue
+                # Fast resolution: check if duration is already cached in Redis stream
+                resolved = False
+                if redis_client:
+                    try:
+                        raw = redis_client.get(f"{STREAM_CACHE_PREFIX}{vid}")
+                        if raw:
+                            stream_dict = json.loads(raw)
+                            dur = stream_dict.get("duration")
+                            if dur is not None:
+                                s.duration_seconds = int(dur)
+                                s.metadata_status = "complete"
+                                if not s.thumbnail_url:
+                                    s.thumbnail_url = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+                                s.last_metadata_sync = datetime.now(timezone.utc)
+                                db_meta.commit()
+                                metadata_synced_count += 1
+                                resolved = True
+                    except Exception:
+                        db_meta.rollback()
+
+                # If not resolved from Redis stream cache, sync from upstream
+                if not resolved:
+                    try:
+                        synced = await asyncio.to_thread(SongService.sync_song_metadata, db_meta, s)
+                        if synced:
+                            metadata_synced_count += 1
+                    except Exception as sync_err:
+                        logger.debug("[CatalogReconciler] Could not sync metadata for %s: %s", vid, sync_err)
+        except Exception as exc:
+            logger.warning("[CatalogReconciler] Metadata sync pass error: %s", exc)
+        finally:
+            db_meta.close()
+
+        if metadata_synced_count > 0:
+            logger.info("[CatalogReconciler] Successfully synced metadata for %d songs.", metadata_synced_count)
+            _cache_delete(QUEUE_CACHE_KEY)
+
         # Pass 1: Warm all tracks with pacing
         failed_pass_1 = await cls.warm_queue_pass(video_ids, pace_delay=SONG_PACE_DELAY_SECONDS)
 
@@ -271,16 +331,17 @@ class CatalogReconciliationService:
 
         warmed_count = total_count - len(still_failed)
 
-        # Record completion timestamp in Redis status
-        redis_client = _get_redis()
+        # Record completion timestamp and clear in-progress flag in Redis
         if redis_client:
             try:
                 status_data = {
                     "last_reconciliation_time": time.time(),
                     "total_processed": total_count,
+                    "metadata_synced": metadata_synced_count,
                     "worker_id": WORKER_ID,
                 }
                 redis_client.set(CATALOG_STATUS_KEY, json.dumps(status_data))
+                redis_client.delete(RECONCILE_IN_PROGRESS_KEY)
             except Exception:
                 pass
 
@@ -346,11 +407,13 @@ class CatalogReconciliationService:
         # Leader check
         redis_client = _get_redis()
         current_leader = None
+        is_reconciling = False
         if redis_client:
             try:
                 raw_leader = redis_client.get(LEADER_KEY)
                 if raw_leader:
                     current_leader = raw_leader.decode("utf-8") if isinstance(raw_leader, bytes) else str(raw_leader)
+                is_reconciling = bool(redis_client.get(RECONCILE_IN_PROGRESS_KEY))
             except Exception:
                 pass
 
@@ -367,6 +430,7 @@ class CatalogReconciliationService:
                 "stream_missing": stream_missing,
                 "metadata_completeness_percent": round((metadata_ready / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
                 "stream_readiness_percent": round((stream_ready / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
+                "is_reconciling": is_reconciling,
             },
             "distributed_coordination": {
                 "worker_id": WORKER_ID,
