@@ -16,15 +16,37 @@ export type PlayerState =
   | "CUED"
   | "ERROR";
 
+export type StreamReadinessStatus =
+  | "READY"
+  | "DEGRADED"
+  | "RESOLVING"
+  | "VALIDATING"
+  | "EXPIRED"
+  | "FAILED";
+
+export interface StreamCandidateSource {
+  url: string;
+  type: "direct" | "direct_alt" | "proxy" | "proxy_fallback" | "fallback";
+  format?: string;
+  mimeType?: string;
+  bitrate?: number;
+  expires_at?: number;
+}
+
 export interface AudioStreamInfo {
   url: string;
+  direct_url?: string;
   proxy_url?: string;
+  status?: StreamReadinessStatus;
+  sources?: StreamCandidateSource[];
   format: string; // e.g. "WEBM_OPUS", "M4A"
   quality: string; // e.g. "160kbps", "128kbps"
   mimeType: string; // e.g. 'audio/webm; codecs="opus"', 'audio/mp4; codecs="mp4a.40.2"'
   codec: string;
   bitrate: number;
   duration?: number; // Authoritative duration in seconds from CDN/extractor metadata
+  cache_tier?: string;
+  title?: string;
 }
 
 export interface PipedInstance {

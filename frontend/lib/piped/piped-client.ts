@@ -46,12 +46,44 @@ export function clearStreamCache(videoId?: string): void {
 }
 
 /**
+ * Reports a failed direct or proxy stream to the backend for selective invalidation/demotion.
+ */
+export async function reportStreamFailure(
+  videoId: string,
+  source: "direct" | "all" = "direct"
+): Promise<void> {
+  const cleanId = (videoId || "").trim();
+  if (!cleanId) return;
+
+  // Evict or demote in local cache
+  const cached = streamCache.get(cleanId);
+  if (cached) {
+    if (source === "direct" && cached.stream.proxy_url && cached.stream.proxy_url !== cached.stream.url) {
+      cached.stream.url = cached.stream.proxy_url;
+      cached.stream.status = "DEGRADED";
+    } else {
+      streamCache.delete(cleanId);
+    }
+  }
+
+  // Notify backend API non-blocking
+  if (typeof window !== "undefined") {
+    try {
+      fetch(`/api/stream/cache/flush?v=${encodeURIComponent(cleanId)}&source=${source}`, {
+        method: "POST",
+      }).catch(() => {});
+    } catch {}
+  }
+}
+
+/**
  * Resolves an audio stream for a given YouTube video ID.
  */
 export async function fetchPipedStream(
   videoId: string,
   audioElement?: HTMLAudioElement | null,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  forceFresh: boolean = false
 ): Promise<AudioStreamInfo> {
   const cleanId = videoId.trim();
   if (!cleanId) {
@@ -62,10 +94,14 @@ export async function fetchPipedStream(
     throw new DOMException("The user aborted a request.", "AbortError");
   }
 
-  // Check in-memory cache
-  const cached = streamCache.get(cleanId);
-  if (cached && Date.now() - cached.timestamp < STREAM_CACHE_TTL_MS && !isStreamUrlExpired(cached.stream.url)) {
-    return cached.stream;
+  if (forceFresh) {
+    streamCache.delete(cleanId);
+  } else {
+    // Check in-memory cache
+    const cached = streamCache.get(cleanId);
+    if (cached && Date.now() - cached.timestamp < STREAM_CACHE_TTL_MS && !isStreamUrlExpired(cached.stream.url)) {
+      return cached.stream;
+    }
   }
 
   // 1. Primary path: query same-origin /api/stream if running in browser
@@ -74,10 +110,13 @@ export async function fetchPipedStream(
       if (signal?.aborted) {
         throw new DOMException("The user aborted a request.", "AbortError");
       }
-      const res = await fetch(`/api/stream?v=${encodeURIComponent(cleanId)}`, {
-        headers: { Accept: "application/json" },
-        signal,
-      });
+      const res = await fetch(
+        `/api/stream?v=${encodeURIComponent(cleanId)}${forceFresh ? "&force_fresh=true" : ""}`,
+        {
+          headers: { Accept: "application/json" },
+          signal,
+        }
+      );
 
       if (res.ok) {
         const data = await res.json();
@@ -89,13 +128,18 @@ export async function fetchPipedStream(
 
           const stream: AudioStreamInfo = {
             url: data.url,
+            direct_url: data.direct_url,
             proxy_url: data.proxy_url,
+            status: data.status,
+            sources: data.sources,
             format: data.format || "M4A",
             quality: data.quality || "128kbps",
             mimeType: data.mimeType || 'audio/mp4; codecs="mp4a.40.2"',
             codec: data.codec || "mp4a.40.2",
             bitrate: data.bitrate || 128000,
             duration: durationVal,
+            title: data.title,
+            cache_tier: data.cache_tier,
           };
 
           streamCache.set(cleanId, {

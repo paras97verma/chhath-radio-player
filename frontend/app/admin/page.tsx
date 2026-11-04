@@ -23,6 +23,7 @@ import {
   adminCreateSongsBatch,
   adminUpdateSong,
   adminDeleteSong,
+  adminReorderSongs,
   adminFetchCatalogStatus,
   adminFetchStreamStatus,
   adminTriggerReconcile,
@@ -373,6 +374,16 @@ function StatusDisplayCard({
   const telemetry = data?.telemetry;
   const coord = data?.distributed_coordination;
 
+  const readyCount = useMemo(() => {
+    if (!catalog) return 0;
+    if (typeof catalog.stream_ready === "number" && catalog.stream_ready > 0) {
+      return catalog.stream_ready;
+    }
+    const missing = catalog.stream_missing ?? 0;
+    const failed = catalog.stream_failed ?? 0;
+    return Math.max(0, (catalog.eligible_songs ?? 0) - missing - failed);
+  }, [catalog]);
+
   const badgeStyles = {
     amber: "bg-amber-500/10 text-amber-300 border-amber-500/20",
     sky: "bg-sky-500/10 text-sky-300 border-sky-500/20",
@@ -454,7 +465,7 @@ function StatusDisplayCard({
           <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
             <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Prewarmed Inventory</div>
             <div className="text-lg font-extrabold text-sky-400">
-              {catalog ? `${catalog.stream_ready} / ${catalog.eligible_songs}` : "—"}
+              {catalog ? `${readyCount} / ${catalog.eligible_songs}` : "—"}
             </div>
             <div className="text-xs text-gray-300">
               <span className="text-sky-300 font-bold">{catalog?.stream_readiness_percent ?? 0}%</span> Warm Streams
@@ -488,7 +499,7 @@ function StatusDisplayCard({
               {catalog ? `${catalog.stream_readiness_percent}%` : "—"}
             </div>
             <div className="text-xs text-gray-300">
-              <span className="text-emerald-400 font-bold">{catalog?.stream_ready ?? 0}</span> / {catalog?.eligible_songs ?? 0} Ready
+              <span className="text-emerald-400 font-bold">{readyCount}</span> / {catalog?.eligible_songs ?? 0} Ready
             </div>
             <div className="text-[10px] text-gray-500">
               Expiring (&lt;10m): <span className="text-amber-400">{catalog?.stream_expiring ?? 0}</span> | Missing: <span className="text-red-400">{catalog?.stream_missing ?? 0}</span>
@@ -576,13 +587,18 @@ function CatalogStatusSection({ token }: { token: string }) {
 
   const [reconciling, setReconciling] = useState(false);
   const [reconcileMessage, setReconcileMessage] = useState<string | null>(null);
+  const [flushing, setFlushing] = useState(false);
 
-  const isFetchingRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   const fetchBothStatuses = useCallback(async (isManual = false) => {
-    // Prevent overlapping requests from piling up in the browser connection queue
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
+    // Cleanly cancel any pending in-flight status request to prevent queue saturation
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     if (isManual) {
       setSongsLoading(true);
       setStreamLoading(true);
@@ -591,7 +607,7 @@ function CatalogStatusSection({ token }: { token: string }) {
     try {
       // Both status cards share the same unified telemetry.
       // A single request satisfies both sections, cutting network traffic and preflight latency in half.
-      const data = await adminFetchCatalogStatus(token);
+      const data = await adminFetchCatalogStatus(token, controller.signal);
       const latency = Math.round(performance.now() - start);
       setSongsLatency(latency);
       setStreamLatency(latency);
@@ -600,13 +616,15 @@ function CatalogStatusSection({ token }: { token: string }) {
       setSongsError(null);
       setStreamError(null);
     } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") {
+        return; // Ignore cleanly aborted requests
+      }
       const msg = err instanceof Error ? err.message : "Failed to fetch status";
       setSongsError(msg);
       setStreamError(msg);
     } finally {
       setSongsLoading(false);
       setStreamLoading(false);
-      isFetchingRef.current = false;
     }
   }, [token]);
 
@@ -618,16 +636,37 @@ function CatalogStatusSection({ token }: { token: string }) {
     await fetchBothStatuses(true);
   }, [fetchBothStatuses]);
 
+  // Gentle, self-scheduling background poller (10s idle interval)
   useEffect(() => {
-    fetchBothStatuses(false);
-    const interval = setInterval(() => {
-      // Auto-poll in background only if document is visible and not already fetching
-      if (typeof document !== "undefined" && !document.hidden) {
-        fetchBothStatuses(false);
+    let isMounted = true;
+    let timerId: NodeJS.Timeout | null = null;
+
+    const poll = async () => {
+      if (!isMounted) return;
+      if (typeof document !== "undefined" && !document.hidden && !reconciling && !flushing) {
+        await fetchBothStatuses(false);
       }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [fetchBothStatuses]);
+      if (isMounted) {
+        timerId = setTimeout(poll, 10000);
+      }
+    };
+
+    poll();
+
+    return () => {
+      isMounted = false;
+      if (timerId) clearTimeout(timerId);
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, [fetchBothStatuses, reconciling, flushing]);
+
+  // Sequential active polling helper for background operations (never piles up requests)
+  const runActivePolling = async (passes: number, delayMs: number) => {
+    for (let i = 0; i < passes; i++) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      await fetchBothStatuses(false);
+    }
+  };
 
   const handleTriggerReconcile = async () => {
     setReconciling(true);
@@ -636,65 +675,12 @@ function CatalogStatusSection({ token }: { token: string }) {
       const res = await adminTriggerReconcile(token);
       setReconcileMessage(res.message || "Reconciliation pass dispatched in background!");
       await fetchBothStatuses(false);
-
-      // Poll periodically to catch real-time completion
-      let pollCount = 0;
-      const pollInterval = setInterval(async () => {
-        pollCount += 1;
-        await fetchBothStatuses(false);
-        if (pollCount >= 6) {
-          clearInterval(pollInterval);
-          setReconciling(false);
-          setReconcileMessage("Reconciliation complete: metadata synchronized and audio streams verified!");
-        }
-      }, 2000);
+      await runActivePolling(4, 2500);
+      setReconcileMessage("Reconciliation complete: metadata synchronized and audio streams verified!");
     } catch (err: unknown) {
       setReconcileMessage(err instanceof Error ? err.message : "Failed to trigger reconciliation");
-      setReconciling(false);
-    }
-  };
-
-  const [flushing, setFlushing] = useState(false);
-  const [showSelectiveModal, setShowSelectiveModal] = useState(false);
-  const [selectiveInput, setSelectiveInput] = useState("");
-  const [selectiveFlushing, setSelectiveFlushing] = useState(false);
-
-  // Helper to extract clean video IDs from comma, newline, or whitespace separated text
-  const detectedIds = useMemo(() => {
-    if (!selectiveInput) return [];
-    const parts = selectiveInput.split(/[\s,\n\r;]+/);
-    const seen = new Set<string>();
-    const ids: string[] = [];
-    for (const part of parts) {
-      const trimmed = part.trim();
-      if (!trimmed) continue;
-      const match = trimmed.match(/(?:v=|\/|be\/|embed\/)([0-9A-Za-z_-]{11})/);
-      const vid = match ? match[1] : trimmed;
-      if (vid && vid.length >= 5 && !seen.has(vid)) {
-        seen.add(vid);
-        ids.push(vid);
-      }
-    }
-    return ids;
-  }, [selectiveInput]);
-
-  const handleSelectiveFlush = async () => {
-    if (detectedIds.length === 0) {
-      alert("Please enter at least one valid YouTube Video ID or URL.");
-      return;
-    }
-    setSelectiveFlushing(true);
-    setReconcileMessage(`Selectively flushing ${detectedIds.length} track(s) and re-warming in background...`);
-    try {
-      const res = await adminFlushAndRefreshCache(token, detectedIds);
-      setReconcileMessage(res.message || `Flushed ${res.flushed_count} stream(s) for ${detectedIds.length} track(s)!`);
-      setSelectiveInput("");
-      setShowSelectiveModal(false);
-      await fetchBothStatuses(false);
-    } catch (err: unknown) {
-      setReconcileMessage(err instanceof Error ? err.message : "Failed to selectively flush tracks");
     } finally {
-      setSelectiveFlushing(false);
+      setReconciling(false);
     }
   };
 
@@ -708,19 +694,11 @@ function CatalogStatusSection({ token }: { token: string }) {
       const res = await adminFlushAndRefreshCache(token);
       setReconcileMessage(res.message || "Cache flushed, telemetry reset, and re-warming pass launched!");
       await fetchBothStatuses(false);
-
-      let pollCount = 0;
-      const pollInterval = setInterval(async () => {
-        pollCount += 1;
-        await fetchBothStatuses(false);
-        if (pollCount >= 8) {
-          clearInterval(pollInterval);
-          setFlushing(false);
-          setReconcileMessage("Audio stream cache refreshed: all streams validated and ready!");
-        }
-      }, 2000);
+      await runActivePolling(5, 2500);
+      setReconcileMessage("Audio stream cache refreshed: all streams validated and ready!");
     } catch (err: unknown) {
       setReconcileMessage(err instanceof Error ? err.message : "Failed to flush and refresh cache");
+    } finally {
       setFlushing(false);
     }
   };
@@ -764,7 +742,7 @@ function CatalogStatusSection({ token }: { token: string }) {
 
           <button
             onClick={handleFlushAndRefreshCache}
-            disabled={reconciling || flushing || selectiveFlushing}
+            disabled={reconciling || flushing}
             className="px-3 py-1.5 text-xs font-semibold bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
             title="Purge all cached audio streams from Redis, reset hit/miss telemetry, and re-extract across the entire catalog"
           >
@@ -777,92 +755,8 @@ function CatalogStatusSection({ token }: { token: string }) {
               <span>🔥 Flush & Refresh All Streams</span>
             )}
           </button>
-
-          <button
-            onClick={() => setShowSelectiveModal(!showSelectiveModal)}
-            disabled={reconciling || flushing || selectiveFlushing}
-            className={`px-3 py-1.5 text-xs font-semibold border rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
-              showSelectiveModal
-                ? "bg-sky-500/30 text-sky-200 border-sky-400"
-                : "bg-sky-900/30 hover:bg-sky-800/40 text-sky-300 border-sky-700/50"
-            }`}
-            title="Selectively flush one or multiple tracks by video ID or URL without resetting telemetry metrics"
-          >
-            <span>🎯 Flush Specific Track(s)</span>
-          </button>
         </div>
       </div>
-
-      {/* Selective Flush Panel */}
-      {showSelectiveModal && (
-        <div className="bg-sky-950/30 border border-sky-600/40 rounded-xl p-4 space-y-3 shadow-lg">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold text-sky-300 flex items-center gap-1.5">
-              <span>🎯 Targeted Stream Cache Flush</span>
-              <span className="text-[10px] bg-sky-900/60 text-sky-300 px-2 py-0.5 rounded-full font-normal">
-                Telemetry Preserved
-              </span>
-            </h4>
-            <button
-              onClick={() => setShowSelectiveModal(false)}
-              className="text-gray-400 hover:text-gray-200 text-xs px-1.5 py-0.5 rounded transition-colors"
-            >
-              ✕ Close
-            </button>
-          </div>
-
-          <p className="text-[11px] text-gray-300 leading-relaxed">
-            Enter one or more YouTube Video IDs or URLs separated by <strong>comma</strong> or <strong>newline</strong>.
-            Only the specified tracks will be purged and re-warmed.
-            <span className="text-amber-400 font-medium ml-1">
-              (Overall Hit Ratio metrics will NOT be reset — metrics reset occurs ONLY when flushing the entire catalog).
-            </span>
-          </p>
-
-          <textarea
-            value={selectiveInput}
-            onChange={(e) => setSelectiveInput(e.target.value)}
-            placeholder="e.g. 3TIBnAw4nMU, ZceCoo2p9Tw&#10;or https://www.youtube.com/watch?v=GRC19OaLLUo&#10;GRC19OaLLUo"
-            rows={3}
-            className="w-full bg-gray-950/80 border border-gray-700 rounded-lg p-2.5 text-xs text-gray-100 placeholder-gray-500 font-mono focus:border-sky-400 focus:outline-none transition-colors"
-          />
-
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-1">
-            <div className="text-[11px] text-sky-300">
-              Detected: <strong>{detectedIds.length}</strong> valid track{detectedIds.length === 1 ? "" : "s"}
-              {detectedIds.length > 0 && (
-                <span className="text-gray-400 ml-1">
-                  ({detectedIds.slice(0, 3).join(", ")}{detectedIds.length > 3 ? "…" : ""})
-                </span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setSelectiveInput("")}
-                disabled={!selectiveInput || selectiveFlushing}
-                className="px-2.5 py-1 text-xs text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-40"
-              >
-                Clear
-              </button>
-              <button
-                onClick={handleSelectiveFlush}
-                disabled={detectedIds.length === 0 || selectiveFlushing}
-                className="px-3 py-1.5 text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white rounded-lg transition-all disabled:opacity-50 flex items-center gap-1.5 shadow"
-              >
-                {selectiveFlushing ? (
-                  <>
-                    <span className="w-2.5 h-2.5 rounded-full border-2 border-white border-t-transparent animate-spin"></span>
-                    <span>Flushing {detectedIds.length} Track{detectedIds.length === 1 ? "" : "s"}…</span>
-                  </>
-                ) : (
-                  <span>🔥 Flush {detectedIds.length} Track{detectedIds.length === 1 ? "" : "s"}</span>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {reconcileMessage && (
         <div className="text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-800/40 rounded-lg p-2.5 font-medium flex items-center justify-between">
@@ -926,11 +820,20 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
+  const loadSongsAbortRef = useRef<AbortController | null>(null);
+
   const loadSongs = useCallback(async () => {
+    if (loadSongsAbortRef.current) {
+      loadSongsAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    loadSongsAbortRef.current = controller;
+
     try {
-      const data = await adminFetchSongs(token);
+      const data = await adminFetchSongs(token, controller.signal);
       setSongs(data);
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") return;
       onLogout(); // Token expired or invalid
     } finally {
       setLoading(false);
@@ -939,6 +842,11 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
 
   useEffect(() => {
     loadSongs();
+    return () => {
+      if (loadSongsAbortRef.current) {
+        loadSongsAbortRef.current.abort();
+      }
+    };
   }, [loadSongs]);
 
   // Compute next sort order auto-increment value
@@ -1117,15 +1025,18 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
     setDraggedIndex(null);
     setDragOverIndex(null);
 
-    // Persist updated sort orders to backend
+    // Persist updated sort orders to backend in a single fast batch request
     try {
       const changed = updatedSongsWithOrder.filter((s) => {
         const original = songs.find((o) => o.id === s.id);
         return original && original.sort_order !== s.sort_order;
       });
-      await Promise.all(
-        changed.map((s) => adminUpdateSong(token, s.id, { sort_order: s.sort_order }))
-      );
+      if (changed.length > 0) {
+        await adminReorderSongs(
+          token,
+          changed.map((s) => ({ id: s.id, sort_order: s.sort_order }))
+        );
+      }
     } catch {
       alert("Failed to save new song order to server. Please refresh.");
     }

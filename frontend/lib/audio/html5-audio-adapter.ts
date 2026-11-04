@@ -10,8 +10,8 @@
  */
 
 import type { Song } from "../api";
-import type { AudioPlayerAdapter, PlayerState } from "./types";
-import { fetchPipedStream } from "../piped/piped-client";
+import type { AudioPlayerAdapter, PlayerState, StreamCandidateSource } from "./types";
+import { fetchPipedStream, reportStreamFailure } from "../piped/piped-client";
 import { extractDurationFromUrl } from "../piped/stream-selector";
 import { updateMediaSessionPositionState } from "../media-session";
 
@@ -32,8 +32,13 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   private isPriming = false;
   private currentVideoId: string | null = null;
   private currentProxyUrl: string | null = null;
-  private hasTriedProxyForCurrentSong = false;
   private hasEndedEmitted = false;
+
+  // Immediate recovery watchdog and multi-source failover hierarchy
+  private recoveryTimer: any = null;
+  private currentCandidates: Array<{ url: string; type: string }> = [];
+  private currentCandidateIndex = 0;
+  private hasTriedFreshExtraction = false;
 
   // Request sequencing and cooperative cancellation
   private activeRequestId = 0;
@@ -46,6 +51,13 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   constructor(primary?: HTMLAudioElement, secondary?: HTMLAudioElement) {
     if (primary) this.primaryAudio = primary;
     if (secondary) this.secondaryAudio = secondary;
+  }
+
+  private _clearRecoveryWatchdog(): void {
+    if (this.recoveryTimer) {
+      clearTimeout(this.recoveryTimer);
+      this.recoveryTimer = null;
+    }
   }
 
   /**
@@ -153,11 +165,19 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     };
     const onPlaying = () => {
       if (this.isPriming) return;
+      this._clearRecoveryWatchdog();
       this._emitState("PLAYING");
       const dur = this.getDuration() || audio.duration;
       if (Number.isFinite(dur) && dur > 0) {
         this._emitProgress(audio.currentTime, dur);
         updateMediaSessionPositionState(audio.currentTime, dur, audio.playbackRate || 1);
+      }
+    };
+    const onCanPlay = () => {
+      if (this.isPriming) return;
+      this._clearRecoveryWatchdog();
+      if (this.currentState === "BUFFERING" || this.currentState === "UNSTARTED") {
+        this._emitState("PLAYING");
       }
     };
     const onPause = () => {
@@ -175,6 +195,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     };
     const onEnded = () => {
       if (this.isPriming || this.hasEndedEmitted) return;
+      this._clearRecoveryWatchdog();
       this.hasEndedEmitted = true;
       this._emitState("ENDED");
     };
@@ -184,29 +205,17 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       // If user has not interacted yet, or error is MEDIA_ERR_ABORTED (code 1), ignore
       if (!this.hasUserInteracted || audio.error?.code === 1) return;
       console.warn(`[Html5AudioAdapter] Audio error encountered for ${this.currentVideoId}:`, audio.error);
+      this._clearRecoveryWatchdog();
 
-      // Automatic Invidious Proxy Fallback on playback error (e.g. 403 Forbidden on direct googlevideo URL)
-      if (this.currentProxyUrl && !this.hasTriedProxyForCurrentSong && this.primaryAudio) {
-        this.hasTriedProxyForCurrentSong = true;
-        const proxyTarget = this.currentProxyUrl;
-        console.warn(`[Html5AudioAdapter] Direct stream playback failed (403/media error). Switching to proxy fallback:`, proxyTarget);
-
-        // Invalidate the broken direct stream in backend cache so subsequent plays get a fresh working stream
-        if (this.currentVideoId) {
-          fetch(`/api/stream/cache/flush?v=${encodeURIComponent(this.currentVideoId)}`, { method: "POST" }).catch(() => {});
+      // Trigger immediate failover to next candidate source (Constraint 3)
+      if (this.currentCandidates && this.currentCandidateIndex < this.currentCandidates.length - 1) {
+        const curCandidate = this.currentCandidates[this.currentCandidateIndex];
+        if (curCandidate?.type.includes("direct") && this.currentVideoId) {
+          reportStreamFailure(this.currentVideoId, "direct");
         }
-
-        try {
-          this.primaryAudio.src = proxyTarget;
-          this.primaryAudio.load();
-          await this.primaryAudio.play();
-          if (!this.isDestroyed) {
-            this._emitState("PLAYING");
-            return;
-          }
-        } catch (proxyPlayErr) {
-          console.warn("[Html5AudioAdapter] Proxy fallback playback failed:", proxyPlayErr);
-        }
+        const curPos = audio.currentTime || 0;
+        await this._attemptPlayCandidate(this.currentVideoId!, this.activeRequestId, this.currentCandidateIndex + 1, curPos);
+        return;
       }
 
       this._emitState("ERROR");
@@ -237,6 +246,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
     audio.addEventListener("play", onPlay);
     audio.addEventListener("playing", onPlaying);
+    audio.addEventListener("canplay", onCanPlay);
+    audio.addEventListener("loadeddata", onCanPlay);
     audio.addEventListener("pause", onPause);
     audio.addEventListener("waiting", onWaiting);
     audio.addEventListener("ended", onEnded);
@@ -249,6 +260,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     this.cleanupFns.push(() => {
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("playing", onPlaying);
+      audio.removeEventListener("canplay", onCanPlay);
+      audio.removeEventListener("loadeddata", onCanPlay);
       audio.removeEventListener("pause", onPause);
       audio.removeEventListener("waiting", onWaiting);
       audio.removeEventListener("ended", onEnded);
@@ -276,6 +289,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
     // Reset completion emission flag for newly requested song
     this.hasEndedEmitted = false;
+    this._clearRecoveryWatchdog();
 
     // 1. Cancel any in-flight background preload so it does not contend with live playback
     if (this.preloadAbortController) {
@@ -356,44 +370,41 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       this.hasUserInteracted = true;
       this.currentVideoId = videoId;
       this.currentProxyUrl = stream.proxy_url || null;
-      this.hasTriedProxyForCurrentSong = false;
+      this.hasTriedFreshExtraction = false;
       this.streamDuration = stream.duration ?? extractDurationFromUrl(stream.url) ?? null;
-      this.primaryAudio.src = stream.url;
-      this.primaryAudio.preload = "auto";
-      this._applyVolume(this.primaryAudio);
 
-      if (this.streamDuration && this.streamDuration > 0) {
-        updateMediaSessionPositionState(0, this.streamDuration, 1);
+      // Build candidate sources in priority order (Constraint 3)
+      const candidates: Array<{ url: string; type: string }> = [];
+
+      // If backend already marked stream as DEGRADED (direct is IP-bound or confirmed 403),
+      // place verified proxy FIRST so user experiences 0 delay!
+      if (stream.status === "DEGRADED" && stream.proxy_url) {
+        candidates.push({ url: stream.proxy_url, type: "proxy" });
+        if (stream.direct_url && stream.direct_url !== stream.proxy_url) {
+          candidates.push({ url: stream.direct_url, type: "direct" });
+        }
+      } else {
+        if (stream.url) {
+          candidates.push({ url: stream.url, type: stream.status === "DEGRADED" ? "proxy" : "direct" });
+        }
+        if (stream.proxy_url && stream.proxy_url !== stream.url) {
+          candidates.push({ url: stream.proxy_url, type: "proxy" });
+        }
       }
 
-      try {
-        await this.primaryAudio.play();
-        if (this.activeRequestId === requestId && !this.isDestroyed) {
-          this._emitState("PLAYING");
-        }
-      } catch (playErr: any) {
-        if (playErr?.name === "NotAllowedError") {
-          console.warn("[Html5AudioAdapter] Autoplay restricted by browser, waiting for user gesture:", playErr);
-          this._emitState("PAUSED");
-          return;
-        }
-        // Direct stream failed to play (e.g. 403 or decode error) — attempt Invidious proxy fallback
-        if (stream.proxy_url && this.primaryAudio && !controller.signal.aborted) {
-          try {
-            console.warn(`[Html5AudioAdapter] Direct stream playback failed for ${videoId}. Attempting proxy fallback:`, stream.proxy_url);
-            this.primaryAudio.src = stream.proxy_url;
-            this.primaryAudio.load();
-            await this.primaryAudio.play();
-            if (this.activeRequestId === requestId && !this.isDestroyed) {
-              this._emitState("PLAYING");
-              return;
-            }
-          } catch (proxyErr) {
-            console.warn("[Html5AudioAdapter] Proxy fallback also failed:", proxyErr);
+      // Add extra candidates from sources if available
+      if (Array.isArray(stream.sources)) {
+        for (const s of stream.sources) {
+          if (s.url && !candidates.some((c) => c.url === s.url)) {
+            candidates.push({ url: s.url, type: s.type || "fallback" });
           }
         }
-        throw playErr;
       }
+
+      this.currentCandidates = candidates.length > 0 ? candidates : [{ url: stream.url, type: "direct" }];
+      this.currentCandidateIndex = 0;
+
+      await this._attemptPlayCandidate(videoId, requestId, 0, 0);
     } catch (err: any) {
       // If request was aborted by user switching tracks or superseded by a newer request, suppress error
       if (err?.name === "AbortError" || this.activeRequestId !== requestId || this.isDestroyed) {
@@ -402,6 +413,97 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       console.error(`[Html5AudioAdapter] Failed to play video ${videoId}:`, err);
       this._emitState("ERROR");
       throw err;
+    }
+  }
+
+  private async _attemptPlayCandidate(
+    videoId: string,
+    requestId: number,
+    candidateIdx: number,
+    resumePos: number = 0
+  ): Promise<void> {
+    if (this.activeRequestId !== requestId || this.isDestroyed) return;
+    this._clearRecoveryWatchdog();
+
+    if (!this.primaryAudio) return;
+
+    if (candidateIdx >= this.currentCandidates.length) {
+      // Last resort: Forced fresh extraction through another instance (Constraint 3)
+      if (!this.hasTriedFreshExtraction) {
+        this.hasTriedFreshExtraction = true;
+        console.warn(`[Html5AudioAdapter] All cached sources failed for ${videoId}. Attempting forced upstream fresh extraction...`);
+        try {
+          const fresh = await fetchPipedStream(videoId, this.primaryAudio, undefined, true);
+          if (this.activeRequestId === requestId && fresh?.url) {
+            this.currentCandidates = [
+              { url: fresh.url, type: fresh.status === "DEGRADED" ? "fresh_proxy" : "fresh_direct" },
+            ];
+            if (fresh.proxy_url && fresh.proxy_url !== fresh.url) {
+              this.currentCandidates.push({ url: fresh.proxy_url, type: "fresh_proxy" });
+            }
+            return this._attemptPlayCandidate(videoId, requestId, 0, resumePos);
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      this._clearRecoveryWatchdog();
+      this._emitState("ERROR");
+      return;
+    }
+
+    this.currentCandidateIndex = candidateIdx;
+    const candidate = this.currentCandidates[candidateIdx];
+    this.primaryAudio.src = candidate.url;
+    this.primaryAudio.preload = "auto";
+    this._applyVolume(this.primaryAudio);
+
+    if (resumePos > 0) {
+      try {
+        this.primaryAudio.currentTime = resumePos;
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (this.streamDuration && this.streamDuration > 0) {
+      updateMediaSessionPositionState(resumePos, this.streamDuration, 1);
+    }
+
+    // Schedule Immediate Recovery Watchdog (Constraint 3)
+    // 1.8s for direct streams (to catch 403 / stalls before browser 15s retry loop), 2.8s for proxy streams
+    const deadlineMs = candidate.type.includes("direct") ? 1800 : 2800;
+    this.recoveryTimer = setTimeout(() => {
+      if (this.activeRequestId !== requestId || this.isDestroyed) return;
+      if (this.primaryAudio && !this.primaryAudio.paused && (this.primaryAudio.currentTime > 0 || this.currentState === "PLAYING")) {
+        return; // successfully playing
+      }
+      console.warn(
+        `[Html5AudioAdapter] Source ${candidate.type} exceeded ${deadlineMs}ms readiness deadline for ${videoId}. Auto-recovering to next candidate...`
+      );
+      if (candidate.type.includes("direct")) {
+        reportStreamFailure(videoId, "direct");
+      }
+      const curPos = this.primaryAudio?.currentTime || resumePos;
+      this._attemptPlayCandidate(videoId, requestId, candidateIdx + 1, curPos);
+    }, deadlineMs);
+
+    try {
+      await this.primaryAudio.play();
+      if (this.activeRequestId === requestId && !this.isDestroyed) {
+        this._emitState("PLAYING");
+      }
+    } catch (playErr: any) {
+      this._clearRecoveryWatchdog();
+      if (playErr?.name === "NotAllowedError") {
+        console.warn("[Html5AudioAdapter] Autoplay restricted by browser, waiting for user gesture:", playErr);
+        this._emitState("PAUSED");
+        return;
+      }
+      if (candidate.type.includes("direct")) {
+        reportStreamFailure(videoId, "direct");
+      }
+      await this._attemptPlayCandidate(videoId, requestId, candidateIdx + 1, resumePos);
     }
   }
 
@@ -542,6 +644,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
   destroy(): void {
     this.isDestroyed = true;
+    this._clearRecoveryWatchdog();
     if (this.activeAbortController) {
       try {
         this.activeAbortController.abort("Adapter destroyed");

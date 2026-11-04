@@ -3,7 +3,10 @@ import { extractDurationFromUrl } from "@/lib/piped/stream-selector";
 
 interface CachedStreamResult {
   url: string;
+  direct_url?: string;
   proxy_url?: string;
+  status?: string;
+  sources?: any[];
   format: string;
   mimeType: string;
   bitrate: number;
@@ -40,21 +43,26 @@ function isUrlExpired(url: string): boolean {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const videoId = searchParams.get("v") || searchParams.get("videoId");
+  const forceFresh = searchParams.get("force_fresh") === "true";
 
   if (!videoId || videoId.length < 5) {
     return NextResponse.json({ error: "Missing or invalid video ID" }, { status: 400 });
   }
 
-  // 1. Check in-memory Next.js server cache
-  const cached = streamCache.get(videoId);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS && !isUrlExpired(cached.url)) {
-    return NextResponse.json({ ...cached, cached: true, cache_tier: "NEXT_MEM" });
+  // 1. Check in-memory Next.js server cache (bypassed if forceFresh is requested)
+  if (!forceFresh) {
+    const cached = streamCache.get(videoId);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS && !isUrlExpired(cached.url)) {
+      return NextResponse.json({ ...cached, cached: true, cache_tier: "NEXT_MEM" });
+    }
+  } else {
+    streamCache.delete(videoId);
   }
 
   // 2. Primary: query FastAPI Backend with Redis high-concurrency stream caching
   try {
     const backendRes = await fetch(
-      `${BACKEND_URL}/api/stream?v=${encodeURIComponent(videoId)}&priority=high`,
+      `${BACKEND_URL}/api/stream?v=${encodeURIComponent(videoId)}&priority=high${forceFresh ? "&force_fresh=true" : ""}`,
       {
         headers: { Accept: "application/json" },
         signal: AbortSignal.timeout(12000),
@@ -71,7 +79,10 @@ export async function GET(request: NextRequest) {
 
         const result: CachedStreamResult = {
           url: data.url,
+          direct_url: data.direct_url,
           proxy_url: data.proxy_url,
+          status: data.status,
+          sources: data.sources,
           format: data.format || "M4A",
           mimeType: data.mimeType || 'audio/mp4; codecs="mp4a.40.2"',
           bitrate: data.bitrate || 128000,

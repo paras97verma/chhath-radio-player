@@ -34,6 +34,43 @@ class BatchSongsCreate(BaseModel):
     urls: str | list[str]
 
 
+class SongReorderItem(BaseModel):
+    id: uuid.UUID
+    sort_order: int
+
+
+class SongsReorderRequest(BaseModel):
+    orders: list[SongReorderItem]
+
+
+@router.post("/reorder", status_code=status.HTTP_200_OK)
+def reorder_songs(
+    body: SongsReorderRequest,
+    db: Session = Depends(get_db),
+    _admin: Admin = Depends(get_current_admin),
+) -> dict:
+    """
+    POST /api/admin/songs/reorder
+    Batch updates sort_order for multiple songs in a single fast transaction.
+    Invalidates queue cache once upon commit, eliminating multiple concurrent PATCH roundtrips.
+    """
+    from app.models.song import Song
+    from app.services.song_service import _cache_delete, QUEUE_CACHE_KEY
+
+    try:
+        for item in body.orders:
+            song = db.get(Song, item.id)
+            if song:
+                song.sort_order = item.sort_order
+        db.commit()
+        _cache_delete(QUEUE_CACHE_KEY)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to reorder: {exc}")
+
+    return {"status": "reordered", "count": len(body.orders)}
+
+
 @router.post("", response_model=SongPublic, status_code=status.HTTP_201_CREATED)
 def create_song(
     body: SongCreate,

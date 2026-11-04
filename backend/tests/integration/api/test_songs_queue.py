@@ -140,3 +140,23 @@ class TestAdminSongCRUD:
         # Verify it's gone from the public API
         songs_response = client.get("/api/songs")
         assert songs_response.json() == []
+
+    def test_reorder_songs_batch_updates_sort_orders(self, client: TestClient, auth_headers: dict, db: Session):
+        """POST /api/admin/songs/reorder updates sort orders in batch."""
+        s1 = make_song(db, "Song 1", sort_order=1)
+        s2 = make_song(db, "Song 2", sort_order=2)
+
+        response = client.post(
+            "/api/admin/songs/reorder",
+            json={"orders": [{"id": str(s1.id), "sort_order": 10}, {"id": str(s2.id), "sort_order": 20}]},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "reordered"
+        assert response.json()["count"] == 2
+
+        # Verify DB changes
+        db.refresh(s1)
+        db.refresh(s2)
+        assert s1.sort_order == 10
+        assert s2.sort_order == 20

@@ -10,7 +10,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from app.auth.security import decode_access_token
-from app.db.database import get_db
+from app.db.database import get_db, SessionLocal
 from app.models.admin import Admin
 
 # auto_error=False so we can return a proper 401 (not 403) when no token is provided

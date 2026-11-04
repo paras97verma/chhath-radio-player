@@ -210,10 +210,10 @@ export async function adminLogin(
   return res.json();
 }
 
-export async function adminFetchSongs(token: string): Promise<Song[]> {
+export async function adminFetchSongs(token: string, signal?: AbortSignal): Promise<Song[]> {
   const res = await fetch(`${API_BASE}/api/admin/songs`, {
     headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
+    signal,
   });
   if (!res.ok) throw new Error("Unauthorized");
   return res.json();
@@ -289,8 +289,11 @@ export interface CatalogReadinessStatus {
     metadata_ready: number;
     metadata_incomplete: number;
     stream_ready: number;
+    stream_direct_ready?: number;
+    stream_degraded?: number;
     stream_expiring: number;
     stream_missing: number;
+    stream_failed?: number;
     metadata_completeness_percent: number;
     stream_readiness_percent: number;
     is_reconciling?: boolean;
@@ -314,19 +317,35 @@ export interface CatalogReadinessStatus {
   };
 }
 
-export async function adminFetchCatalogStatus(token: string): Promise<CatalogReadinessStatus> {
+export async function adminReorderSongs(
+  token: string,
+  orders: { id: string; sort_order: number }[]
+): Promise<{ status: string; count: number }> {
+  const res = await fetch(`${API_BASE}/api/admin/songs/reorder`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ orders }),
+  });
+  if (!res.ok) throw new Error("Failed to reorder songs");
+  return res.json();
+}
+
+export async function adminFetchCatalogStatus(token: string, signal?: AbortSignal): Promise<CatalogReadinessStatus> {
   const res = await fetch(`${API_BASE}/api/admin/songs/status`, {
     headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
+    signal,
   });
   if (!res.ok) throw new Error("Failed to fetch catalog status");
   return res.json();
 }
 
-export async function adminFetchStreamStatus(token: string): Promise<CatalogReadinessStatus> {
+export async function adminFetchStreamStatus(token: string, signal?: AbortSignal): Promise<CatalogReadinessStatus> {
   const res = await fetch(`${API_BASE}/api/stream/catalog/status`, {
     headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
+    signal,
   });
   if (!res.ok) throw new Error("Failed to fetch stream catalog status");
   return res.json();
