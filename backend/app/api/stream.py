@@ -120,12 +120,17 @@ async def flush_stream_cache(
 
     deleted_count = StreamCacheService.flush_stream_cache(video_id=v)
 
-    # Re-warm queue in background task
-    async def rewarm():
-        await asyncio.sleep(1.0)
-        await CatalogReconciliationService.run_prewarmer_cycle()
-
-    background_tasks.add_task(rewarm)
+    # Re-warm in background task
+    if v:
+        async def rewarm_specific():
+            await asyncio.sleep(0.5)
+            await CatalogReconciliationService.warm_specific_songs([v])
+        background_tasks.add_task(rewarm_specific)
+    else:
+        async def rewarm():
+            await asyncio.sleep(1.0)
+            await CatalogReconciliationService.run_prewarmer_cycle()
+        background_tasks.add_task(rewarm)
 
     return {
         "status": "ok",

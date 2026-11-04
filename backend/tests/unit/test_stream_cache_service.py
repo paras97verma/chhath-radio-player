@@ -264,6 +264,26 @@ class TestStreamCacheService:
         count = StreamCacheService.flush_stream_cache()
         assert count == 2
         mock_redis.delete.assert_any_call("chhath:stream:vid1", "chhath:stream:vid2")
+        from app.services.stream_cache_service import STREAM_METRICS_KEY
+        mock_redis.delete.assert_any_call(STREAM_METRICS_KEY)
+
+    @patch("app.services.stream_cache_service._get_redis")
+    def test_flush_stream_cache_selective_preserves_metrics(self, mock_get_redis):
+        mock_redis = MagicMock()
+        mock_get_redis.return_value = mock_redis
+        mock_redis.delete.return_value = 1
+
+        # Test comma and newline separated inputs
+        count = StreamCacheService.flush_stream_cache("vid12345, vid67890\nvidABCDE")
+        assert count == 3
+        mock_redis.delete.assert_any_call(f"{STREAM_CACHE_PREFIX}vid12345")
+        mock_redis.delete.assert_any_call(f"{STREAM_CACHE_PREFIX}vid67890")
+        mock_redis.delete.assert_any_call(f"{STREAM_CACHE_PREFIX}vidABCDE")
+
+        from app.services.stream_cache_service import STREAM_METRICS_KEY
+        # Verify STREAM_METRICS_KEY was NOT deleted during selective flush
+        for call_item in mock_redis.delete.call_args_list:
+            assert STREAM_METRICS_KEY not in call_item[0]
 
     @patch("app.services.stream_cache_service.urllib.request.urlopen")
     @patch("app.services.stream_cache_service._get_redis")

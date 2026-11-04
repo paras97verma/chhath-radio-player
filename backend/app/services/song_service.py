@@ -119,7 +119,26 @@ def fetch_video_metadata(video_id: str) -> Dict[str, Any]:
             "thumbnail_url": None,
         }
 
-    # 1. Attempt Invidious instances for full metadata including duration
+    # 0. Check if Redis already has prewarmed stream info (instant local resolution)
+    try:
+        client = _get_redis()
+        if client:
+            raw = client.get(f"chhath:stream:{clean_id}")
+            if raw:
+                s_dict = json.loads(raw)
+                s_dur = s_dict.get("duration")
+                s_title = s_dict.get("title")
+                if s_dur and s_title:
+                    return {
+                        "title": s_title,
+                        "artist": "Chhath Singer",
+                        "duration_seconds": int(s_dur),
+                        "thumbnail_url": f"https://i.ytimg.com/vi/{clean_id}/hqdefault.jpg",
+                    }
+    except Exception:
+        pass
+
+    # 1. Attempt Invidious instances for full metadata including duration (2.0s timeout)
     invidious_mirrors = [
         f"https://yt.chocolatemoo53.com/api/v1/videos/{clean_id}?fields=title,author,lengthSeconds,videoThumbnails",
         f"https://invidious.nerdvpn.de/api/v1/videos/{clean_id}?fields=title,author,lengthSeconds,videoThumbnails",
@@ -132,7 +151,7 @@ def fetch_video_metadata(video_id: str) -> Dict[str, Any]:
                 mirror,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ChhathRadio/1.0", "Accept": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=3.5) as resp:
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
                     title = (data.get("title") or "").strip()
@@ -165,12 +184,12 @@ def fetch_video_metadata(video_id: str) -> Dict[str, Any]:
         except Exception:
             continue
 
-    # 2. Fallback to YouTube oEmbed
+    # 2. Fallback to YouTube oEmbed (fast 2.0s timeout)
     url = f"https://www.youtube.com/watch?v={clean_id}"
     oembed = f"https://www.youtube.com/oembed?url={urllib.parse.quote(url, safe=':/=?&')}&format=json"
     try:
         req = urllib.request.Request(oembed, headers={"User-Agent": "ChhathRadio/1.0"})
-        with urllib.request.urlopen(req, timeout=4) as resp:
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         raw_title = data.get("title", "").strip() or f"Chhath Song ({clean_id})"
         raw_artist = data.get("author_name", "").strip() or "Chhath Singer"

@@ -23,7 +23,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 
 from app.core.redis import get_redis_client as _get_redis
 
@@ -253,7 +253,10 @@ class StreamCacheService:
             return cached
 
         # 2. Cache miss: Coordinate via single-flight lock
-        _record_metric("cache_misses")
+        # Only record user-selected playback as a cache miss to prevent background prewarming
+        # from artificially lowering the overall playback hit ratio.
+        if priority == "high":
+            _record_metric("cache_misses")
         redis_client = _get_redis()
         return cls._resolve_with_single_flight(clean_id, redis_client, priority=priority)
 
@@ -355,6 +358,31 @@ class StreamCacheService:
         return cls._extract_upstream(video_id)
 
     @staticmethod
+    def _resolve_final_proxy_url(proxy_url: str, timeout: float = 4.0) -> Optional[str]:
+        """
+        Follows Invidious 302 redirects ahead of time during background extraction.
+        Eliminates 2 round-trip redirects (3-5s delay) so the browser directly streams
+        from the final companion audio endpoint with 0 redirects and immediate TTFB.
+        """
+        if not proxy_url:
+            return None
+        try:
+            req = urllib.request.Request(
+                proxy_url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Range": "bytes=0-0"},
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                final_url = resp.geturl()
+                if final_url and ("videoplayback" in final_url or "companion" in final_url):
+                    return final_url
+        except urllib.error.HTTPError as exc:
+            if exc.code in (200, 206) and hasattr(exc, "url") and exc.url:
+                return exc.url
+        except Exception as e:
+            logger.warning("[StreamCache] Could not pre-resolve proxy redirect: %s", e)
+        return proxy_url
+
+    @staticmethod
     def _check_url_accessibility(url: str, timeout: float = 2.0) -> bool:
         """
         Lightweight probe to verify if direct stream URL is accessible or IP-blocked (403).
@@ -441,8 +469,9 @@ class StreamCacheService:
                                 # Verify if direct_url is accessible or IP-restricted (returns 403)
                                 is_direct_accessible = cls._check_url_accessibility(direct_url)
                                 if not is_direct_accessible and proxy_url:
-                                    logger.info("[StreamCache] Direct stream for %s returned 403 (IP-bound). Using proxy fallback as primary.", video_id)
-                                    stream_url = proxy_url
+                                    logger.info("[StreamCache] Direct stream for %s returned 403 (IP-bound). Pre-resolving proxy to eliminate client redirects.", video_id)
+                                    resolved_url = cls._resolve_final_proxy_url(proxy_url)
+                                    stream_url = resolved_url or proxy_url
                                 else:
                                     stream_url = direct_url
 
@@ -552,26 +581,66 @@ class StreamCacheService:
                 pass
 
     @classmethod
-    def flush_stream_cache(cls, video_id: Optional[str] = None) -> int:
+    def reset_metrics(cls) -> None:
+        """Resets all stream resolution telemetry and hit/miss counters in Redis."""
+        redis_client = _get_redis()
+        if redis_client:
+            try:
+                redis_client.delete(STREAM_METRICS_KEY)
+                logger.info("[StreamCache] Successfully reset telemetry metrics in Redis.")
+            except Exception as exc:
+                logger.warning("[StreamCache] Failed to reset metrics key in Redis: %s", exc)
+
+    @classmethod
+    def flush_stream_cache(cls, video_id: Optional[Union[str, List[str]]] = None) -> int:
         """
         Flushes stream cache entries from L1 in-memory and L2 Redis.
-        If video_id is provided, flushes only that track. Otherwise flushes all streams.
+        - If video_id(s) is provided (single ID, list, or comma/newline-separated string):
+          Flushes only those specific tracks, and PRESERVES overall telemetry hit/miss metrics.
+        - If video_id is None or empty:
+          Flushes ALL streams and RESETS telemetry metrics (hits, misses, extractions).
         Returns the count of Redis keys deleted.
         """
         global _l1_cache, _l1_cache_ts
         deleted_count = 0
         redis_client = _get_redis()
 
-        if video_id:
-            clean_id = video_id.strip()
-            _l1_cache.pop(clean_id, None)
-            _l1_cache_ts.pop(clean_id, None)
-            if redis_client:
-                try:
-                    deleted_count = redis_client.delete(f"{STREAM_CACHE_PREFIX}{clean_id}")
-                except Exception as exc:
-                    logger.warning("[StreamCache] Redis delete failed for %s: %s", clean_id, exc)
+        clean_ids: List[str] = []
+        if video_id is not None:
+            if isinstance(video_id, list):
+                raw_list = video_id
+            else:
+                raw_list = re.split(r"[\s,\n\r;]+", str(video_id))
+
+            seen = set()
+            for item in raw_list:
+                item = (item or "").strip()
+                if not item:
+                    continue
+                # Extract 11-char ID if full YouTube URL was pasted
+                match = re.search(r"(?:v=|\/|be\/|embed\/)([0-9A-Za-z_-]{11})", item)
+                vid = match.group(1) if match else item
+                vid = vid.strip()
+                if vid and len(vid) >= 5 and vid not in seen:
+                    seen.add(vid)
+                    clean_ids.append(vid)
+
+        if clean_ids:
+            # SELECTIVE FLUSH: Invalidate only specified tracks. DO NOT reset telemetry metrics!
+            for cid in clean_ids:
+                _l1_cache.pop(cid, None)
+                _l1_cache_ts.pop(cid, None)
+                if redis_client:
+                    try:
+                        deleted = redis_client.delete(f"{STREAM_CACHE_PREFIX}{cid}")
+                        redis_client.delete(f"{STREAM_LOCK_PREFIX}{cid}")
+                        deleted_count += deleted
+                    except Exception as exc:
+                        logger.warning("[StreamCache] Redis delete failed for %s: %s", cid, exc)
+            _record_metric("invalidations", len(clean_ids))
+            logger.info("[StreamCache] Selectively flushed %d stream(s) for %d requested track(s). Telemetry preserved.", deleted_count, len(clean_ids))
         else:
+            # ENTIRE CATALOG FLUSH: Flush all cached streams and reset telemetry metrics.
             _l1_cache.clear()
             _l1_cache_ts.clear()
             if redis_client:
@@ -591,11 +660,14 @@ class StreamCacheService:
                             redis_client.delete(*keys)
                         if cursor == 0:
                             break
+
+                    # Reset metrics counters ONLY on full on-demand cache flush
+                    redis_client.delete(STREAM_METRICS_KEY)
                 except Exception as exc:
                     logger.warning("[StreamCache] Redis flush all failed: %s", exc)
 
-        _record_metric("invalidations", deleted_count or 1)
-        logger.info("[StreamCache] Flushed %d stream keys (video_id=%s)", deleted_count, video_id or "ALL")
+            logger.info("[StreamCache] Flushed entire stream cache (%d streams) and reset telemetry metrics.", deleted_count)
+
         return deleted_count
 
     @classmethod
@@ -610,7 +682,8 @@ class StreamCacheService:
             "extractions_failed": 0,
             "expirations_detected": 0,
             "invalidations": 0,
-            "hit_ratio": 0.0,
+            "hit_ratio": 1.0,
+            "total_requests": 0,
         }
         if redis_client:
             try:
@@ -628,6 +701,8 @@ class StreamCacheService:
                 metrics["total_requests"] = total_requests
                 if total_requests > 0:
                     metrics["hit_ratio"] = round(total_hits / total_requests, 4)
+                else:
+                    metrics["hit_ratio"] = 1.0
             except Exception:
                 pass
         return metrics

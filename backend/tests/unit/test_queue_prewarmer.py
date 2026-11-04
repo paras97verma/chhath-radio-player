@@ -60,7 +60,7 @@ class TestQueuePrewarmer:
 
         result = QueuePrewarmer.warm_song("vid123", force=False)
         assert result is True
-        mock_get_stream.assert_called_once_with("vid123")
+        mock_get_stream.assert_called_once_with("vid123", priority="normal")
 
     @patch.object(QueuePrewarmer, "is_song_warm", return_value=False)
     @patch("app.services.queue_prewarmer.StreamCacheService.get_stream", return_value=None)
