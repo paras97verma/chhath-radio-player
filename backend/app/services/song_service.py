@@ -62,12 +62,14 @@ def _cache_set(key: str, value: list, ttl: int) -> None:
 
 
 def _cache_delete(key: str) -> None:
-    """Invalidate a cache key."""
+    """Invalidate a cache key and associated catalog status cache."""
     try:
         client = _get_redis()
         if client is None:
             return
         client.delete(key)
+        if key == QUEUE_CACHE_KEY:
+            client.delete("chhath:catalog:readiness_cache")
     except Exception as exc:
         logger.warning("Cache DELETE failed: %s", exc)
 

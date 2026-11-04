@@ -3,6 +3,7 @@ import { Html5AudioAdapter } from "@/lib/audio/html5-audio-adapter";
 
 vi.mock("@/lib/piped/piped-client", () => ({
   fetchPipedStream: vi.fn(),
+  reportStreamFailure: vi.fn(),
 }));
 
 describe("Html5AudioAdapter", () => {
@@ -264,6 +265,64 @@ describe("Html5AudioAdapter", () => {
 
     // Must immediately transition without waiting for network re-fetch
     expect(secondaryAudio.play).toHaveBeenCalled();
+    expect(states).toContain("PLAYING");
+  });
+
+  it("prioritizes proxy_url immediately when stream status is DEGRADED", async () => {
+    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchPipedStream).mockResolvedValue({
+      url: "https://googlevideo.com/videoplayback?ip=restricted",
+      direct_url: "https://googlevideo.com/videoplayback?ip=restricted",
+      proxy_url: "https://yt-comp1.chocolatemoo53.com/videoplayback",
+      status: "DEGRADED",
+      format: "M4A",
+      quality: "128kbps",
+      mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+      codec: "mp4a.40.2",
+      bitrate: 128000,
+    });
+    primaryAudio.play = vi.fn().mockResolvedValue(undefined);
+
+    await adapter.loadVideo("degraded_song");
+
+    // Must assign proxy_url as primary src to avoid 403 on client
+    expect(primaryAudio.src).toBe("https://yt-comp1.chocolatemoo53.com/videoplayback");
+  });
+
+  it("automatically fails over to proxy_url when direct stream errors", async () => {
+    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchPipedStream).mockResolvedValue({
+      url: "https://googlevideo.com/videoplayback?fail_direct",
+      proxy_url: "https://yt-comp1.chocolatemoo53.com/videoplayback_proxy",
+      status: "READY",
+      format: "M4A",
+      quality: "128kbps",
+      mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+      codec: "mp4a.40.2",
+      bitrate: 128000,
+    });
+    primaryAudio.play = vi.fn().mockResolvedValue(undefined);
+
+    await adapter.loadVideo("fail_direct_song");
+    expect(primaryAudio.src).toBe("https://googlevideo.com/videoplayback?fail_direct");
+
+    // Simulate direct stream error (e.g. 403 Forbidden)
+    Object.defineProperty(primaryAudio, "error", { value: { code: 4, message: "403 Forbidden" }, configurable: true });
+    primaryAudio.dispatchEvent(new Event("error"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Must switch to proxy_url automatically without requiring another user click
+    expect(primaryAudio.src).toBe("https://yt-comp1.chocolatemoo53.com/videoplayback_proxy");
+  });
+
+  it("transitions to PLAYING when canplay event fires", async () => {
+    const states: string[] = [];
+    adapter.onStateChange((s) => states.push(s));
+
+    primaryAudio.dispatchEvent(new Event("waiting"));
+    expect(states).toContain("BUFFERING");
+
+    primaryAudio.dispatchEvent(new Event("canplay"));
     expect(states).toContain("PLAYING");
   });
 });

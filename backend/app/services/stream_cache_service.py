@@ -238,31 +238,32 @@ class StreamCacheService:
         return None
 
     @classmethod
-    def get_stream(cls, video_id: str, priority: str = "high") -> Optional[Dict[str, Any]]:
+    def get_stream(cls, video_id: str, priority: str = "high", force_fresh: bool = False) -> Optional[Dict[str, Any]]:
         """
         Main entry point: Resolves a playable direct audio stream for a given video ID.
-        Checks fast cache first. On miss, coordinates via single-flight distributed lock.
+        Checks fast cache first. On miss (or force_fresh), coordinates via single-flight distributed lock.
         """
         clean_id = (video_id or "").strip()
         if not clean_id or len(clean_id) < 5:
             return None
 
-        # 1. Fast cache check
-        cached = cls.get_stream_fast(clean_id)
-        if cached:
-            return cached
+        # 1. Fast cache check (bypassed if force_fresh is requested)
+        if not force_fresh:
+            cached = cls.get_stream_fast(clean_id)
+            if cached:
+                return cached
 
-        # 2. Cache miss: Coordinate via single-flight lock
+        # 2. Cache miss or force_fresh: Coordinate via single-flight lock
         # Only record user-selected playback as a cache miss to prevent background prewarming
         # from artificially lowering the overall playback hit ratio.
         if priority == "high":
             _record_metric("cache_misses")
         redis_client = _get_redis()
-        return cls._resolve_with_single_flight(clean_id, redis_client, priority=priority)
+        return cls._resolve_with_single_flight(clean_id, redis_client, priority=priority, force_fresh=force_fresh)
 
     @classmethod
     def _resolve_with_single_flight(
-        cls, video_id: str, redis_client: Optional[Any], priority: str = "high"
+        cls, video_id: str, redis_client: Optional[Any], priority: str = "high", force_fresh: bool = False
     ) -> Optional[Dict[str, Any]]:
         """
         Coordinates concurrent requests for the same track using Redis distributed locking.
@@ -271,6 +272,16 @@ class StreamCacheService:
         lock_key = f"{STREAM_LOCK_PREFIX}{video_id}"
         lock_token = str(uuid.uuid4())
         cache_key = f"{STREAM_CACHE_PREFIX}{video_id}"
+
+        # If force_fresh, invalidate local L1 and L2 first
+        if force_fresh:
+            _l1_cache.pop(video_id, None)
+            _l1_cache_ts.pop(video_id, None)
+            if redis_client:
+                try:
+                    redis_client.delete(cache_key)
+                except Exception:
+                    pass
 
         # If Redis is available, attempt atomic lock acquisition
         if redis_client:
@@ -463,22 +474,79 @@ class StreamCacheService:
                                 direct_url = best["url"]
                                 expiry = extract_url_expiry(direct_url)
 
-                                # Immediate Invidious proxy fallback URL
-                                proxy_url = f"{origin}/latest_version?id={video_id}&itag=140&local=true" if origin else None
+                                # Immediate Invidious proxy fallback URL and pre-resolution
+                                raw_proxy_url = f"{origin}/latest_version?id={video_id}&itag=140&local=true" if origin else None
+                                resolved_proxy_url = cls._resolve_final_proxy_url(raw_proxy_url) if raw_proxy_url else None
+                                final_proxy_url = resolved_proxy_url or raw_proxy_url
 
-                                # Verify if direct_url is accessible or IP-restricted (returns 403)
-                                is_direct_accessible = cls._check_url_accessibility(direct_url)
-                                if not is_direct_accessible and proxy_url:
-                                    logger.info("[StreamCache] Direct stream for %s returned 403 (IP-bound). Pre-resolving proxy to eliminate client redirects.", video_id)
-                                    resolved_url = cls._resolve_final_proxy_url(proxy_url)
-                                    stream_url = resolved_url or proxy_url
+                                # Independent validation: check if direct_url has IP-binding lock or returns 403
+                                has_ip_restriction = bool(re.search(r"[?&]ip=", direct_url))
+                                is_direct_accessible = cls._check_url_accessibility(direct_url) if not has_ip_restriction else False
+
+                                # Build prioritized candidate sources (Constraint 3)
+                                sources = [
+                                    {
+                                        "url": direct_url,
+                                        "type": "direct",
+                                        "format": "M4A" if "mp4" in best.get("type", "") else "WEBM_OPUS",
+                                        "mimeType": best.get("type") or 'audio/mp4; codecs="mp4a.40.2"',
+                                        "bitrate": best.get("bitrate") or 128000,
+                                        "expires_at": expiry,
+                                    }
+                                ]
+
+                                # Priority 2: Alternative direct format
+                                alt_stream = next((f for f in adaptive if f.get("url") and f.get("url") != direct_url), None)
+                                if alt_stream:
+                                    sources.append({
+                                        "url": alt_stream["url"],
+                                        "type": "direct_alt",
+                                        "format": "WEBM_OPUS" if "webm" in alt_stream.get("type", "") else "M4A",
+                                        "mimeType": alt_stream.get("type") or "audio/webm",
+                                        "bitrate": alt_stream.get("bitrate") or 128000,
+                                        "expires_at": extract_url_expiry(alt_stream["url"]),
+                                    })
+
+                                # Priority 3: Pre-resolved companion proxy endpoint
+                                if final_proxy_url:
+                                    sources.append({
+                                        "url": final_proxy_url,
+                                        "type": "proxy",
+                                        "format": "M4A",
+                                        "mimeType": 'audio/mp4; codecs="mp4a.40.2"',
+                                        "bitrate": 128000,
+                                    })
+
+                                # Priority 4: Fallback Invidious raw endpoint
+                                if raw_proxy_url and raw_proxy_url != final_proxy_url:
+                                    sources.append({
+                                        "url": raw_proxy_url,
+                                        "type": "proxy_fallback",
+                                        "format": "M4A",
+                                        "mimeType": 'audio/mp4; codecs="mp4a.40.2"',
+                                        "bitrate": 128000,
+                                    })
+
+                                # Determine authoritative stream readiness status
+                                if is_direct_accessible and not has_ip_restriction:
+                                    stream_status = "READY"
+                                    stream_url = direct_url
+                                elif final_proxy_url:
+                                    stream_status = "DEGRADED"
+                                    # If direct is IP-bound or failed, serve the verified proxy as primary
+                                    # to prevent client from waiting 15s for browser native retry loop!
+                                    stream_url = final_proxy_url
                                 else:
+                                    stream_status = "FAILED"
                                     stream_url = direct_url
 
                                 cls._record_success(ext_name, latency_ms, redis_client)
                                 return {
                                     "url": stream_url,
-                                    "proxy_url": proxy_url,
+                                    "direct_url": direct_url,
+                                    "proxy_url": final_proxy_url,
+                                    "status": stream_status,
+                                    "sources": sources,
                                     "format": "M4A" if "mp4" in best.get("type", "") else "WEBM_OPUS",
                                     "mimeType": best.get("type") or 'audio/mp4; codecs="mp4a.40.2"',
                                     "bitrate": best.get("bitrate") or 128000,
@@ -504,10 +572,26 @@ class StreamCacheService:
                                 direct_url = best["url"]
                                 expiry = extract_url_expiry(direct_url)
 
+                                has_ip_restriction = bool(re.search(r"[?&]ip=", direct_url))
+                                is_direct_accessible = cls._check_url_accessibility(direct_url) if not has_ip_restriction else False
+                                stream_status = "READY" if is_direct_accessible and not has_ip_restriction else "DEGRADED"
+
+                                sources = [{
+                                    "url": direct_url,
+                                    "type": "direct",
+                                    "format": best.get("format", "M4A"),
+                                    "mimeType": best.get("mimeType") or 'audio/mp4; codecs="mp4a.40.2"',
+                                    "bitrate": best.get("bitrate") or 128000,
+                                    "expires_at": expiry,
+                                }]
+
                                 cls._record_success(ext_name, latency_ms, redis_client)
                                 return {
                                     "url": direct_url,
+                                    "direct_url": direct_url,
                                     "proxy_url": None,
+                                    "status": stream_status,
+                                    "sources": sources,
                                     "format": best.get("format", "M4A"),
                                     "mimeType": best.get("mimeType") or 'audio/mp4; codecs="mp4a.40.2"',
                                     "bitrate": best.get("bitrate") or 128000,
@@ -565,17 +649,52 @@ class StreamCacheService:
             pass
 
     @classmethod
-    def invalidate_stream(cls, video_id: str) -> None:
-        """Invalidates cache for a specific video ID across L1 and L2."""
+    def invalidate_stream(cls, video_id: str, source_type: str = "all") -> None:
+        """
+        Invalidates stream cache for video_id.
+        If source_type == 'direct' and a valid proxy_url exists in cache:
+        Downgrades cache entry to DEGRADED and promotes proxy_url to url,
+        avoiding cold eviction and allowing other clients to play instantly!
+        """
         clean_id = (video_id or "").strip()
         if not clean_id:
             return
+
+        redis_client = _get_redis()
+        cache_key = f"{STREAM_CACHE_PREFIX}{clean_id}"
+
+        if source_type == "direct":
+            # Check if we can do an in-place promotion of proxy_url
+            cached = _l1_cache.get(clean_id)
+            if not cached and redis_client:
+                try:
+                    raw = redis_client.get(cache_key)
+                    if raw:
+                        cached = json.loads(raw)
+                except Exception:
+                    pass
+
+            if cached and cached.get("proxy_url") and cached.get("proxy_url") != cached.get("url"):
+                logger.info("[StreamCache] Demoting direct stream for %s to DEGRADED and promoting proxy URL.", clean_id)
+                cached["url"] = cached["proxy_url"]
+                cached["status"] = "DEGRADED"
+                _l1_cache[clean_id] = cached
+                _l1_cache_ts[clean_id] = time.time()
+                if redis_client:
+                    try:
+                        ttl = redis_client.ttl(cache_key)
+                        if ttl and ttl > 60:
+                            redis_client.setex(cache_key, ttl, json.dumps(cached))
+                    except Exception:
+                        pass
+                _record_metric("degraded_promotions")
+                return
+
         _l1_cache.pop(clean_id, None)
         _l1_cache_ts.pop(clean_id, None)
-        redis_client = _get_redis()
         if redis_client:
             try:
-                redis_client.delete(f"{STREAM_CACHE_PREFIX}{clean_id}")
+                redis_client.delete(cache_key)
                 _record_metric("invalidations")
             except Exception:
                 pass

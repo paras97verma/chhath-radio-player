@@ -17,6 +17,7 @@ import { generateUUID as uuidv4 } from "./uuid";
 import type { Song } from "./api";
 import type { AudioPlayerAdapter, PlayerState } from "./audio/types";
 import { onPlaybackStateChange } from "./wake-lock";
+import { fetchPipedStream } from "./piped/piped-client";
 import {
   updateMediaSessionMetadata,
   registerMediaSessionHandlers,
@@ -286,6 +287,45 @@ interface RadioState {
   getTotalOfferings: () => number;
 }
 
+let catalogPrewarmTimer: any = null;
+const prewarmedVideoIds = new Set<string>();
+
+export function triggerCatalogPrewarm(songs: Song[], getState: () => RadioState): void {
+  if (typeof window === "undefined" || !songs || songs.length === 0) return;
+  if (catalogPrewarmTimer) clearTimeout(catalogPrewarmTimer);
+
+  const songsToPrewarm = [...songs];
+  let idx = 0;
+
+  const runNext = async () => {
+    if (idx >= songsToPrewarm.length) return;
+
+    const state = getState();
+    // Do NOT compete for network bandwidth if active player is currently buffering
+    if (state.playState === "BUFFERING") {
+      catalogPrewarmTimer = setTimeout(runNext, 500);
+      return;
+    }
+
+    const song = songsToPrewarm[idx++];
+    const vid = song?.youtube_video_id;
+    if (vid && !prewarmedVideoIds.has(vid)) {
+      prewarmedVideoIds.add(vid);
+      try {
+        await fetchPipedStream(vid);
+      } catch {
+        /* ignore background prewarm misses */
+      }
+    }
+
+    // Pace requests gently by 200ms so network is never flooded
+    catalogPrewarmTimer = setTimeout(runNext, 200);
+  };
+
+  // Start 1.5s after load to give page rendering 100% bandwidth
+  catalogPrewarmTimer = setTimeout(runNext, 1500);
+}
+
 export const useRadioStore = create<RadioState>((set, get) => ({
   allSongs: [],
   queue: [],
@@ -464,6 +504,8 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       isReady: true,
       error: null,
     });
+
+    triggerCatalogPrewarm(songs, get);
   },
 
   setVolume: (volume: number) => {

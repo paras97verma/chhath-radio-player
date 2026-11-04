@@ -316,3 +316,42 @@ class TestStreamCacheService:
         result = StreamCacheService._extract_upstream("vidNoAudioStreams")
         # Pure audio requirement: must NOT return the muxed video stream!
         assert result is None
+
+    @patch("app.services.stream_cache_service._get_redis")
+    @patch.object(StreamCacheService, "_extract_upstream")
+    def test_force_fresh_bypasses_cache(self, mock_extract, mock_get_redis):
+        mock_redis = MagicMock()
+        mock_get_redis.return_value = mock_redis
+
+        # Prepopulate L1 and Redis mock
+        _l1_cache["vidFresh"] = {"url": "https://cached.url"}
+        _l1_cache_ts["vidFresh"] = 9999999999
+
+        fresh_result = {"url": "https://fresh.url", "format": "M4A"}
+        mock_extract.return_value = fresh_result
+        mock_redis.set.return_value = True
+
+        res = StreamCacheService.get_stream("vidFresh", force_fresh=True)
+        assert res["url"] == "https://fresh.url"
+        mock_extract.assert_called_once_with("vidFresh")
+
+    @patch("app.services.stream_cache_service._get_redis")
+    def test_invalidate_stream_direct_promotes_proxy_to_degraded(self, mock_get_redis):
+        mock_redis = MagicMock()
+        mock_get_redis.return_value = mock_redis
+        mock_redis.ttl.return_value = 5000
+
+        # Seed L1 cache with direct and proxy
+        _l1_cache["vidDegrade"] = {
+            "url": "https://direct.googlevideo.com/videoplayback",
+            "proxy_url": "https://proxy.chocolatemoo.com/videoplayback",
+            "status": "READY",
+        }
+        _l1_cache_ts["vidDegrade"] = 1000
+
+        StreamCacheService.invalidate_stream("vidDegrade", source_type="direct")
+
+        # Must promote proxy_url to url and set status to DEGRADED
+        assert _l1_cache["vidDegrade"]["url"] == "https://proxy.chocolatemoo.com/videoplayback"
+        assert _l1_cache["vidDegrade"]["status"] == "DEGRADED"
+        mock_redis.setex.assert_called_once()

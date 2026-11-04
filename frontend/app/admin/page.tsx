@@ -23,6 +23,7 @@ import {
   adminCreateSongsBatch,
   adminUpdateSong,
   adminDeleteSong,
+  adminReorderSongs,
   adminFetchCatalogStatus,
   adminFetchStreamStatus,
   adminTriggerReconcile,
@@ -576,13 +577,21 @@ function CatalogStatusSection({ token }: { token: string }) {
 
   const [reconciling, setReconciling] = useState(false);
   const [reconcileMessage, setReconcileMessage] = useState<string | null>(null);
+  const [flushing, setFlushing] = useState(false);
+  const [showSelectiveModal, setShowSelectiveModal] = useState(false);
+  const [selectiveInput, setSelectiveInput] = useState("");
+  const [selectiveFlushing, setSelectiveFlushing] = useState(false);
 
-  const isFetchingRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   const fetchBothStatuses = useCallback(async (isManual = false) => {
-    // Prevent overlapping requests from piling up in the browser connection queue
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
+    // Cleanly cancel any pending in-flight status request to prevent queue saturation
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     if (isManual) {
       setSongsLoading(true);
       setStreamLoading(true);
@@ -591,7 +600,7 @@ function CatalogStatusSection({ token }: { token: string }) {
     try {
       // Both status cards share the same unified telemetry.
       // A single request satisfies both sections, cutting network traffic and preflight latency in half.
-      const data = await adminFetchCatalogStatus(token);
+      const data = await adminFetchCatalogStatus(token, controller.signal);
       const latency = Math.round(performance.now() - start);
       setSongsLatency(latency);
       setStreamLatency(latency);
@@ -600,13 +609,15 @@ function CatalogStatusSection({ token }: { token: string }) {
       setSongsError(null);
       setStreamError(null);
     } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") {
+        return; // Ignore cleanly aborted requests
+      }
       const msg = err instanceof Error ? err.message : "Failed to fetch status";
       setSongsError(msg);
       setStreamError(msg);
     } finally {
       setSongsLoading(false);
       setStreamLoading(false);
-      isFetchingRef.current = false;
     }
   }, [token]);
 
@@ -618,16 +629,37 @@ function CatalogStatusSection({ token }: { token: string }) {
     await fetchBothStatuses(true);
   }, [fetchBothStatuses]);
 
+  // Gentle, self-scheduling background poller (10s idle interval)
   useEffect(() => {
-    fetchBothStatuses(false);
-    const interval = setInterval(() => {
-      // Auto-poll in background only if document is visible and not already fetching
-      if (typeof document !== "undefined" && !document.hidden) {
-        fetchBothStatuses(false);
+    let isMounted = true;
+    let timerId: NodeJS.Timeout | null = null;
+
+    const poll = async () => {
+      if (!isMounted) return;
+      if (typeof document !== "undefined" && !document.hidden && !reconciling && !flushing) {
+        await fetchBothStatuses(false);
       }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [fetchBothStatuses]);
+      if (isMounted) {
+        timerId = setTimeout(poll, 10000);
+      }
+    };
+
+    poll();
+
+    return () => {
+      isMounted = false;
+      if (timerId) clearTimeout(timerId);
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, [fetchBothStatuses, reconciling, flushing]);
+
+  // Sequential active polling helper for background operations (never piles up requests)
+  const runActivePolling = async (passes: number, delayMs: number) => {
+    for (let i = 0; i < passes; i++) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      await fetchBothStatuses(false);
+    }
+  };
 
   const handleTriggerReconcile = async () => {
     setReconciling(true);
@@ -636,28 +668,14 @@ function CatalogStatusSection({ token }: { token: string }) {
       const res = await adminTriggerReconcile(token);
       setReconcileMessage(res.message || "Reconciliation pass dispatched in background!");
       await fetchBothStatuses(false);
-
-      // Poll periodically to catch real-time completion
-      let pollCount = 0;
-      const pollInterval = setInterval(async () => {
-        pollCount += 1;
-        await fetchBothStatuses(false);
-        if (pollCount >= 6) {
-          clearInterval(pollInterval);
-          setReconciling(false);
-          setReconcileMessage("Reconciliation complete: metadata synchronized and audio streams verified!");
-        }
-      }, 2000);
+      await runActivePolling(4, 2500);
+      setReconcileMessage("Reconciliation complete: metadata synchronized and audio streams verified!");
     } catch (err: unknown) {
       setReconcileMessage(err instanceof Error ? err.message : "Failed to trigger reconciliation");
+    } finally {
       setReconciling(false);
     }
   };
-
-  const [flushing, setFlushing] = useState(false);
-  const [showSelectiveModal, setShowSelectiveModal] = useState(false);
-  const [selectiveInput, setSelectiveInput] = useState("");
-  const [selectiveFlushing, setSelectiveFlushing] = useState(false);
 
   // Helper to extract clean video IDs from comma, newline, or whitespace separated text
   const detectedIds = useMemo(() => {
@@ -691,6 +709,7 @@ function CatalogStatusSection({ token }: { token: string }) {
       setSelectiveInput("");
       setShowSelectiveModal(false);
       await fetchBothStatuses(false);
+      await runActivePolling(3, 2000);
     } catch (err: unknown) {
       setReconcileMessage(err instanceof Error ? err.message : "Failed to selectively flush tracks");
     } finally {
@@ -708,19 +727,11 @@ function CatalogStatusSection({ token }: { token: string }) {
       const res = await adminFlushAndRefreshCache(token);
       setReconcileMessage(res.message || "Cache flushed, telemetry reset, and re-warming pass launched!");
       await fetchBothStatuses(false);
-
-      let pollCount = 0;
-      const pollInterval = setInterval(async () => {
-        pollCount += 1;
-        await fetchBothStatuses(false);
-        if (pollCount >= 8) {
-          clearInterval(pollInterval);
-          setFlushing(false);
-          setReconcileMessage("Audio stream cache refreshed: all streams validated and ready!");
-        }
-      }, 2000);
+      await runActivePolling(5, 2500);
+      setReconcileMessage("Audio stream cache refreshed: all streams validated and ready!");
     } catch (err: unknown) {
       setReconcileMessage(err instanceof Error ? err.message : "Failed to flush and refresh cache");
+    } finally {
       setFlushing(false);
     }
   };
@@ -926,11 +937,20 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
+  const loadSongsAbortRef = useRef<AbortController | null>(null);
+
   const loadSongs = useCallback(async () => {
+    if (loadSongsAbortRef.current) {
+      loadSongsAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    loadSongsAbortRef.current = controller;
+
     try {
-      const data = await adminFetchSongs(token);
+      const data = await adminFetchSongs(token, controller.signal);
       setSongs(data);
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") return;
       onLogout(); // Token expired or invalid
     } finally {
       setLoading(false);
@@ -939,6 +959,11 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
 
   useEffect(() => {
     loadSongs();
+    return () => {
+      if (loadSongsAbortRef.current) {
+        loadSongsAbortRef.current.abort();
+      }
+    };
   }, [loadSongs]);
 
   // Compute next sort order auto-increment value
@@ -1117,15 +1142,18 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
     setDraggedIndex(null);
     setDragOverIndex(null);
 
-    // Persist updated sort orders to backend
+    // Persist updated sort orders to backend in a single fast batch request
     try {
       const changed = updatedSongsWithOrder.filter((s) => {
         const original = songs.find((o) => o.id === s.id);
         return original && original.sort_order !== s.sort_order;
       });
-      await Promise.all(
-        changed.map((s) => adminUpdateSong(token, s.id, { sort_order: s.sort_order }))
-      );
+      if (changed.length > 0) {
+        await adminReorderSongs(
+          token,
+          changed.map((s) => ({ id: s.id, sort_order: s.sort_order }))
+        );
+      }
     } catch {
       alert("Failed to save new song order to server. Please refresh.");
     }

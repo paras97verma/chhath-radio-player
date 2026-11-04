@@ -53,6 +53,7 @@ LEADER_KEY = "chhath:leader:catalog_reconciler"
 LEADER_LEASE_TTL = 30  # seconds
 CHECKPOINT_KEY = "chhath:reconciler:checkpoint"
 CATALOG_STATUS_KEY = "chhath:catalog:status"
+CATALOG_READINESS_CACHE_KEY = "chhath:catalog:readiness_cache"
 RECONCILE_IN_PROGRESS_KEY = "chhath:reconcile:in_progress"
 
 WORKER_ID = str(uuid.uuid4())
@@ -413,86 +414,113 @@ class CatalogReconciliationService:
         global _readiness_status_cache, _readiness_status_cache_ts
         _readiness_status_cache = {}
         _readiness_status_cache_ts = 0.0
+        redis_client = _get_redis()
+        if redis_client:
+            try:
+                redis_client.delete(CATALOG_READINESS_CACHE_KEY)
+            except Exception:
+                pass
 
     @classmethod
     def get_catalog_readiness_status(cls, force: bool = False) -> Dict[str, Any]:
         """
         Returns full internal catalog readiness observability report.
-        Optimized with Redis mget batching and a 3-second micro-cache to eliminate
-        sequential roundtrip latency on rapid polling.
+        Optimized with Redis readiness caching (4s TTL) and in-memory micro-caching (3s TTL),
+        plus Redis pipeline batching to eliminate sequential roundtrips.
+        Never holds database connections across Redis operations.
         """
         global _readiness_status_cache, _readiness_status_cache_ts
         now_ts = time.time()
         if not force and _readiness_status_cache and (now_ts - _readiness_status_cache_ts) < READINESS_CACHE_TTL:
             return _readiness_status_cache
 
-        db = SessionLocal()
+        redis_client = _get_redis()
+
+        # Check shared Redis cache across workers
+        if not force and redis_client:
+            try:
+                cached_raw = redis_client.get(CATALOG_READINESS_CACHE_KEY)
+                if cached_raw:
+                    cached_data = json.loads(cached_raw)
+                    _readiness_status_cache = cached_data
+                    _readiness_status_cache_ts = now_ts
+                    return cached_data
+            except Exception:
+                pass
+
         total_db_songs = 0
         enabled_songs = 0
         metadata_ready = 0
         metadata_incomplete = 0
         stream_ready = 0
+        stream_degraded = 0
         stream_expiring = 0
         stream_missing = 0
+        stream_failed = 0
+        enabled_video_ids = []
 
+        # 1. Database read: query catalog summary and release DB connection IMMEDIATELY
+        db = SessionLocal()
         try:
             all_songs = SongService.get_all(db)
             total_db_songs = len(all_songs)
-            enabled_list = []
             for s in all_songs:
                 if s.enabled:
                     enabled_songs += 1
-                    enabled_list.append(s)
+                    enabled_video_ids.append(s.youtube_video_id)
                     if s.metadata_status == "complete" and s.duration_seconds is not None:
                         metadata_ready += 1
                     else:
                         metadata_incomplete += 1
-
-            # High-speed batch stream status check using single Redis MGET with fallback
-            redis_client = _get_redis()
-            if redis_client and enabled_list:
-                keys = [f"{STREAM_CACHE_PREFIX}{s.youtube_video_id}" for s in enabled_list]
-                raw_items = None
-                try:
-                    res = redis_client.mget(keys)
-                    if isinstance(res, list):
-                        raw_items = res
-                except Exception:
-                    pass
-
-                if raw_items is None:
-                    # Fallback to individual get (supports unit test mocks and single-key clients)
-                    raw_items = []
-                    for k in keys:
-                        try:
-                            raw_items.append(redis_client.get(k))
-                        except Exception:
-                            raw_items.append(None)
-
-                now = time.time()
-                for raw in raw_items:
-                    if raw:
-                        try:
-                            d = json.loads(raw)
-                            url = d.get("url", "")
-                            exp = extract_url_expiry(url)
-                            if exp and (exp - now) < EXPIRY_BUFFER_SECONDS:
-                                stream_expiring += 1
-                            else:
-                                stream_ready += 1
-                        except Exception:
-                            stream_missing += 1
-                    else:
-                        stream_missing += 1
-            else:
-                stream_missing = enabled_songs
         except Exception as exc:
-            logger.warning("[CatalogReconciler] Status computation error: %s", exc)
+            logger.warning("[CatalogReconciler] Database read error in status: %s", exc)
         finally:
             db.close()
 
+        # 2. Redis stream cache check (performed completely decoupled from database connection)
+        if redis_client and enabled_video_ids:
+            keys = [f"{STREAM_CACHE_PREFIX}{vid}" for vid in enabled_video_ids]
+            raw_items = None
+            try:
+                res = redis_client.mget(keys)
+                if isinstance(res, list):
+                    raw_items = res
+            except Exception:
+                pass
+
+            if raw_items is None:
+                # Fallback to individual get (supports unit test mocks and single-key clients)
+                raw_items = []
+                for k in keys:
+                    try:
+                        raw_items.append(redis_client.get(k))
+                    except Exception:
+                        raw_items.append(None)
+
+            now = time.time()
+            for raw in raw_items:
+                if raw:
+                    try:
+                        d = json.loads(raw)
+                        status = d.get("status")
+                        url = d.get("url", "")
+                        exp = d.get("expires_at") or extract_url_expiry(url)
+                        if status == "FAILED":
+                            stream_failed += 1
+                        elif exp and (exp - now) < EXPIRY_BUFFER_SECONDS:
+                            stream_expiring += 1
+                        elif status == "DEGRADED" or ("latest_version" in url or "comp" in url):
+                            stream_degraded += 1
+                        else:
+                            stream_ready += 1
+                    except Exception:
+                        stream_missing += 1
+                else:
+                    stream_missing += 1
+        else:
+            stream_missing = enabled_songs
+
         # Leader check
-        redis_client = _get_redis()
         current_leader = None
         is_reconciling = False
         if redis_client:
@@ -513,10 +541,13 @@ class CatalogReconciliationService:
                 "metadata_ready": metadata_ready,
                 "metadata_incomplete": metadata_incomplete,
                 "stream_ready": stream_ready,
+                "stream_degraded": stream_degraded,
                 "stream_expiring": stream_expiring,
                 "stream_missing": stream_missing,
+                "stream_failed": stream_failed,
                 "metadata_completeness_percent": round((metadata_ready / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
-                "stream_readiness_percent": round((stream_ready / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
+                "stream_readiness_percent": round(((stream_ready + stream_degraded) / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
+                "true_direct_ready_percent": round((stream_ready / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
                 "is_reconciling": is_reconciling,
             },
             "distributed_coordination": {
@@ -527,6 +558,14 @@ class CatalogReconciliationService:
             },
             "telemetry": metrics,
         }
+
+        # Store in Redis shared cache (4s TTL) and update process memory cache
+        if redis_client:
+            try:
+                redis_client.setex(CATALOG_READINESS_CACHE_KEY, 4, json.dumps(result))
+            except Exception:
+                pass
+
         _readiness_status_cache = result
         _readiness_status_cache_ts = time.time()
         return result
@@ -537,17 +576,19 @@ class CatalogReconciliationService:
 async def _reconciler_loop() -> None:
     """
     Continuous background loop:
-    1. Coordinates multi-worker leader lease via Redis.
+    1. Coordinates multi-worker leader lease via Redis with a 15-second heartbeat.
     2. Non-leader workers wait in standby.
-    3. Leader worker processes priority queue and conducts incremental reconciliation.
+    3. Leader worker immediately processes priority queue items and conducts periodic catalog reconciliation.
     """
     global _is_running
-    logger.info("[CatalogReconciler] Background worker %s initialized. First cycle in 10s...", WORKER_ID)
+    logger.info("[CatalogReconciler] Background worker %s initialized. First cycle in 5s...", WORKER_ID)
 
     try:
-        await asyncio.sleep(10)
+        await asyncio.sleep(5)
     except asyncio.CancelledError:
         return
+
+    last_cycle_time = 0.0
 
     while _is_running:
         try:
@@ -570,8 +611,16 @@ async def _reconciler_loop() -> None:
                     logger.debug("[CatalogReconciler] Leader lease error: %s", exc)
 
             if is_leader:
-                logger.info("[CatalogReconciler] Worker %s holds leader lease. Running reconciliation...", WORKER_ID)
-                await CatalogReconciliationService.run_prewarmer_cycle()
+                # 1. Process priority items on every heartbeat
+                CatalogReconciliationService.process_priority_queue(max_items=10)
+
+                # 2. Run full reconciliation if first run or interval elapsed (default 300s = 5m)
+                cycle_interval = min(RECONCILIATION_INTERVAL_SECONDS, 300)
+                now = time.time()
+                if now - last_cycle_time >= cycle_interval:
+                    logger.info("[CatalogReconciler] Worker %s running full catalog warming pass...", WORKER_ID)
+                    await CatalogReconciliationService.run_prewarmer_cycle()
+                    last_cycle_time = time.time()
             else:
                 logger.debug("[CatalogReconciler] Worker %s in standby (non-leader).", WORKER_ID)
 
@@ -581,8 +630,8 @@ async def _reconciler_loop() -> None:
             logger.error("[CatalogReconciler] Unexpected error in reconciler loop: %s", exc)
 
         try:
-            # Sleep until next scheduled reconciliation or leader check
-            await asyncio.sleep(RECONCILIATION_INTERVAL_SECONDS if is_leader else 15)
+            # Heartbeat sleep (15 seconds to safely renew 30s leader lease)
+            await asyncio.sleep(15)
         except asyncio.CancelledError:
             break
 

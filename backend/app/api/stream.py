@@ -26,13 +26,14 @@ router = APIRouter(prefix="/api", tags=["stream"])
 def get_stream(
     v: str = Query(..., min_length=5, max_length=32, description="YouTube Video ID"),
     priority: str = Query("high", description="Resolution priority: high (user-selected) or normal (background)"),
+    force_fresh: bool = Query(False, description="Bypass cache and force upstream re-extraction"),
 ):
     """
     Resolves a direct playable audio stream URL for a given YouTube video ID.
     Leverages Redis L2 caching and single-flight lock to support 10,000+ concurrent listeners.
     Returns in 1-2ms on cache hit.
     """
-    stream = StreamCacheService.get_stream(v, priority=priority)
+    stream = StreamCacheService.get_stream(v, priority=priority, force_fresh=force_fresh)
     if not stream:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -83,6 +84,7 @@ def get_catalog_status(
 async def flush_stream_cache(
     background_tasks: BackgroundTasks,
     v: Optional[str] = Query(None, description="Optional YouTube Video ID to flush specifically"),
+    source: Optional[str] = Query("all", description="Source to invalidate: 'direct' (downgrades to proxy) or 'all'"),
     token: Optional[str] = Query(None, description="Admin secret key token"),
     x_admin_secret: Optional[str] = Header(None, alias="X-Admin-Secret"),
     authorization: Optional[str] = Header(None),
@@ -118,7 +120,11 @@ async def flush_stream_cache(
             detail="Unauthorized: invalid admin secret key or JWT.",
         )
 
-    deleted_count = StreamCacheService.flush_stream_cache(video_id=v)
+    if v and source == "direct":
+        StreamCacheService.invalidate_stream(v, source_type="direct")
+        deleted_count = 1
+    else:
+        deleted_count = StreamCacheService.flush_stream_cache(video_id=v)
 
     # Re-warm in background task
     if v:
