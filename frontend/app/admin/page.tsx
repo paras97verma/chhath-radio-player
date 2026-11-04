@@ -23,7 +23,11 @@ import {
   adminCreateSongsBatch,
   adminUpdateSong,
   adminDeleteSong,
+  adminFetchCatalogStatus,
+  adminFetchStreamStatus,
+  adminTriggerReconcile,
   type Song,
+  type CatalogReadinessStatus,
 } from "@/lib/api";
 
 const TOKEN_KEY = "chhath_admin_token";
@@ -338,6 +342,212 @@ function EditSongModal({
   );
 }
 
+// ─── Catalog Status Section ──────────────────────────────────────────────────
+
+function CatalogStatusSection({ token }: { token: string }) {
+  const [statusData, setStatusData] = useState<CatalogReadinessStatus | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [activeEndpoint, setActiveEndpoint] = useState<string>("/api/admin/songs/status");
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
+  const [reconciling, setReconciling] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [showJson, setShowJson] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchStatus = useCallback(
+    async (endpoint: "/api/admin/songs/status" | "/api/stream/catalog/status") => {
+      setLoading(true);
+      setError(null);
+      setMessage(null);
+      setActiveEndpoint(endpoint);
+      const start = performance.now();
+      try {
+        const data =
+          endpoint === "/api/admin/songs/status"
+            ? await adminFetchCatalogStatus(token)
+            : await adminFetchStreamStatus(token);
+        setLatencyMs(Math.round(performance.now() - start));
+        setStatusData(data);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to fetch status");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [token]
+  );
+
+  useEffect(() => {
+    fetchStatus("/api/admin/songs/status");
+  }, [fetchStatus]);
+
+  const handleTriggerReconcile = async () => {
+    setReconciling(true);
+    setMessage(null);
+    try {
+      const res = await adminTriggerReconcile(token);
+      setMessage(res.message || "Reconciliation triggered in background!");
+      setTimeout(() => {
+        fetchStatus(activeEndpoint as "/api/admin/songs/status" | "/api/stream/catalog/status");
+      }, 2000);
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Failed to trigger reconciliation");
+    } finally {
+      setReconciling(false);
+    }
+  };
+
+  const catalog = statusData?.catalog;
+  const telemetry = statusData?.telemetry;
+  const coord = statusData?.distributed_coordination;
+
+  return (
+    <div className="bg-gray-900/90 border border-amber-500/30 rounded-2xl p-5 shadow-xl space-y-4">
+      {/* Title & Actions */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-800 pb-3">
+        <div>
+          <h2 className="text-base font-bold text-amber-400 flex items-center gap-2">
+            <span>📡 Catalog Readiness & Audio Streaming Engine</span>
+          </h2>
+          <p className="text-xs text-gray-400">
+            Real-time status from Redis & PostgreSQL. Fast lookup latency: &lt; 0.1ms.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => fetchStatus("/api/admin/songs/status")}
+            disabled={loading}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+              activeEndpoint === "/api/admin/songs/status"
+                ? "bg-amber-500/20 text-amber-300 border-amber-500/40 shadow"
+                : "bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700"
+            }`}
+          >
+            {loading && activeEndpoint === "/api/admin/songs/status" ? "Fetching…" : "GET /api/admin/songs/status"}
+          </button>
+
+          <button
+            onClick={() => fetchStatus("/api/stream/catalog/status")}
+            disabled={loading}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+              activeEndpoint === "/api/stream/catalog/status"
+                ? "bg-amber-500/20 text-amber-300 border-amber-500/40 shadow"
+                : "bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700"
+            }`}
+          >
+            {loading && activeEndpoint === "/api/stream/catalog/status" ? "Fetching…" : "GET /api/stream/catalog/status"}
+          </button>
+
+          <button
+            onClick={handleTriggerReconcile}
+            disabled={reconciling}
+            className="px-3 py-1.5 text-xs font-semibold bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 rounded-lg transition-all"
+          >
+            {reconciling ? "Starting…" : "⚡ Trigger Reconcile"}
+          </button>
+
+          <button
+            onClick={() => setShowJson((prev) => !prev)}
+            className="px-2.5 py-1.5 text-xs font-medium text-gray-400 hover:text-white bg-gray-800/80 rounded-lg border border-gray-700 hover:bg-gray-700"
+          >
+            {showJson ? "Hide JSON" : "Raw JSON"}
+          </button>
+        </div>
+      </div>
+
+      {/* Latency and message bar */}
+      <div className="flex flex-wrap items-center justify-between text-xs text-gray-400 gap-2">
+        <div>
+          <span>Active endpoint: </span>
+          <code className="text-amber-300 font-mono bg-gray-800 px-1.5 py-0.5 rounded">{activeEndpoint}</code>
+          {latencyMs !== null && <span className="ml-2 text-emerald-400 font-mono">({latencyMs}ms response)</span>}
+        </div>
+        {message && <span className="text-emerald-300 font-medium">{message}</span>}
+        {error && <span className="text-red-400 font-medium">{error}</span>}
+      </div>
+
+      {/* KPI Metrics Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {/* Stream Readiness Card */}
+        <div className="bg-gray-950/60 border border-gray-800 rounded-xl p-3.5 space-y-1">
+          <div className="text-[11px] text-gray-400 font-medium uppercase tracking-wider">Stream Readiness</div>
+          <div className="text-xl font-extrabold text-emerald-400">
+            {catalog ? `${catalog.stream_readiness_percent}%` : "—"}
+          </div>
+          <div className="text-xs text-gray-300">
+            <span className="text-emerald-400 font-bold">{catalog?.stream_ready ?? 0}</span> / {catalog?.eligible_songs ?? 0} Warm
+          </div>
+          <div className="text-[10px] text-gray-500">
+            Expiring (&lt;10m): <span className="text-amber-400">{catalog?.stream_expiring ?? 0}</span> | Missing: <span className="text-red-400">{catalog?.stream_missing ?? 0}</span>
+          </div>
+        </div>
+
+        {/* Metadata Completeness Card */}
+        <div className="bg-gray-950/60 border border-gray-800 rounded-xl p-3.5 space-y-1">
+          <div className="text-[11px] text-gray-400 font-medium uppercase tracking-wider">Metadata Sync</div>
+          <div className="text-xl font-extrabold text-amber-400">
+            {catalog ? `${catalog.metadata_completeness_percent}%` : "—"}
+          </div>
+          <div className="text-xs text-gray-300">
+            <span className="text-amber-300 font-bold">{catalog?.metadata_ready ?? 0}</span> Complete
+          </div>
+          <div className="text-[10px] text-gray-500">
+            Incomplete: <span className="text-yellow-400">{catalog?.metadata_incomplete ?? 0}</span> (synced in DB)
+          </div>
+        </div>
+
+        {/* Cache Telemetry Card */}
+        <div className="bg-gray-950/60 border border-gray-800 rounded-xl p-3.5 space-y-1">
+          <div className="text-[11px] text-gray-400 font-medium uppercase tracking-wider">Cache Hit Ratio</div>
+          <div className="text-xl font-extrabold text-sky-400">
+            {telemetry ? `${(telemetry.hit_ratio * 100).toFixed(1)}%` : "—"}
+          </div>
+          <div className="text-xs text-gray-300">
+            Hits: <span className="text-sky-300">{telemetry ? telemetry.l1_hits + telemetry.redis_hits : 0}</span> / {telemetry?.total_requests ?? 0}
+          </div>
+          <div className="text-[10px] text-gray-500">
+            L1: {telemetry?.l1_hits ?? 0} | L2 Redis: {telemetry?.redis_hits ?? 0} | Misses: {telemetry?.cache_misses ?? 0}
+          </div>
+        </div>
+
+        {/* Multi-Worker Coordination Card */}
+        <div className="bg-gray-950/60 border border-gray-800 rounded-xl p-3.5 space-y-1">
+          <div className="text-[11px] text-gray-400 font-medium uppercase tracking-wider">Worker Coordination</div>
+          <div className="text-sm font-bold text-violet-400 flex items-center gap-1.5 pt-0.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            {coord?.is_current_worker_leader ? "Leader Active" : coord?.active_leader_id ? "Leader Lease Active" : "Standby"}
+          </div>
+          <div className="text-[11px] text-gray-300 font-mono truncate" title={coord?.active_leader_id || "None"}>
+            Lease: {coord?.lease_ttl_seconds ?? 30}s TTL
+          </div>
+          <div className="text-[10px] text-gray-500 truncate" title={coord?.worker_id}>
+            Worker: {coord?.worker_id ? `${coord.worker_id.slice(0, 8)}…` : "—"}
+          </div>
+        </div>
+      </div>
+
+      {/* Raw JSON Accordion */}
+      {showJson && (
+        <div className="bg-gray-950 border border-gray-800 rounded-xl p-3 space-y-2">
+          <div className="flex items-center justify-between text-xs text-gray-400">
+            <span>Raw Response ({activeEndpoint})</span>
+            <button
+              onClick={() => navigator.clipboard.writeText(JSON.stringify(statusData, null, 2))}
+              className="text-amber-400 hover:text-amber-300 text-[11px]"
+            >
+              Copy JSON
+            </button>
+          </div>
+          <pre className="text-[11px] font-mono text-gray-300 overflow-x-auto max-h-60 p-2 bg-black/40 rounded-lg">
+            {JSON.stringify(statusData, null, 2)}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Dashboard Main ───────────────────────────────────────────────────────────
 
 function Dashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
@@ -581,6 +791,9 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
             </button>
           </div>
         </div>
+
+        {/* Catalog Readiness & Streaming Status Panel */}
+        <CatalogStatusSection token={token} />
 
         {/* Add Song Form */}
         <AddSongForm

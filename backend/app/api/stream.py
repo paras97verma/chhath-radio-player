@@ -46,17 +46,34 @@ def get_stream(
 def get_catalog_status(
     token: Optional[str] = Query(None, description="Admin secret key token"),
     x_admin_secret: Optional[str] = Header(None, alias="X-Admin-Secret"),
+    authorization: Optional[str] = Header(None),
 ):
     """
     Returns complete internal catalog readiness, metadata sync, stream readiness,
-    and distributed worker status. Guarded by SECRET_KEY validation.
+    and distributed worker status.
+    Guarded by either SECRET_KEY or an Admin JWT Bearer token.
     """
+    is_authorized = False
     secret = x_admin_secret or token
     expected = settings.SECRET_KEY
-    if not secret or (expected and secret != expected):
+    if secret and expected and secret == expected:
+        is_authorized = True
+
+    if not is_authorized and authorization and authorization.startswith("Bearer "):
+        jwt_token = authorization[7:].strip()
+        try:
+            from app.auth.security import decode_access_token
+            payload = decode_access_token(jwt_token)
+            if payload and payload.get("sub"):
+                is_authorized = True
+        except Exception:
+            pass
+
+    if not is_authorized:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized: invalid admin secret key.",
+            detail="Unauthorized: requires valid admin secret key or JWT token.",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     return CatalogReconciliationService.get_catalog_readiness_status()
