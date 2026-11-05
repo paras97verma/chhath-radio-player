@@ -150,8 +150,9 @@ describe("Persistent Player Lifecycle & Navigation Persistence", () => {
       adapter.simulateError();
     });
 
-    // In a multi-song queue, error automatically skips broken song
-    expect(useRadioStore.getState().currentIndex).toBe(1);
+    // Keep the failed song selected so the listener can retry or explicitly skip.
+    expect(useRadioStore.getState().currentIndex).toBe(0);
+    expect(useRadioStore.getState().playState).toBe("ERROR");
 
     // If queue has 1 song and errors, transitions cleanly to ERROR state with message
     act(() => {

@@ -24,6 +24,7 @@ export default defineConfig({
     baseURL: "http://localhost:3000",
     trace: "on-first-retry",
     headless: !headed,
+    serviceWorkers: "block",
     // Slow down actions in headed mode so you can follow along
     launchOptions: headed ? { slowMo: 300 } : {},
   },

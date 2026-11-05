@@ -22,6 +22,8 @@ export default function ServiceWorkerRegistrar() {
     navigator.serviceWorker
       .register("/sw.js", { scope: "/" })
       .then((registration) => {
+        if (!registration) return;
+
         console.info(
           "[Chhath Radio] Service worker registered. Scope:",
           registration.scope

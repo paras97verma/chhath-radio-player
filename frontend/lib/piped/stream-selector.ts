@@ -140,7 +140,7 @@ function isCurrentStreamInfo(stream: AudioStreamInfo, nowSeconds: number): boole
   );
 }
 
-/** Return the highest-quality current stream the browser says it can play. */
+/** Prefer direct playback, then the highest-bitrate playable Invidious source. */
 export function selectBestAudioStream(
   streams: AudioStreamInfo[],
   audioElement?: HTMLAudioElement | null,
@@ -160,7 +160,19 @@ export function selectBestAudioStream(
 
   if (apple) {
     const aac = playable.filter((stream) => /audio\/mp4|aac/i.test(stream.mimeType));
-    if (aac.length) return [...aac].sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+    if (aac.length) return sortBySourcePreference(aac)[0];
   }
-  return [...playable].sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+  return sortBySourcePreference(playable)[0];
+}
+
+function sortBySourcePreference(streams: AudioStreamInfo[]): AudioStreamInfo[] {
+  const sourceMode = (stream: AudioStreamInfo) => {
+    const currentSource = stream.sources?.find((source) => source.url === stream.url);
+    return currentSource && "mode" in currentSource ? currentSource.mode : "proxy";
+  };
+  const preference = (stream: AudioStreamInfo) => sourceMode(stream) === "direct" ? 0 : 1;
+
+  return [...streams].sort((a, b) =>
+    preference(a) - preference(b) || (b.bitrate || 0) - (a.bitrate || 0)
+  );
 }
