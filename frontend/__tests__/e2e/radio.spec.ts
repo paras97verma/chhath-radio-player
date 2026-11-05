@@ -115,7 +115,9 @@ async function mockPlaybackEnvironment(page: Page): Promise<void> {
     HTMLMediaElement.prototype.play = function () {
       const audio = this;
       const sourceUrl = audio.src;
-      if (sourceUrl.startsWith("data:")) return Promise.resolve();
+      if (sourceUrl.startsWith("data:") || sourceUrl.startsWith("blob:")) {
+        return Promise.resolve();
+      }
 
       const mode = new URL(sourceUrl).pathname === "/latest_version" ? "proxy" : "direct";
       testWindow.__radioAudioAttempts?.push(mode);

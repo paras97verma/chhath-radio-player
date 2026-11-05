@@ -32,6 +32,7 @@ function deferPlay(audio: HTMLAudioElement): Deferred<void> {
 type FakeMediaState = Partial<{
   currentTime: number;
   duration: number;
+  readyState: number;
   paused: boolean;
   ended: boolean;
   error: MediaError | null;
@@ -106,7 +107,10 @@ function canonicalStream(
   };
 }
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe("Html5AudioAdapter", () => {
   let primaryAudio: HTMLAudioElement;
@@ -267,10 +271,24 @@ describe("Html5AudioAdapter", () => {
     expect(states).not.toContain("ERROR");
   });
 
-  it("primeAudio unlocks audio elements with silent audio payload", () => {
+  it("primeAudio uses CSP-allowed silent PCM blobs", () => {
+    const createObjectURL = vi.fn()
+      .mockReturnValueOnce("blob:https://example.test/silence-primary")
+      .mockReturnValueOnce("blob:https://example.test/silence-secondary");
+    const revokeObjectURL = vi.fn();
+    class URLWithBlobSupport extends URL {}
+    Object.defineProperties(URLWithBlobSupport, {
+      createObjectURL: { value: createObjectURL },
+      revokeObjectURL: { value: revokeObjectURL },
+    });
+    vi.stubGlobal("URL", URLWithBlobSupport);
+
     const playSpy = vi.spyOn(primaryAudio, "play").mockResolvedValue(undefined);
     adapter.primeAudio();
-    expect(primaryAudio.src).toContain("data:audio/wav;base64");
+    expect(primaryAudio.src).toContain("blob:");
+    const silentWav = createObjectURL.mock.calls[0][0] as Blob;
+    expect(silentWav.type).toBe("audio/wav");
+    expect(silentWav.size).toBe(44 + 44_100 / 10 * 2);
     expect(playSpy).toHaveBeenCalled();
   });
 
@@ -546,6 +564,46 @@ describe("Html5AudioAdapter", () => {
 
     await clock.advanceBy(1);
     expect(primaryAudio.src).toBe(proxyUrl("progress_timeout"));
+  });
+
+  it("keeps WebKit media attached through readiness before recovery", async () => {
+    const clock = useFakeClock();
+    const originalUserAgent = Object.getOwnPropertyDescriptor(navigator, "userAgent");
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1",
+    });
+    try {
+      const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+      vi.mocked(fetchInvidiousStream).mockResolvedValue(
+        canonicalStream("webkit_slow_start", "https://audio.example.com/direct.m4a"),
+      );
+      primaryAudio.play = vi.fn().mockResolvedValue(undefined);
+      const states: string[] = [];
+      adapter.onStateChange((state) => states.push(state));
+
+      await adapter.loadVideo("webkit_slow_start");
+      await clock.advanceBy(17_999);
+      expect(primaryAudio.src).toBe("https://audio.example.com/direct.m4a");
+
+      emitMediaEvent(primaryAudio, "canplay", { currentTime: 0, readyState: 3, paused: false });
+      await clock.advanceBy(5_000);
+      expect(primaryAudio.src).toBe("https://audio.example.com/direct.m4a");
+      expect(states).not.toContain("ERROR");
+
+      await clock.advanceBy(12_000);
+      expect(primaryAudio.src).toBe(proxyUrl("webkit_slow_start"));
+      expect(states).not.toContain("ERROR");
+
+      await clock.advanceBy(1);
+      expect(states).toContain("ERROR");
+    } finally {
+      if (originalUserAgent) {
+        Object.defineProperty(navigator, "userAgent", originalUserAgent);
+      } else {
+        delete (navigator as any).userAgent;
+      }
+    }
   });
 
   it("starts a five-second recovery deadline when a progressing stream stalls", async () => {
