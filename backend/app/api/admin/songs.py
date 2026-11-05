@@ -6,6 +6,7 @@ import uuid
 from typing import Optional, Union, List
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
+from sqlalchemy import case, select, update
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -43,6 +44,14 @@ class SongsReorderRequest(BaseModel):
     orders: list[SongReorderItem]
 
 
+class SongIdsRequest(BaseModel):
+    ids: list[uuid.UUID]
+
+
+class BulkSongEnabledRequest(SongIdsRequest):
+    enabled: bool
+
+
 @router.post("/reorder", status_code=status.HTTP_200_OK)
 def reorder_songs(
     body: SongsReorderRequest,
@@ -58,17 +67,83 @@ def reorder_songs(
     from app.services.song_service import _cache_delete, QUEUE_CACHE_KEY
 
     try:
-        for item in body.orders:
-            song = db.get(Song, item.id)
-            if song:
-                song.sort_order = item.sort_order
+        orders = {item.id: item.sort_order for item in body.orders}
+        if orders:
+            db.execute(
+                update(Song)
+                .where(Song.id.in_(orders))
+                .values(sort_order=case(orders, value=Song.id, else_=Song.sort_order))
+            )
         db.commit()
         _cache_delete(QUEUE_CACHE_KEY)
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to reorder: {exc}")
 
-    return {"status": "reordered", "count": len(body.orders)}
+    return {"status": "reordered", "count": len(orders)}
+
+
+@router.patch("/bulk-enabled", status_code=status.HTTP_200_OK)
+def bulk_set_song_enabled(
+    body: BulkSongEnabledRequest,
+    db: Session = Depends(get_db),
+    _admin: Admin = Depends(get_current_admin),
+) -> dict:
+    """Update enabled state for selected songs in one database statement."""
+    from app.models.song import Song
+    from app.services.song_service import _cache_delete, QUEUE_CACHE_KEY
+
+    song_ids = set(body.ids)
+    try:
+        if song_ids:
+            result = db.execute(
+                update(Song).where(Song.id.in_(song_ids)).values(enabled=body.enabled)
+            )
+            updated_count = result.rowcount or 0
+        else:
+            updated_count = 0
+        db.commit()
+        _cache_delete(QUEUE_CACHE_KEY)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update songs: {exc}",
+        )
+
+    return {"status": "updated", "count": updated_count}
+
+
+@router.post("/bulk-delete", status_code=status.HTTP_200_OK)
+def bulk_delete_songs(
+    body: SongIdsRequest,
+    db: Session = Depends(get_db),
+    _admin: Admin = Depends(get_current_admin),
+) -> dict:
+    """Delete selected songs in one transaction and invalidate shared caches once."""
+    from app.models.song import Song
+    from app.services.song_service import _cache_delete, QUEUE_CACHE_KEY
+    from app.services.stream_cache_service import StreamCacheService
+
+    song_ids = set(body.ids)
+    try:
+        songs = list(db.scalars(select(Song).where(Song.id.in_(song_ids))).all()) if song_ids else []
+        video_ids = [song.youtube_video_id for song in songs]
+        for song in songs:
+            db.delete(song)
+        db.commit()
+        _cache_delete(QUEUE_CACHE_KEY)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete songs: {exc}",
+        )
+
+    for video_id in video_ids:
+        StreamCacheService.invalidate_stream(video_id)
+
+    return {"status": "deleted", "count": len(songs)}
 
 
 @router.post("", response_model=SongPublic, status_code=status.HTTP_201_CREATED)
