@@ -187,3 +187,11 @@ The latest requirement audit found that current warm semantics and schedule do n
 
 Do not claim literal Spotify parity or always-warm behavior during provider/cache outage. The release target is full pair coverage when configured upstream capacity is sufficient, zero expired-candidate serves, bounded retries when it is not, and no app-generated reload on duplicate system Play. **T041–T045** are the follow-up tasks; T036 remains the device evidence gate.
 
+## Bitrate and random-track startup audit
+
+The resolver does not implement adaptive bitrate. It returns one selected audio format per track; the direct Google delivery URL and Invidious proxy URL use the same itag, so switching between them changes delivery path, not quality. The backend picks the first AAC-LC format when present; otherwise it picks the highest-bitrate M4A (or highest available audio format). This is neither a guaranteed high-quality-only policy nor a slow-network policy. The frontend's highest-bitrate sort does not currently adapt playback because the resolver supplies one format.
+
+Do not blindly select the absolute lowest format. Lower bitrate reduces sustained bandwidth demand, but cannot remove DNS/TLS, request round-trip, CDN time-to-first-byte, or browser startup buffering. Very low audio quality is permanent for this progressive stream. A mid-range startup target (roughly 96–128 kbps AAC when available) is a better experiment than minimum bitrate; true seamless quality changes require multiple aligned audio renditions in segmented HLS/DASH and a player that can switch renditions without restarting the file.
+
+For arbitrary random selection, keep all-track metadata warm, start the selected rendition immediately, and preload only the known next track. Do not fetch every track's audio bytes to the browser. Before changing the production bitrate rule, record selection-to-resolver, resolver-to-media-request, media TTFB, first advancing media time, and underruns on controlled slow-network profiles and real iOS/Android/macOS devices. Treat zero delay as a measurable p95 target, not a guarantee for an uncached random media URL.
+

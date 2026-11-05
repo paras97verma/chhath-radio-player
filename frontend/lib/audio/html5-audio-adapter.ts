@@ -486,7 +486,6 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       if (this.isPriming) return;
       const attempt = this._getCurrentMediaAttempt(audio);
       if (this.hasUserInteracted && !attempt) return;
-      if (attempt && this.currentState !== "PLAYING") this._emitState("PLAYING");
       this._recordMediaProgress(audio);
       const dur = this.getDuration() || audio.duration;
       if (Number.isFinite(dur) && dur > 0) {
@@ -537,8 +536,9 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       this._emitState("ENDED");
     };
     const onError = async () => {
-      // If a newer load request is active or audio element was reset, ignore stale errors
-      if (this.isPriming || this.activeAbortController?.signal.aborted || this.isDestroyed) return;
+      // A real source can fail while gesture priming is still settling. The active
+      // attempt/source check below filters errors from the temporary silent source.
+      if (this.activeAbortController?.signal.aborted || this.isDestroyed) return;
       const attempt = this._getCurrentMediaAttempt(audio);
       if (!attempt) return;
       // If user has not interacted yet, or error is MEDIA_ERR_ABORTED (code 1), ignore

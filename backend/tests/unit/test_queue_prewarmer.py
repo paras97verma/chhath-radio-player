@@ -320,8 +320,11 @@ class TestQueuePrewarmer:
 
         mock_warm.side_effect = mock_warm_behavior
         snapshots = [
-            {"vid1": {"direct": 1}},
-            {"vid1": {"direct": 1}, "vid2": {"proxy": 2}},
+            {"vid1": {"direct": 1, "proxy": 1}},
+            {
+                "vid1": {"direct": 1, "proxy": 1},
+                "vid2": {"direct": 2, "proxy": 2},
+            },
         ]
         monkeypatch.setattr(
             prewarmer_module,
@@ -351,7 +354,7 @@ class TestQueuePrewarmer:
         async def fast_sleep(_delay):
             await real_sleep(0.001)
 
-        async def long_cycle(_cls):
+        async def long_cycle(_cls, *, include_priority=True):
             cycle_started.set()
             await release_cycle.wait()
             return {"total": 1, "warmed": 1, "failed": []}
@@ -396,15 +399,15 @@ class TestQueuePrewarmer:
 
         async def fake_sleep(delay):
             nonlocal main_sleeps
+            await real_sleep(0.001)
             if delay == 15:
                 main_sleeps += 1
                 if main_sleeps == 1:
                     now[0] += 400
                 elif main_sleeps == 2:
                     now[0] += 200
-            await real_sleep(0.001)
 
-        async def cycle(_cls):
+        async def cycle(_cls, *, include_priority=True):
             cycle_times.append(now[0])
             if len(cycle_times) == 2:
                 prewarmer_module._is_running = False

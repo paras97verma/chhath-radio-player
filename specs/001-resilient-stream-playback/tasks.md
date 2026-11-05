@@ -137,13 +137,22 @@ Tasks grouped by independently testable user story. Tests included because the f
 
 - [ ] T045 [US3] Make Media Session Play idempotent while the selected song is PLAYING or BUFFERING, and keep lock-screen metadata paused until the adapter confirms PLAYING in frontend/lib/radio-store.ts
 
+## Phase 10: Follow-up for first-progress truth and bitrate policy
+
+**Purpose**: Keep the player in BUFFERING until media time advances, preserve rapid source-failure recovery during gesture priming, and make bitrate decisions from measured startup/buffer evidence.
+
+**Independent test**: Run the adapter progress-gate test, WebKit direct-to-proxy recovery scenarios, and record controlled slow-network startup/underrun measurements in quickstart.md.
+
+- [x] T046 [US1] Emit PLAYING only after active media time advances, process active-source errors during gesture priming, and make the WebKit media mock track `currentSrc` in frontend/lib/audio/html5-audio-adapter.ts and frontend/__tests__/e2e/radio.spec.ts
+- [ ] T047 [US1] Measure random-track selection-to-first-progress, resolver latency, media TTFB, and underruns on slow-network profiles before setting a moderate startup-bitrate target or adding segmented ABR in specs/001-resilient-stream-playback/quickstart.md and specs/001-resilient-stream-playback/plan.md
+
 ## Dependencies and parallelism
 
 T001-T003 precede T004-T006. US1 and US2 share foundational contract. US3 depends on US1 source state machine. US4 depends on explicit store recovery states. Release follows all stories.
 
 Parallel: T001/T002; T007/T008; T014/T015/T016; T025/T026 after contract; T030/T031; provider/cache implementation T017-T019 must serialize on the same service file; T032-T034 must serialize on shared UI components.
 
-Follow-up dependency: T038 precedes T039, which precedes T040; T041 precedes T042, which precedes T043; T044 and T045 follow the cache contract. The backend tasks edit shared cache/reconciliation services and run serially. T036 manual shell evidence follows the code changes. No follow-up tasks are parallelizable.
+Follow-up dependency: T038 precedes T039, which precedes T040; T041 precedes T042, which precedes T043; T044 and T045 follow the cache contract. T047 needs the device/browser scenarios in T036. The backend tasks edit shared cache/reconciliation services and run serially. No follow-up tasks are parallelizable.
 
 ## MVP
 

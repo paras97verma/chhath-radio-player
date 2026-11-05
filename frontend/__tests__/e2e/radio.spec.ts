@@ -94,6 +94,12 @@ async function mockPlaybackEnvironment(page: Page): Promise<void> {
         this.__radioMockSrc = value ? new URL(value, document.baseURI).href : "";
       },
     });
+    Object.defineProperty(HTMLMediaElement.prototype, "currentSrc", {
+      configurable: true,
+      get(this: MockAudio) {
+        return this.__radioMockSrc ?? "";
+      },
+    });
     const removeAttribute = Element.prototype.removeAttribute;
     Element.prototype.removeAttribute = function (name: string) {
       if (this instanceof HTMLMediaElement && name.toLowerCase() === "src") {
