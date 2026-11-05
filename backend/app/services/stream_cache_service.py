@@ -108,11 +108,13 @@ class LegacyStreamResponse(TypedDict, total=False):
 STREAM_CACHE_PREFIX = "chhath:stream:"
 STREAM_FENCE_PREFIX = "chhath:stream:fence:"
 STREAM_LOCK_PREFIX = "chhath:lock:stream:"
+STREAM_REFRESH_DUE_KEY = "chhath:stream:refresh_due"
 HEALTH_PREFIX = "chhath:invidious:health:"
 STREAM_METRICS_KEY = "chhath:metrics:stream"
 
 CONSERVATIVE_TTL = 1800          # 30 Minutes when expiry timestamp is unknown
 EXPIRY_BUFFER_SECONDS = 600      # 10 Minutes safety buffer before known expiry
+REFRESH_LEAD_SECONDS = 900       # Refresh metadata 15 minutes before its serving deadline
 CACHE_RETENTION_GRACE_SECONDS = 3600
 MAX_CACHE_RETENTION_SECONDS = 86400
 LOCK_EXPIRE_SECONDS = 8          # Max lock hold time to prevent deadlocks
@@ -360,10 +362,12 @@ return 0
 COMMIT_FENCED_CACHE_LUA = """
 if redis.call("HGET", KEYS[1], "generation") ~= ARGV[1]
 or redis.call("HGET", KEYS[1], "fence_token") ~= ARGV[2]
-or redis.call("GET", KEYS[2]) ~= ARGV[3] then
+or redis.call("GET", KEYS[2]) ~= ARGV[5] then
     return 0
 end
-redis.call("SET", KEYS[3], ARGV[5], "EX", tonumber(ARGV[4]))
+redis.call("HSET", KEYS[1], "generation", ARGV[3], "fence_token", ARGV[4])
+redis.call("SET", KEYS[3], ARGV[7], "EX", tonumber(ARGV[6]))
+redis.call("ZADD", KEYS[4], tonumber(ARGV[9]), ARGV[8])
 return 1
 """
 
@@ -373,6 +377,7 @@ or redis.call("HGET", KEYS[1], "fence_token") ~= ARGV[2] then
     return 0
 end
 redis.call("SET", KEYS[2], ARGV[4], "EX", tonumber(ARGV[3]))
+redis.call("ZADD", KEYS[3], tonumber(ARGV[6]), ARGV[5])
 return 1
 """
 
@@ -383,6 +388,7 @@ local generation = redis.call("HINCRBY", KEYS[1], "generation", 1)
 redis.call("HSET", KEYS[1], "fence_token", ARGV[2])
 local deleted = redis.call("DEL", KEYS[2])
 redis.call("DEL", KEYS[3])
+redis.call("ZREM", KEYS[4], ARGV[3])
 return {generation, deleted}
 """
 
@@ -636,12 +642,14 @@ class StreamCacheService:
     ) -> int:
         result = redis_client.eval(
             EVICT_FENCED_CACHE_LUA,
-            3,
+            4,
             f"{STREAM_FENCE_PREFIX}{video_id}",
             f"{STREAM_CACHE_PREFIX}{video_id}",
             f"{STREAM_LOCK_PREFIX}{video_id}",
+            STREAM_REFRESH_DUE_KEY,
             expected_token or "",
             uuid.uuid4().hex,
+            video_id,
         )
         if expected_token and int(result[0]) == 0:
             _record_metric("generation_mismatches")
@@ -885,6 +893,56 @@ class StreamCacheService:
         retain_until = max(deadlines) + CACHE_RETENTION_GRACE_SECONDS
         return max(1, min(MAX_CACHE_RETENTION_SECONDS, math.ceil(retain_until - now)))
 
+    @staticmethod
+    def _refresh_due_at(
+        record: Optional[Dict[str, Any]],
+        now: float,
+        retry_delay: Optional[float] = None,
+    ) -> Optional[float]:
+        if retry_delay is not None:
+            return now + max(1.0, float(retry_delay))
+        sources = record.get("sources", []) if isinstance(record, dict) else []
+        deadlines = []
+        for source in (sources if isinstance(sources, list) else []):
+            if not isinstance(source, dict):
+                continue
+            try:
+                deadline = float(source.get("refresh_at"))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(deadline):
+                deadlines.append(deadline)
+        if not deadlines:
+            return None
+        return max(now, min(deadlines) - REFRESH_LEAD_SECONDS)
+
+    @classmethod
+    def schedule_stream_refresh(
+        cls,
+        video_id: str,
+        record: Optional[Dict[str, Any]] = None,
+        *,
+        retry_delay: Optional[float] = None,
+        now: Optional[float] = None,
+    ) -> bool:
+        """Persist the next metadata refresh deadline without storing media bytes or raw URLs."""
+        clean_id = (video_id or "").strip()
+        redis_client = _get_redis()
+        if not clean_id or not redis_client:
+            return False
+
+        current_time = time.time() if now is None else float(now)
+        due_at = cls._refresh_due_at(record, current_time, retry_delay)
+        if due_at is None:
+            return False
+
+        try:
+            redis_client.zadd(STREAM_REFRESH_DUE_KEY, {clean_id: due_at})
+            return True
+        except Exception as exc:
+            logger.warning("[StreamCache] Could not schedule refresh for %s: %s", clean_id, exc)
+            return False
+
     @classmethod
     def get_stream_fast(
         cls, video_id: str, *, record_metrics: bool = True
@@ -957,13 +1015,16 @@ class StreamCacheService:
                             return None
                         migrated = redis_client.eval(
                             WRITE_FENCED_CACHE_LUA,
-                            2,
+                            3,
                             f"{STREAM_FENCE_PREFIX}{clean_id}",
                             cache_key,
+                            STREAM_REFRESH_DUE_KEY,
                             str(stream_data["generation"]),
                             stream_data["fence_token"],
                             ttl,
                             json.dumps(stream_data),
+                            clean_id,
+                            cls._refresh_due_at(stream_data, now),
                         )
                         if not migrated:
                             return None
@@ -1029,6 +1090,7 @@ class StreamCacheService:
         cache_key = f"{STREAM_CACHE_PREFIX}{video_id}"
         previous_record = None
         fence = None
+        expected_fence = None
         lock_acquired = False
         if redis_client:
             try:
@@ -1040,9 +1102,20 @@ class StreamCacheService:
                     max_wait = STREAM_RESOLUTION_TIMEOUT_SECONDS + LOCK_RENEW_INTERVAL_SECONDS
                     return cls._poll_for_result(video_id, redis_client, poll_interval=poll_interval, max_wait_sec=max_wait)
                 previous_record = cls._read_current_record(redis_client, video_id)
-                fence = cls._advance_fence(redis_client, video_id)
-                _l1_cache.pop(video_id, None)
-                _l1_cache_ts.pop(video_id, None)
+                if previous_record:
+                    expected_fence = {
+                        "generation": previous_record["generation"],
+                        "fence_token": previous_record["fence_token"],
+                    }
+                    fence = {
+                        "generation": int(previous_record["generation"]) + 1,
+                        "fence_token": uuid.uuid4().hex,
+                    }
+                else:
+                    fence = cls._advance_fence(redis_client, video_id)
+                    expected_fence = dict(fence)
+                    _l1_cache.pop(video_id, None)
+                    _l1_cache_ts.pop(video_id, None)
             except Exception as exc:
                 logger.warning("[StreamCache] Redis coordination failed for %s: %s", video_id, exc)
                 if lock_acquired:
@@ -1053,7 +1126,30 @@ class StreamCacheService:
                 redis_client = None
                 lock_acquired = False
                 fence = None
+                expected_fence = None
                 previous_record = None
+
+        def preserve_current_candidates(now: float) -> Optional[LegacyStreamResponse]:
+            """Return old, still-valid candidates while a failed refresh leaves the cache intact."""
+            if not (redis_client and lock_acquired and previous_record):
+                return None
+            if not cls._matches_fence(redis_client, video_id, previous_record):
+                return None
+            sources = cls._validate_source_candidates(previous_record.get("sources"), now, video_id)
+            if not sources:
+                return None
+
+            fallback = dict(previous_record)
+            fallback["sources"] = sources
+            fallback = cls._validate_cache_record(fallback, now, video_id)
+            if not fallback:
+                return None
+
+            response = cls._public_response(fallback)
+            response["cached"] = True
+            response["cache_tier"] = "L2_STALE_WHILE_REFRESH"
+            cls.schedule_stream_refresh(video_id, retry_delay=60, now=now)
+            return response
 
         def resolve_and_commit() -> Optional[LegacyStreamResponse]:
             nonlocal previous_record, fence
@@ -1072,7 +1168,7 @@ class StreamCacheService:
 
             if not stream_result:
                 _record_metric("extractions_failed")
-                return None
+                return preserve_current_candidates(now)
 
             if fence:
                 stream_result.update(fence)
@@ -1082,23 +1178,28 @@ class StreamCacheService:
             stream_result = cls._validate_cache_record(stream_result, now, video_id)
             if not stream_result:
                 _record_metric("extractions_failed")
-                return None
+                return preserve_current_candidates(now)
 
             if redis_client and lock_acquired and fence:
                 ttl = cls._cache_retention_ttl(stream_result, now)
                 if ttl <= 0:
-                    return None
+                    return preserve_current_candidates(now)
                 committed = redis_client.eval(
                     COMMIT_FENCED_CACHE_LUA,
-                    3,
+                    4,
                     f"{STREAM_FENCE_PREFIX}{video_id}",
                     lock_key,
                     cache_key,
+                    STREAM_REFRESH_DUE_KEY,
+                    str(expected_fence["generation"]),
+                    expected_fence["fence_token"],
                     str(fence["generation"]),
                     fence["fence_token"],
                     lock_token,
                     ttl,
                     json.dumps(stream_result),
+                    video_id,
+                    cls._refresh_due_at(stream_result, now),
                 )
                 if not committed:
                     _record_metric("stale_write_rejections")
@@ -1370,13 +1471,16 @@ class StreamCacheService:
                     if current and ttl > 0:
                         written = redis_client.eval(
                             WRITE_FENCED_CACHE_LUA,
-                            2,
+                            3,
                             f"{STREAM_FENCE_PREFIX}{clean_id}",
                             f"{STREAM_CACHE_PREFIX}{clean_id}",
+                            STREAM_REFRESH_DUE_KEY,
                             str(fence["generation"]),
                             fence["fence_token"],
                             ttl,
                             json.dumps(current),
+                            clean_id,
+                            cls._refresh_due_at(current, time.time()),
                         )
                         if written:
                             _cache_l1(clean_id, current)
@@ -1473,6 +1577,7 @@ class StreamCacheService:
 
                     # Reset metrics counters ONLY on full on-demand cache flush
                     redis_client.delete(STREAM_METRICS_KEY)
+                    redis_client.delete(STREAM_REFRESH_DUE_KEY)
                 except Exception as exc:
                     logger.warning("[StreamCache] Redis flush all failed: %s", exc)
 
@@ -1503,6 +1608,8 @@ class StreamCacheService:
             "lookup_errors": 0,
             "songs_ready": 0,
             "songs_missing": len(clean_ids),
+            "songs_fully_warm": 0,
+            "songs_partial": 0,
             "songs_expiring": 0,
             "modes": modes,
         }
@@ -1519,6 +1626,8 @@ class StreamCacheService:
 
         now = time.time()
         ready_song_count = 0
+        fully_warm_count = 0
+        partial_song_count = 0
         expiring_song_count = 0
         read_results = None
         pipeline_factory = getattr(redis_client, "pipeline", None)
@@ -1580,7 +1689,7 @@ class StreamCacheService:
                     current = valid_by_mode.get(mode)
                     if current:
                         summary["ready"] += 1
-                        if current["refresh_at"] - now <= EXPIRY_BUFFER_SECONDS:
+                        if current["refresh_at"] - now <= REFRESH_LEAD_SECONDS:
                             summary["expiring"] += 1
                             song_expiring = True
                         continue
@@ -1611,8 +1720,17 @@ class StreamCacheService:
                     else:
                         summary["missing"] += 1
 
-                if "proxy" in valid_by_mode:
+                if valid_by_mode:
                     ready_song_count += 1
+                is_fully_warm = all(
+                    mode in valid_by_mode
+                    and valid_by_mode[mode]["refresh_at"] - now > REFRESH_LEAD_SECONDS
+                    for mode in ("direct", "proxy")
+                )
+                if is_fully_warm:
+                    fully_warm_count += 1
+                elif valid_by_mode:
+                    partial_song_count += 1
                 if song_expiring:
                     expiring_song_count += 1
             except Exception as exc:
@@ -1623,6 +1741,8 @@ class StreamCacheService:
 
         result["songs_ready"] = ready_song_count
         result["songs_missing"] = max(0, len(clean_ids) - ready_song_count)
+        result["songs_fully_warm"] = fully_warm_count
+        result["songs_partial"] = partial_song_count
         result["songs_expiring"] = expiring_song_count
         return result
 

@@ -96,3 +96,11 @@ The opt-in fixture timing command `PLAYBACK_PERF=1 CI=1 NEXT_PUBLIC_API_URL=http
 4. Select, play, pause, next, previous, seek, volume, MediaSession, background/foreground, end in all named macOS and iOS browsers; record each browser shell even where engines match.
 5. Record selection-to-first-progress, resolution time, first byte if observable, canplay, candidate/provider, retries, terminal reason, queue index. Measure p50/p95 on fixtures; live upstream separately.
 
+## Cache freshness and system controls
+
+1. Seed one enabled song with direct and proxy candidates, then verify its Redis due score is the earliest candidate `refresh_at - 900s`; confirm both candidates count toward full warmth.
+2. Make only one source mode current, or place either candidate inside its 900-second lead window. Readiness must report partial/degraded, keep any still-valid alternate playable, and schedule refresh.
+3. Advance the clock through a due refresh. During a delayed resolver request, confirm a concurrent playback lookup still returns the current valid generation. On success, confirm the pair and next deadline are replaced atomically. On resolver failure, confirm still-valid candidates remain fenced and playable, retry is delayed with bounded backoff, invalidation wins any writer race, and no candidate at/past `refresh_at` is served.
+4. Restart/evict/flush Redis state and verify startup/full reconciliation rebuilds due entries for every enabled song; verify disabled/deleted songs leave the due queue.
+5. Repeatedly invoke Media Session Play during PLAYING and BUFFERING. Confirm no `loadVideo()` call, queue-index change, or duplicate playback start. Record OS/browser/engine and which lock-screen actions the device actually exposes.
+

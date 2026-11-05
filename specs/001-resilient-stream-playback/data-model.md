@@ -18,7 +18,11 @@ Known expiry is valid only when more than 600s remains. Unknown-expiry metadata 
 
 ## CatalogWarmState
 
-Fields: video_id, last_attempt_at, next_attempt_at, status (fresh/direct_only/proxy_only/failed/overdue), retry_count, bounded last_error. Derived from candidates and retry schedule, never TTL alone.
+Fields: video_id, last_attempt_at, next_attempt_at, next_refresh_at, status (fully_warm/direct_only/proxy_only/partial/failed/overdue), retry_count, bounded last_error. `fully_warm` requires both direct and proxy candidates with `refresh_at > now + 900s`; derived from candidates and retry schedule, never Redis TTL alone.
+
+## StreamRefreshSchedule
+
+One Redis sorted-set member per video ID. Score is the earliest current candidate `refresh_at` minus 900 seconds; processing a due member refreshes the song and atomically replaces its cache generation and score with newly validated candidates. The current generation remains readable during the network refresh. Failed refreshes retain still-valid old candidates and move the member to a bounded retry deadline. Cache flush removes the member; startup/full-catalog reconciliation rebuilds missing schedule entries. The schedule contains IDs/deadlines only, never media bytes or raw URLs.
 
 ## PlaybackAttempt
 

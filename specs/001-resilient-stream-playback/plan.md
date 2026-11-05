@@ -176,3 +176,14 @@ The Safari gesture path is a code-level hypothesis supported by the current asyn
 
 Implementation order: T038 startup request removal and non-blocking warm; T039 event scoping and progress-based buffering; T040 one-shot prepared-source use from the gesture. These touch the shared adapter and therefore run serially. MVP: all three US1/US3 follow-up tasks; T036's six named shell runs remain a release gate.
 
+## Follow-up plan: durable catalog freshness and system controls
+
+The latest requirement audit found that current warm semantics and schedule do not meet all-track freshness: a proxy-only record is considered warm, the 30-minute proxy deadline can pass between hourly scans, and the browser's one-time catalog sweep neither tracks candidate deadlines nor retries. Repair in this order:
+
+1. Define complete warmth as both direct and proxy candidates current and more than 900 seconds from `refresh_at`. Report partial/degraded coverage distinctly while preserving valid alternate playback.
+2. Add a Redis sorted set keyed by video ID, scored at the earliest candidate `refresh_at - 900s`. Cache writes and warm catalog reads seed/update the score; cache payload, generation fence, and due score commit atomically. A due worker processes it every loop with fenced single-flight resolution and bounded retry while the prior still-valid generation remains readable. Failed refreshes leave that generation intact and move the next attempt to a backoff deadline; invalidation wins against an in-flight writer. Keep full reconciliation as recovery for lost due-index entries; actual upstream traffic remains governed by configured per-origin rate and concurrency limits.
+3. Remove the browser's one-shot all-queue sweep; backend cache remains shared owner. Keep one selected/up-next candidate slot for immediate playback.
+4. Make Media Session Play idempotent during PLAYING/BUFFERING and keep controls/state consistent with the active song. Device/OS support remains feature-detected and must be recorded per shell.
+
+Do not claim literal Spotify parity or always-warm behavior during provider/cache outage. The release target is full pair coverage when configured upstream capacity is sufficient, zero expired-candidate serves, bounded retries when it is not, and no app-generated reload on duplicate system Play. **T041–T045** are the follow-up tasks; T036 remains the device evidence gate.
+

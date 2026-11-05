@@ -32,6 +32,8 @@ from app.services.song_service import (
     RECONCILER_RETRY_ATTEMPTS_KEY,
 )
 from app.services.stream_cache_service import (
+    REFRESH_LEAD_SECONDS,
+    STREAM_REFRESH_DUE_KEY,
     StreamCacheService,
 )
 
@@ -39,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
 
-RECONCILIATION_INTERVAL_SECONDS = int(os.getenv("RECONCILIATION_INTERVAL_SECONDS", "3600"))  # 1 hour
+RECONCILIATION_INTERVAL_SECONDS = int(os.getenv("RECONCILIATION_INTERVAL_SECONDS", "900"))  # 15 minutes
 RECONCILER_BATCH_SIZE = int(os.getenv("RECONCILER_BATCH_SIZE", "20"))
 SONG_PACE_DELAY_SECONDS = float(os.getenv("SONG_PACE_DELAY_SECONDS", "0.5"))
 MAX_SONG_PACE_DELAY_SECONDS = 2.0
@@ -48,6 +50,8 @@ LEADER_KEY = "chhath:leader:catalog_reconciler"
 LEADER_LEASE_TTL = 30  # seconds
 LEADER_LEASE_RENEW_INTERVAL_SECONDS = LEADER_LEASE_TTL / 3
 PRIORITY_RETRY_BACKOFF_SECONDS = (60, 300, 900, 3600)
+REFRESH_RETRY_BACKOFF_SECONDS = (30, 60, 120, 300, 900)
+REFRESH_RETRY_ATTEMPTS_KEY = "chhath:stream:refresh_retry_attempts"
 CHECKPOINT_KEY = "chhath:reconciler:checkpoint"
 CATALOG_STATUS_KEY = "chhath:catalog:status"
 CATALOG_READINESS_CACHE_KEY = "chhath:catalog:readiness_cache"
@@ -93,6 +97,18 @@ def _schedule_priority_retry(redis_client: Any, video_id: str) -> None:
     delay = base_delay + random.uniform(0, base_delay * 0.1)
     redis_client.hset(RECONCILER_RETRY_ATTEMPTS_KEY, video_id, attempt)
     redis_client.zadd(RECONCILER_RETRY_KEY, {video_id: time.time() + delay})
+
+
+def _schedule_refresh_retry(redis_client: Any, video_id: str) -> None:
+    raw_attempt = redis_client.hget(REFRESH_RETRY_ATTEMPTS_KEY, video_id)
+    try:
+        previous_attempt = max(0, int(raw_attempt)) if isinstance(raw_attempt, (bytes, str, int)) else 0
+    except (TypeError, ValueError):
+        previous_attempt = 0
+    attempt = min(previous_attempt + 1, len(REFRESH_RETRY_BACKOFF_SECONDS))
+    delay = REFRESH_RETRY_BACKOFF_SECONDS[attempt - 1]
+    redis_client.hset(REFRESH_RETRY_ATTEMPTS_KEY, video_id, attempt)
+    redis_client.zadd(STREAM_REFRESH_DUE_KEY, {video_id: time.time() + delay})
 
 
 def _try_acquire_catalog_lease(redis_client: Any, worker_id: str) -> bool:
@@ -144,7 +160,7 @@ def _load_incomplete_metadata_ids() -> List[tuple[Any, str]]:
 
 
 def _snapshot_candidate_modes(video_ids: List[str]) -> Dict[str, Dict[str, float]]:
-    """Snapshot only candidates returned by the fenced, freshness-valid Redis lookup."""
+    """Snapshot only candidates outside the proactive refresh window."""
     snapshot: Dict[str, Dict[str, float]] = {}
     for video_id in video_ids:
         modes: Dict[str, float] = {}
@@ -154,7 +170,13 @@ def _snapshot_candidate_modes(video_ids: List[str]) -> Dict[str, Dict[str, float
                 for source in stream.get("sources", []):
                     mode = source.get("mode")
                     resolved_at = source.get("resolved_at")
-                    if mode in {"direct", "proxy"} and isinstance(resolved_at, (int, float)):
+                    refresh_at = source.get("refresh_at")
+                    if (
+                        mode in {"direct", "proxy"}
+                        and isinstance(resolved_at, (int, float))
+                        and isinstance(refresh_at, (int, float))
+                        and refresh_at > time.time() + REFRESH_LEAD_SECONDS
+                    ):
                         modes[mode] = float(resolved_at)
         except Exception as exc:
             logger.warning("[CatalogReconciler] Candidate snapshot failed for %s: %s", video_id, exc)
@@ -176,7 +198,7 @@ def _summarize_candidate_modes(
     for video_id in video_ids:
         previous = before.get(video_id, {})
         current = after.get(video_id, {})
-        if current:
+        if {"direct", "proxy"}.issubset(current):
             warmed_ids.append(video_id)
         for mode, counts in modes.items():
             resolved_at = current.get(mode)
@@ -190,7 +212,10 @@ def _summarize_candidate_modes(
                 if video_id in failed_ids or mode in previous:
                     counts["failed"] += 1
 
-    final_failed = [video_id for video_id in video_ids if not after.get(video_id)]
+    final_failed = [
+        video_id for video_id in video_ids
+        if not {"direct", "proxy"}.issubset(after.get(video_id, {}))
+    ]
     return {
         "warmed": len(warmed_ids),
         "failed": final_failed,
@@ -228,27 +253,38 @@ class CatalogReconciliationService:
     @classmethod
     def is_song_warm(cls, video_id: str) -> bool:
         """
-        Returns true only when Redis returns a current fenced generation with a valid source.
+        Returns true only when Redis has both source modes outside the proactive refresh window.
         """
-        return bool(cls._current_candidate_modes(video_id))
+        current = cls._current_candidate_record(video_id)
+        return cls._has_fully_warm_pair(current, video_id)
 
     @classmethod
-    def _current_candidate_modes(cls, video_id: str) -> set[str]:
+    def _current_candidate_record(cls, video_id: str) -> Optional[Dict[str, Any]]:
         clean_id = (video_id or "").strip()
         if not clean_id:
-            return set()
+            return None
         try:
             current = StreamCacheService.get_stream_fast(clean_id, record_metrics=False)
-            if not cls._has_current_generation_candidate(current, clean_id):
-                return set()
-            return {
-                source.get("mode")
-                for source in current.get("sources", [])
-                if source.get("mode") in {"direct", "proxy"}
-            }
+            return current if cls._has_current_generation_candidate(current, clean_id) else None
         except Exception as exc:
             logger.debug("[CatalogReconciler] Current stream check failed for %s: %s", clean_id, exc)
-            return set()
+            return None
+
+    @classmethod
+    def _has_fully_warm_pair(cls, stream: Any, video_id: str, now: Optional[float] = None) -> bool:
+        if not cls._has_current_generation_candidate(stream, video_id):
+            return False
+        current_time = time.time() if now is None else float(now)
+        by_mode = {
+            source.get("mode"): source
+            for source in stream.get("sources", [])
+            if source.get("mode") in {"direct", "proxy"}
+        }
+        return all(
+            mode in by_mode
+            and float(by_mode[mode].get("refresh_at", 0)) > current_time + REFRESH_LEAD_SECONDS
+            for mode in ("direct", "proxy")
+        )
 
     @classmethod
     def warm_song(cls, video_id: str, force: bool = False) -> bool:
@@ -260,12 +296,19 @@ class CatalogReconciliationService:
         if not clean_id or len(clean_id) < 5:
             return False
 
-        current_modes = set() if force else cls._current_candidate_modes(clean_id)
-        if "proxy" in current_modes:
+        current = None if force else cls._current_candidate_record(clean_id)
+        if current and cls._has_fully_warm_pair(current, clean_id):
+            StreamCacheService.schedule_stream_refresh(clean_id, current)
             return True
 
-        # A current direct URL alone is insufficient: Safari and iOS need the
-        # independently refreshed Invidious proxy candidate as their fallback.
+        current_modes = {
+            source.get("mode")
+            for source in current.get("sources", [])
+            if source.get("mode") in {"direct", "proxy"}
+        } if current else set()
+
+        # Repair either missing/due source mode. Keep a current alternate available
+        # if upstream metadata refresh fails.
         force_refresh = force or bool(current_modes)
 
         try:
@@ -274,10 +317,7 @@ class CatalogReconciliationService:
                 priority="normal",
                 force_fresh=force_refresh,
             )
-            return bool(
-                cls._has_current_generation_candidate(stream, clean_id)
-                and any(source.get("mode") == "proxy" for source in stream.get("sources", []))
-            )
+            return cls._has_fully_warm_pair(stream, clean_id)
         except Exception as exc:
             logger.warning("[CatalogReconciler] Failed to warm song %s: %s", clean_id, exc)
 
@@ -298,6 +338,10 @@ class CatalogReconciliationService:
                 success = await asyncio.to_thread(cls.warm_song, clean_id, force=True)
                 if success:
                     warmed += 1
+                else:
+                    redis_client = await asyncio.to_thread(_get_redis)
+                    if redis_client:
+                        await asyncio.to_thread(_schedule_priority_retry, redis_client, clean_id)
             except Exception as exc:
                 logger.warning("[CatalogReconciler] Failed warming specific song %s: %s", clean_id, exc)
             await asyncio.sleep(0.05)
@@ -305,6 +349,83 @@ class CatalogReconciliationService:
         cls.invalidate_status_cache()
         logger.info("[CatalogReconciler] Selectively warmed %d/%d tracks.", warmed, len(video_ids))
         return warmed
+
+    @classmethod
+    def process_due_refresh_queue(cls, max_items: int = 10) -> int:
+        """Refresh metadata whose proactive deadline is due, retaining bounded retry state."""
+        redis_client = _get_redis()
+        limit = max(0, int(max_items))
+        if not redis_client or limit == 0:
+            return 0
+
+        try:
+            due = redis_client.zrangebyscore(
+                STREAM_REFRESH_DUE_KEY,
+                min="-inf",
+                max=time.time(),
+                start=0,
+                num=limit,
+            ) or []
+        except Exception as exc:
+            logger.warning("[CatalogReconciler] Could not read due stream refreshes: %s", exc)
+            return 0
+        if not due:
+            return 0
+
+        db = SessionLocal()
+        processed = 0
+        try:
+            for raw_id in due:
+                video_id = _decode_queue_id(raw_id).strip()
+                if not video_id:
+                    continue
+                try:
+                    song = SongService.get_by_video_id(db, video_id)
+                except Exception as exc:
+                    logger.warning("[CatalogReconciler] Could not verify due track %s: %s", video_id, exc)
+                    try:
+                        _schedule_refresh_retry(redis_client, video_id)
+                    except Exception:
+                        pass
+                    continue
+                if not song or not getattr(song, "enabled", False):
+                    redis_client.zrem(STREAM_REFRESH_DUE_KEY, video_id)
+                    redis_client.hdel(REFRESH_RETRY_ATTEMPTS_KEY, video_id)
+                    continue
+
+                try:
+                    priority_retry_at = redis_client.zscore(RECONCILER_RETRY_KEY, video_id)
+                    if priority_retry_at is not None:
+                        redis_client.zadd(
+                            STREAM_REFRESH_DUE_KEY,
+                            {video_id: float(priority_retry_at)},
+                        )
+                        continue
+                except Exception:
+                    pass
+
+                processed += 1
+                try:
+                    success = cls.warm_song(video_id)
+                except Exception as exc:
+                    logger.warning("[CatalogReconciler] Due refresh failed for %s: %s", video_id, exc)
+                    success = False
+
+                if success:
+                    redis_client.hdel(REFRESH_RETRY_ATTEMPTS_KEY, video_id)
+                else:
+                    try:
+                        _schedule_refresh_retry(redis_client, video_id)
+                    except Exception as exc:
+                        logger.warning("[CatalogReconciler] Could not back off refresh for %s: %s", video_id, exc)
+        except Exception as exc:
+            logger.warning("[CatalogReconciler] Error processing due refreshes: %s", exc)
+        finally:
+            db.close()
+
+        if processed:
+            cls.invalidate_status_cache()
+        return processed
 
     @classmethod
     def process_priority_queue(cls, max_items: int = 10) -> int:
@@ -361,11 +482,16 @@ class CatalogReconciliationService:
                 processed += 1
                 try:
                     song = SongService.get_by_video_id(db, vid)
-                    if song:
-                        try:
-                            SongService.sync_song_metadata(db, song)
-                        except Exception as exc:
-                            logger.warning("[CatalogReconciler] Priority metadata sync failed for %s: %s", vid, exc)
+                    if not song or not getattr(song, "enabled", False):
+                        redis_client.zrem(RECONCILER_RETRY_KEY, vid)
+                        redis_client.hdel(RECONCILER_RETRY_ATTEMPTS_KEY, vid)
+                        redis_client.zrem(STREAM_REFRESH_DUE_KEY, vid)
+                        redis_client.hdel(REFRESH_RETRY_ATTEMPTS_KEY, vid)
+                        continue
+                    try:
+                        SongService.sync_song_metadata(db, song)
+                    except Exception as exc:
+                        logger.warning("[CatalogReconciler] Priority metadata sync failed for %s: %s", vid, exc)
                     success = cls.warm_song(vid, force=True)
                 except Exception as exc:
                     logger.warning("[CatalogReconciler] Priority warm failed for %s: %s", vid, exc)
@@ -393,20 +519,16 @@ class CatalogReconciliationService:
         pace_delay: float = SONG_PACE_DELAY_SECONDS,
     ) -> List[str]:
         """
-        Warms a list of video IDs sequentially with pacing delay.
+        Warms a list of video IDs sequentially; the shared per-origin limiter paces network work.
         Returns a list of video IDs that failed resolution during this pass.
         """
         failed_ids: List[str] = []
-        bounded_delay = _bounded_pace_delay(pace_delay)
 
-        for idx, vid in enumerate(video_ids):
+        for vid in video_ids:
             await asyncio.sleep(0)
             success = await asyncio.to_thread(cls.warm_song, vid)
             if not success:
                 failed_ids.append(vid)
-
-            if idx < len(video_ids) - 1 and bounded_delay > 0:
-                await asyncio.sleep(bounded_delay)
 
         return failed_ids
 
@@ -456,7 +578,7 @@ class CatalogReconciliationService:
         return {"count": len(songs), "has_more": len(songs) == limit}
 
     @classmethod
-    async def run_prewarmer_cycle(cls) -> Dict[str, Any]:
+    async def run_prewarmer_cycle(cls, *, include_priority: bool = True) -> Dict[str, Any]:
         """
         Executes a complete catalog-wide reconciliation cycle across all enabled songs.
         Provides backwards compatibility with legacy QueuePrewarmer calls and runs 2-pass retry.
@@ -476,7 +598,8 @@ class CatalogReconciliationService:
         before_modes = await asyncio.to_thread(_snapshot_candidate_modes, video_ids)
 
         # Process any pending priority queue items first
-        await asyncio.to_thread(cls.process_priority_queue, max_items=20)
+        if include_priority:
+            await asyncio.to_thread(cls.process_priority_queue, max_items=20)
 
         # Mark reconciliation as in progress in Redis
         redis_client = _get_redis()
@@ -515,15 +638,32 @@ class CatalogReconciliationService:
         # Pass 2: Retry failed tracks after SECOND_PASS_WAIT_SECONDS
         still_failed: List[str] = []
         if failed_pass_1:
+            retry_ids = []
+            for video_id in failed_pass_1:
+                if cls._current_candidate_record(video_id):
+                    still_failed.append(video_id)
+                else:
+                    retry_ids.append(video_id)
+
             logger.warning(
-                "[CatalogReconciler] Pass 1 complete: %d/%d songs succeeded. %d failed. Pausing %.1fs before 2nd pass...",
+                "[CatalogReconciler] Pass 1 complete: %d/%d songs succeeded. %d cold failures will retry after %.1fs...",
                 total_count - len(failed_pass_1),
                 total_count,
-                len(failed_pass_1),
+                len(retry_ids),
                 SECOND_PASS_WAIT_SECONDS,
             )
-            await asyncio.sleep(SECOND_PASS_WAIT_SECONDS)
-            still_failed = await cls.warm_queue_pass(failed_pass_1, pace_delay=SONG_PACE_DELAY_SECONDS)
+            if retry_ids:
+                await asyncio.sleep(SECOND_PASS_WAIT_SECONDS)
+                still_failed.extend(
+                    await cls.warm_queue_pass(retry_ids, pace_delay=SONG_PACE_DELAY_SECONDS)
+                )
+
+        if redis_client:
+            for video_id in still_failed:
+                try:
+                    _schedule_refresh_retry(redis_client, video_id)
+                except Exception as exc:
+                    logger.warning("[CatalogReconciler] Could not retain refresh retry for %s: %s", video_id, exc)
 
         after_modes = await asyncio.to_thread(_snapshot_candidate_modes, video_ids)
         mode_summary = _summarize_candidate_modes(
@@ -636,10 +776,13 @@ class CatalogReconciliationService:
         stream_modes = cache_summary["modes"]
         stream_direct_ready = int(stream_modes["direct"]["ready"])
         stream_proxy_ready = int(stream_modes["proxy"]["ready"])
-        stream_degraded = max(0, stream_proxy_ready - stream_direct_ready)
+        stream_fully_warm = int(cache_summary.get("songs_fully_warm", 0) or 0)
+        stream_degraded = int(cache_summary.get(
+            "songs_partial", max(0, max(stream_proxy_ready, stream_direct_ready) - stream_fully_warm)
+        ) or 0)
         stream_expiring = int(cache_summary["songs_expiring"])
-        total_stream_ready = stream_proxy_ready
-        stream_missing = max(0, enabled_songs - total_stream_ready)
+        total_stream_ready = int(cache_summary["songs_ready"])
+        stream_missing = int(cache_summary["songs_missing"])
 
         # Leader check
         current_leader = None
@@ -656,6 +799,8 @@ class CatalogReconciliationService:
         catalog_cycle = {}
         retry_overdue_count = 0
         oldest_retry_overdue_age_seconds = 0.0
+        refresh_due_count = 0
+        oldest_refresh_due_age_seconds = 0.0
         if redis_client:
             try:
                 raw_cycle = redis_client.get(CATALOG_STATUS_KEY)
@@ -678,6 +823,21 @@ class CatalogReconciliationService:
                 oldest_retry_overdue_age_seconds = max(retry_ages, default=0.0)
             except Exception:
                 pass
+            try:
+                due_refreshes = redis_client.zrangebyscore(
+                    STREAM_REFRESH_DUE_KEY,
+                    min="-inf",
+                    max=now_ts,
+                    withscores=True,
+                ) or []
+                refresh_ages = [
+                    max(0.0, now_ts - float(score))
+                    for _video_id, score in due_refreshes
+                ]
+                refresh_due_count = len(refresh_ages)
+                oldest_refresh_due_age_seconds = max(refresh_ages, default=0.0)
+            except Exception:
+                pass
         stream_failed = int(catalog_cycle.get("failed", 0) or 0)
         oldest_overdue_age_seconds = max(
             float(mode.get("oldest_overdue_age_seconds", 0) or 0)
@@ -693,6 +853,9 @@ class CatalogReconciliationService:
                 "metadata_ready": metadata_ready,
                 "metadata_incomplete": metadata_incomplete,
                 "stream_ready": total_stream_ready,
+                "stream_fully_warm": stream_fully_warm,
+                "stream_refresh_due_count": refresh_due_count,
+                "oldest_stream_refresh_due_age_seconds": oldest_refresh_due_age_seconds,
                 "stream_direct_ready": stream_direct_ready,
                 "stream_proxy_ready": stream_proxy_ready,
                 "stream_degraded": stream_degraded,
@@ -704,6 +867,7 @@ class CatalogReconciliationService:
                 "cache_available": cache_summary["cache_available"],
                 "metadata_completeness_percent": round((metadata_ready / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
                 "stream_readiness_percent": round((total_stream_ready / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
+                "stream_full_warmth_percent": round((stream_fully_warm / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
                 "true_direct_ready_percent": round((stream_direct_ready / enabled_songs * 100), 1) if enabled_songs > 0 else 0,
                 "is_reconciling": is_reconciling,
             },
@@ -714,6 +878,8 @@ class CatalogReconciliationService:
                 "modes": catalog_cycle.get("modes", stream_modes),
                 "retry_overdue_count": retry_overdue_count,
                 "oldest_retry_overdue_age_seconds": oldest_retry_overdue_age_seconds,
+                "refresh_due_count": refresh_due_count,
+                "oldest_refresh_due_age_seconds": oldest_refresh_due_age_seconds,
                 "oldest_mode_overdue_age_seconds": oldest_overdue_age_seconds,
                 "lookup_errors": cache_summary["lookup_errors"],
             },
@@ -751,12 +917,15 @@ async def _reconciler_loop() -> None:
     logger.info("[CatalogReconciler] Background worker %s initialized. First cycle in 5s...", WORKER_ID)
 
     heartbeat_task: Optional[asyncio.Task] = None
+    reconciliation_task: Optional[asyncio.Task] = None
     heartbeat_client = None
     try:
         await asyncio.sleep(5)
         last_cycle_time = 0.0
 
         while _is_running:
+            due_refreshes_processed = 0
+            priority_items_processed = 0
             try:
                 redis_client = await asyncio.to_thread(_get_redis)
                 is_leader = bool(
@@ -778,17 +947,36 @@ async def _reconciler_loop() -> None:
                             _catalog_lease_heartbeat(redis_client, WORKER_ID)
                         )
 
-                    await asyncio.to_thread(
+                    priority_items_processed = await asyncio.to_thread(
                         CatalogReconciliationService.process_priority_queue,
                         max_items=10,
                     )
+                    due_refreshes_processed = await asyncio.to_thread(
+                        CatalogReconciliationService.process_due_refresh_queue,
+                        max_items=10,
+                    )
+
+                    if reconciliation_task and reconciliation_task.done():
+                        try:
+                            reconciliation_task.result()
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as exc:
+                            logger.error("[CatalogReconciler] Full reconciliation failed: %s", exc)
+                        reconciliation_task = None
+
                     cycle_interval = max(1, RECONCILIATION_INTERVAL_SECONDS)
-                    if time.time() - last_cycle_time >= cycle_interval:
+                    if time.time() - last_cycle_time >= cycle_interval and reconciliation_task is None:
                         logger.info("[CatalogReconciler] Worker %s running full catalog warming pass...", WORKER_ID)
-                        await CatalogReconciliationService.run_prewarmer_cycle()
                         last_cycle_time = time.time()
+                        reconciliation_task = asyncio.create_task(
+                            CatalogReconciliationService.run_prewarmer_cycle(include_priority=False)
+                        )
                 else:
                     logger.debug("[CatalogReconciler] Worker %s in standby (non-leader).", WORKER_ID)
+                    if reconciliation_task is not None:
+                        reconciliation_task.cancel()
+                        reconciliation_task = None
                     if heartbeat_task is not None:
                         heartbeat_task.cancel()
                         heartbeat_task = None
@@ -798,10 +986,17 @@ async def _reconciler_loop() -> None:
             except Exception as exc:
                 logger.error("[CatalogReconciler] Unexpected error in reconciler loop: %s", exc)
 
-            await asyncio.sleep(15)
+            queue_busy = due_refreshes_processed >= 10 or priority_items_processed >= 10
+            await asyncio.sleep(0.1 if queue_busy else 15)
     except asyncio.CancelledError:
         pass
     finally:
+        if reconciliation_task is not None:
+            reconciliation_task.cancel()
+            try:
+                await reconciliation_task
+            except asyncio.CancelledError:
+                pass
         if heartbeat_task is not None:
             heartbeat_task.cancel()
             try:

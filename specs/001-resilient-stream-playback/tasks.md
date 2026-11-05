@@ -120,13 +120,30 @@ Tasks grouped by independently testable user story. Tests included because the f
 
 - [ ] T040 [US3] Keep one adapter-owned prepared candidate set for the initial/up-next song, revalidate and consume it on selection, and call the real media element's play() from the user gesture in frontend/lib/audio/html5-audio-adapter.ts
 
+## Phase 9: Follow-up for durable freshness and lock-screen consistency
+
+**Purpose**: Keep every enabled track's direct/proxy metadata ahead of its refresh deadline, preserve still-valid playback during refresh outages, and make system Play idempotent.
+
+**Independent test**: Run the new cache freshness and system-controls scenarios in `specs/001-resilient-stream-playback/quickstart.md`; T036's named-shell evidence remains open.
+
+### US2 — Keep all catalog metadata fresh (P1)
+
+- [ ] T041 [US2] Require both current direct and proxy candidates outside the 900-second refresh window for full warmth, and report full/partial/degraded readiness in backend/app/services/queue_prewarmer.py and backend/app/services/stream_cache_service.py
+- [ ] T042 [US2] Add a per-video Redis refresh due schedule at the earliest `refresh_at - 900s`, persist schedule updates on cache commits, retain still-valid candidates after failed refresh, and remove due entries during cache invalidation/flush in backend/app/services/stream_cache_service.py
+- [ ] T043 [US2] Process due refreshes continuously with bounded backoff, seed missing schedule entries during startup/full catalog reconciliation, retry failures, skip disabled/deleted songs, and let the shared origin limiter pace requests instead of sleeping on cache hits in backend/app/services/queue_prewarmer.py
+- [ ] T044 [US2] Remove the page-lifetime one-shot all-queue prewarm; keep shared backend catalog warming responsible for freshness in frontend/lib/radio-store.ts
+
+### US3 — Keep lock-screen playback actions stable (P1)
+
+- [ ] T045 [US3] Make Media Session Play idempotent while the selected song is PLAYING or BUFFERING, and keep lock-screen metadata paused until the adapter confirms PLAYING in frontend/lib/radio-store.ts
+
 ## Dependencies and parallelism
 
 T001-T003 precede T004-T006. US1 and US2 share foundational contract. US3 depends on US1 source state machine. US4 depends on explicit store recovery states. Release follows all stories.
 
 Parallel: T001/T002; T007/T008; T014/T015/T016; T025/T026 after contract; T030/T031; provider/cache implementation T017-T019 must serialize on the same service file; T032-T034 must serialize on shared UI components.
 
-Follow-up dependency: T038 precedes T039, which precedes T040; all three edit the adapter or startup path and run serially. T036 manual shell evidence follows the code changes. No follow-up tasks are parallelizable.
+Follow-up dependency: T038 precedes T039, which precedes T040; T041 precedes T042, which precedes T043; T044 and T045 follow the cache contract. The backend tasks edit shared cache/reconciliation services and run serially. T036 manual shell evidence follows the code changes. No follow-up tasks are parallelizable.
 
 ## MVP
 

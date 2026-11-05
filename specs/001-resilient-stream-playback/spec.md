@@ -29,7 +29,7 @@ Listener selects, plays, pauses, seeks, advances, or resumes. Selected song rema
 
 ### US2 — Keep catalog source metadata warm (P1)
 
-Background service scans every enabled song at startup and recurring cycles. It refreshes missing/due candidates independently of playback. New or changed song IDs enter priority warming immediately.
+Background service scans every enabled song at startup and recurring cycles. Each enabled song is fully warm only while both direct and proxy candidates are valid and outside their proactive refresh window. A durable per-song due index refreshes metadata before the earliest candidate deadline; new or changed song IDs enter priority warming immediately.
 
 **Acceptance scenarios**
 
@@ -39,6 +39,9 @@ Background service scans every enabled song at startup and recurring cycles. It 
 4. Redis loss/eviction/restart is a miss; no stale browser, Next.js, L1, or Redis record serves without validation.
 5. Admin status reports mode freshness, failures, overdue age, cycle, and cache-coherence counters.
 6. Redis record retention extends beyond candidate refresh deadlines; expiry validation still prevents an overdue candidate from being served.
+7. Proxy-only, direct-only, or due-soon records are degraded, not fully warm; a still-current alternate remains playable while the missing/due mode retries.
+8. Every candidate is scheduled for refresh 900 seconds before its `refresh_at`; known Google URL metadata is therefore refreshed at least 1,500 seconds before its parsed expiry.
+9. Refresh work is distributed by candidate deadline, survives worker restarts in Redis, and remains visible as due/failed/overdue until a complete fresh pair is restored.
 
 ### US3 — Consistent platform behavior (P1)
 
@@ -85,8 +88,12 @@ Listener can identify resolving, buffering, playing, paused, retrying, and unava
 - **FR-017**: Client failure is generation-scoped telemetry; it cannot globally demote/invalidate shared candidates.
 - **FR-018**: Never persist/relay audio bytes or add app-owned CDN/media delivery.
 - **FR-019**: UI exposes playback states, selected-song Retry/Skip, accessible controls, reduced motion, responsive layout.
-- **FR-020**: MediaSession metadata/actions track song, state, and position.
+- **FR-020**: MediaSession metadata/actions track song, actual playback state, and position. Register supported actions individually; lock-screen Play is idempotent while the selected source is already playing or resolving. Unsupported OS/browser actions leave in-page controls available.
 - **FR-021**: A cache miss resolves through at most two configured Invidious origins under a 5s total resolver deadline, respects each enabled origin's configured requests-per-second and concurrency limits, and performs no media URL preflight; origins without explicit budgets are disabled and timeout returns explicit unavailable.
+- **FR-022**: A fully warm enabled song has current direct and proxy candidates. A partial pair stays playable when either candidate is valid but remains degraded and queued for repair.
+- **FR-023**: Store one Redis due score per video ID at `min(source.refresh_at) - 900s`; process due refreshes continuously with bounded retries. Cache writes and catalog reconciliation rebuild the due index after restart or index loss.
+- **FR-024**: Browser-side catalog warming does not issue a one-shot request for every song. The shared backend cache/warmer owns catalog freshness; the player may prepare only the selected and next song.
+- **FR-025**: Refresh keeps the current fenced generation readable until fresh metadata and its due score commit atomically. Failed refresh may return still-valid candidates, but never a candidate at or past `refresh_at`; concurrent invalidation must reject the refresh commit.
 
 ## Success criteria
 
@@ -103,6 +110,9 @@ Listener can identify resolving, buffering, playing, paused, retrying, and unava
 - **SC-011**: Cache records do not expire before a valid candidate's refresh deadline; no candidate is served at or after its refresh deadline.
 - **SC-012**: A deterministic slow/outage resolver fixture returns explicit unavailable within 5s; no serial provider fallback continues after the deadline.
 - **SC-013**: Under concurrent catalog warming, no configured Invidious origin exceeds its declared request-rate or concurrency budget.
+- **SC-014**: With healthy upstreams and enough configured origin capacity, every enabled song has both direct and proxy metadata with more than 900 seconds before the earliest `refresh_at`; the due queue exposes lagging coverage and retries refresh failures.
+- **SC-015**: A duplicate Media Session Play while the selected song is PLAYING or resolving causes no source reload and leaves the selected queue index unchanged.
+- **SC-016**: During a delayed refresh, a concurrent playback lookup returns the still-current candidate without waiting for upstream; an invalidation during that refresh prevents the old writer from committing.
 
 ## Edge cases
 
@@ -110,5 +120,5 @@ Near, past, malformed, and missing expiry; stale report; IP-bound direct URL; pr
 
 ## Assumptions and limits
 
-“Warm” means fresh URL metadata, not audio bytes buffered/downloaded. Public Invidious and Google delivery are outside app control. Spotify-level latency/availability cannot be promised over public services; targets apply to controlled fixtures and healthy upstreams. No rights asserted.
+"Warm" means fresh URL metadata, not audio bytes buffered/downloaded. Public Invidious and Google delivery are outside app control. Spotify-level latency/availability cannot be promised over public services; targets apply to controlled fixtures and healthy upstreams. Browser/OS Media Session actions and background execution are user-agent controlled, so the app supports detected actions and records each named device result rather than claiming universal identical controls. No rights asserted.
 

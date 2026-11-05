@@ -324,6 +324,9 @@ export interface CatalogReadinessStatus {
     metadata_ready: number;
     metadata_incomplete: number;
     stream_ready: number;
+    stream_fully_warm?: number;
+    stream_refresh_due_count?: number;
+    oldest_stream_refresh_due_age_seconds?: number;
     stream_direct_ready?: number;
     stream_degraded?: number;
     stream_expiring: number;
@@ -331,6 +334,7 @@ export interface CatalogReadinessStatus {
     stream_failed?: number;
     metadata_completeness_percent: number;
     stream_readiness_percent: number;
+    stream_full_warmth_percent?: number;
     is_reconciling?: boolean;
   };
   distributed_coordination: {

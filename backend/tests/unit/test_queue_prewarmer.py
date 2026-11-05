@@ -85,8 +85,8 @@ class TestQueuePrewarmer:
             failed_ids={"failed"},
         )
 
-        assert summary["warmed"] == 3
-        assert summary["failed"] == ["failed"]
+        assert summary["warmed"] == 2
+        assert summary["failed"] == ["direct_only", "failed"]
         assert summary["modes"]["direct"] == {
             "fresh": 2, "refreshed": 1, "failed": 1, "overdue": 1,
         }
@@ -96,7 +96,7 @@ class TestQueuePrewarmer:
 
     @patch("app.services.queue_prewarmer._get_redis")
     @patch("app.services.queue_prewarmer.StreamCacheService.get_stream_fast")
-    def test_is_song_warm_uses_a_current_generation_candidate_not_ttl(
+    def test_is_song_warm_requires_a_current_pair_outside_refresh_window(
         self, mock_get_fast, mock_get_redis
     ):
         mock_get_fast.return_value = current_stream("vid123")
@@ -134,13 +134,17 @@ class TestQueuePrewarmer:
 
     @patch("app.services.queue_prewarmer.StreamCacheService.get_stream_fast")
     @patch("app.services.queue_prewarmer.StreamCacheService.get_stream")
-    def test_warm_song_skips_when_proxy_candidate_is_current(self, mock_get_stream, mock_get_fast):
+    @patch("app.services.queue_prewarmer.StreamCacheService.schedule_stream_refresh")
+    def test_warm_song_skips_when_both_current_candidates_are_warm(
+        self, mock_schedule, mock_get_stream, mock_get_fast
+    ):
         mock_get_fast.return_value = current_stream("vid123")
 
         result = QueuePrewarmer.warm_song("vid123", force=False)
         assert result is True
         mock_get_fast.assert_called_once_with("vid123", record_metrics=False)
         mock_get_stream.assert_not_called()
+        mock_schedule.assert_called_once()
 
     @patch("app.services.queue_prewarmer.StreamCacheService.get_stream_fast", return_value=None)
     @patch("app.services.queue_prewarmer.StreamCacheService.get_stream")
@@ -201,7 +205,7 @@ class TestQueuePrewarmer:
         redis.rpop.side_effect = [b"vid_retry", None]
         db = MagicMock()
         song_service = MagicMock()
-        song_service.get_by_video_id.return_value = None
+        song_service.get_by_video_id.return_value = MagicMock(enabled=True)
         monkeypatch.setattr(prewarmer_module, "_get_redis", lambda: redis)
         monkeypatch.setattr(prewarmer_module, "SessionLocal", lambda: db)
         monkeypatch.setattr(prewarmer_module, "SongService", song_service)
@@ -225,7 +229,7 @@ class TestQueuePrewarmer:
         redis.rpop.return_value = None
         db = MagicMock()
         song_service = MagicMock()
-        song_service.get_by_video_id.return_value = None
+        song_service.get_by_video_id.return_value = MagicMock(enabled=True)
         monkeypatch.setattr(prewarmer_module, "_get_redis", lambda: redis)
         monkeypatch.setattr(prewarmer_module, "SessionLocal", lambda: db)
         monkeypatch.setattr(prewarmer_module, "SongService", song_service)
@@ -241,7 +245,7 @@ class TestQueuePrewarmer:
         redis.hdel.assert_called_once_with("chhath:queue:reconciler_retry_attempts", "vid_due")
 
     @pytest.mark.asyncio
-    async def test_warm_pass_offloads_serially_and_caps_pacing(self, monkeypatch):
+    async def test_warm_pass_offloads_serially_and_uses_origin_rate_limit(self, monkeypatch):
         main_thread = threading.current_thread()
         active = 0
         maximum_active = 0
@@ -275,7 +279,7 @@ class TestQueuePrewarmer:
         assert failed == []
         assert maximum_active == 1
         assert worker_threads and all(thread is not main_thread for thread in worker_threads)
-        assert delays == [0, prewarmer_module.MAX_SONG_PACE_DELAY_SECONDS, 0]
+        assert delays == [0, 0]
 
     @pytest.mark.asyncio
     @patch.object(QueuePrewarmer, "warm_song")
@@ -452,7 +456,7 @@ class TestQueuePrewarmer:
         monkeypatch.setattr(prewarmer_module, "SongService", song_service)
         snapshots = [
             {},
-            {video_id: {"direct": 1} for video_id in video_ids},
+            {video_id: {"direct": 1, "proxy": 1} for video_id in video_ids},
         ]
         monkeypatch.setattr(
             prewarmer_module,
