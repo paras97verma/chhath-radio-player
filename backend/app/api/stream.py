@@ -13,7 +13,7 @@ Returns catalog readiness and observability metrics.
 """
 
 import asyncio
-import time
+import math
 from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Query, Header, status, BackgroundTasks, Response
 from fastapi.responses import JSONResponse
@@ -57,21 +57,38 @@ def get_stream(
             headers=NO_STORE_HEADERS,
         )
 
-    # Keep old resolver fields during rollout. Generation zero marks legacy records
-    # that cannot authorize source-failure telemetry until fenced cache records land.
-    result = dict(stream)
-    result.setdefault("schema_version", 1)
-    result.setdefault("video_id", v)
-    generation = result.get("generation")
-    if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
-        generation = 0
-    result["generation"] = generation
-    refreshed_at = result.get("refreshed_at")
-    if not isinstance(refreshed_at, (int, float)):
-        timestamp_ms = result.get("timestamp")
-        refreshed_at = timestamp_ms / 1000 if isinstance(timestamp_ms, (int, float)) else time.time()
-    result["refreshed_at"] = refreshed_at
-    return result
+    if not isinstance(stream, dict):
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"error": "stream_unavailable", "retryable": True},
+            headers=NO_STORE_HEADERS,
+        )
+
+    schema_version = stream.get("schema_version")
+    generation = stream.get("generation")
+    refreshed_at = stream.get("refreshed_at")
+    sources = stream.get("sources")
+    is_current = (
+        isinstance(schema_version, int)
+        and not isinstance(schema_version, bool)
+        and schema_version == 1
+        and stream.get("video_id") == v
+        and isinstance(generation, int)
+        and not isinstance(generation, bool)
+        and generation > 0
+        and isinstance(refreshed_at, (int, float))
+        and not isinstance(refreshed_at, bool)
+        and math.isfinite(refreshed_at)
+        and isinstance(sources, list)
+        and len(sources) > 0
+    )
+    if not is_current:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"error": "stream_unavailable", "retryable": True},
+            headers=NO_STORE_HEADERS,
+        )
+    return stream
 
 
 @router.post("/stream/source-failure")

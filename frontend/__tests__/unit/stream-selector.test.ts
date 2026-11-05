@@ -56,6 +56,10 @@ describe("Audio Stream Selector", () => {
     expect(selectBestAudioStream([])).toBeNull();
   });
 
+  it("requires the current audio element to confirm format support", () => {
+    expect(selectBestAudioStream(sampleStreams)).toBeNull();
+  });
+
   it("selects the highest bitrate among current formats the browser accepts", () => {
     const mockAudio = { canPlayType: vi.fn().mockReturnValue("probably") } as unknown as HTMLAudioElement;
     vi.stubGlobal("navigator", {

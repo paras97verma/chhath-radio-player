@@ -16,11 +16,28 @@ Direct mode is an Invidious-returned signed URL and may use Google delivery. Pro
 
 **Storage**: PostgreSQL catalog; Redis stream metadata and warmer queues; worker-local bounded L1 metadata only.
 
-**Testing**: pytest, Vitest, Playwright Chromium/Firefox/WebKit, and release smoke runs in every named macOS and iOS browser.
+**Testing**: pytest, Vitest, Playwright Chromium/WebKit, and release smoke runs in every named macOS and iOS browser.
 
-**Target Platform**: Latest stable macOS/iOS at release time: Chrome/Firefox/Safari/Zen/Dia on macOS and Safari/Chrome/Firefox on iOS. Record OS, browser build, and actual engine for every release smoke run; shared engine does not replace checking the named browser shell.
+**Target Platform**: Latest stable macOS/iOS at release time: Chrome/Safari/Zen/Dia on macOS and Safari/Chrome on iOS. Record OS, browser build, and actual engine for every release smoke run; shared engine does not replace checking the named browser shell.
 
 **Performance Goals**: Controlled fixtures: warm selection-to-first-progress p95 <2s; cold resolver p95 <5s when resolver ≤500ms and source first byte ≤100ms. Live Invidious measured separately; no public-upstream SLA.
+
+## Release evidence — 2026-11-05
+
+**Release readiness: NOT READY.** The available fixture and cache tests do not cover the required manual macOS/iOS browser evidence or a live Redis deployment. No live Invidious latency or release-level performance claim is made.
+
+The opt-in Playwright measurement (`PLAYBACK_PERF=1`, `radio.spec.ts`, 20 samples per engine) ran against the local Next.js dev server. The selected song title was visible before the Start gesture; the audio mock advanced `currentTime` synthetically. The `/api/stream` request was intercepted in the browser and returned fixture metadata. Resolver duration is fetch start to response headers. These values describe the deterministic browser fixture only; they exclude real media bytes and upstream extraction.
+
+| Engine | Samples | Selected-title-visible → synthetic first progress p50 / p95 | Mocked resolver HTTP p50 / p95 |
+|---|---:|---:|---:|
+| Chromium | 20 | 46.5 ms / 54.6 ms | 3.6 ms / 7.4 ms |
+| WebKit | 20 | 53.0 ms / 70.0 ms | 11.0 ms / 23.0 ms |
+
+Browser evidence: the full Playwright suite passed in Chromium and WebKit (`38 passed, 4 skipped`, 1.1m). The radio recovery, responsive-state, and facts ticker scenarios passed in both engines. The separate opt-in timing run passed (`2 passed`, 50.6s; 20 samples per engine). The two authenticated admin-toggle cases skipped because no test admin account was provisioned. All six named macOS/iOS smoke rows in `quickstart.md` remain `Not run`.
+
+Cache and worker evidence: the focused stream-cache and queue-prewarmer suites passed (`57 passed`, 1.32s), including in-memory `FakeCacheRedis` fence/invalidation cases and catalog lease renewal; stream API tests passed (`7 passed`). No `redis-server` or `redis-cli` is installed, so no live Redis cache latency, restart, eviction, or multi-worker run was measured. These tests establish code-level behavior under the fakes, not production Redis performance.
+
+Do not treat the fixture p50/p95 as satisfying SC-001/SC-002: the first-progress event and resolver response are synthetic, with no controlled media-byte source. Revisit readiness after all manual browser rows are recorded and cache behavior is exercised against the release Redis configuration.
 
 **Constraints**: Configured Invidious resolution only; no Piped or unrelated providers. Direct Invidious result may be Google-hosted. No owned CDN/audio relay/media bytes, no stale-if-error, no unverified local cache, no rights claim. Bound public-instance request rates.
 
@@ -120,7 +137,7 @@ Responsive accessible state/recovery UI, Retry/Skip, state-selector isolation, r
 
 ### Phase 5 — Release validation
 
-Unit/contract tests; two-worker Redis races; warmer cycles; Playwright Chromium/Firefox/WebKit; smoke runs in macOS Chrome/Firefox/Safari/Zen/Dia and iOS Safari/Chrome/Firefox. Record OS/browser build/engine and first-progress metrics by browser/mode. Release gates: zero stale serves, zero error auto-skips, 320px no overflow, fixture targets met.
+Unit/contract tests; two-worker Redis races; warmer cycles; Playwright Chromium/WebKit; smoke runs in macOS Chrome/Safari/Zen/Dia and iOS Safari/Chrome. Record OS/browser build/engine and first-progress metrics by browser/mode. Release gates: zero stale serves, zero error auto-skips, 320px no overflow, fixture targets met.
 
 ## Project Structure
 

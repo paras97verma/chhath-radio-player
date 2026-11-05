@@ -61,10 +61,28 @@ async function mockPlaybackEnvironment(page: Page): Promise<void> {
     type TestWindow = Window & {
       __radioPlaybackScenario?: PlaybackScenario;
       __radioAudioAttempts?: string[];
+      __radioFirstProgressAt?: number;
+      __radioSelectionStartedAt?: number;
+      __radioResolverStartedAt?: number;
+      __radioResolverFinishedAt?: number;
     };
     const testWindow = window as TestWindow;
     testWindow.__radioPlaybackScenario = "progress";
     testWindow.__radioAudioAttempts = [];
+
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (async (...args: Parameters<typeof window.fetch>) => {
+      const resource = args[0];
+      const requestUrl = resource instanceof Request ? resource.url : String(resource);
+      const isStreamResolution = new URL(requestUrl, window.location.href).pathname === "/api/stream";
+      if (isStreamResolution && testWindow.__radioResolverStartedAt === undefined) {
+        testWindow.__radioResolverStartedAt = performance.now();
+        const response = await originalFetch(...args);
+        testWindow.__radioResolverFinishedAt = performance.now();
+        return response;
+      }
+      return originalFetch(...args);
+    }) as typeof window.fetch;
 
     type MockAudio = HTMLMediaElement & { __radioMockSrc?: string };
     Object.defineProperty(HTMLMediaElement.prototype, "src", {
@@ -110,6 +128,9 @@ async function mockPlaybackEnvironment(page: Page): Promise<void> {
           return;
         }
 
+        if (testWindow.__radioFirstProgressAt === undefined) {
+          testWindow.__radioFirstProgressAt = performance.now();
+        }
         Object.defineProperty(audio, "currentTime", { configurable: true, value: 0.25 });
         audio.dispatchEvent(new Event("playing"));
         audio.dispatchEvent(new Event("timeupdate"));
@@ -214,6 +235,66 @@ test.describe("Chhath Radio — Cross-browser playback recovery", () => {
     await expect(player.getByText("First E2E Song", { exact: true })).toBeVisible();
     await expect(player.getByText("Second E2E Song", { exact: true })).toHaveCount(0);
   });
+
+  test("status and recovery actions stay clear at 320px and desktop widths", async ({ page }) => {
+    test.setTimeout(35_000);
+    await page.setViewportSize({ width: 320, height: 820 });
+    await openRadio(page);
+    await setPlaybackScenario(page, "fail");
+    await startFromSplash(page);
+    await expect.poll(() => playbackAttempts(page)).toEqual(expect.arrayContaining(["direct", "proxy"]));
+
+    const player = page.getByRole("region", { name: "Radio player" });
+    const status = player.getByRole("status");
+    const title = player.getByText("First E2E Song", { exact: true });
+    const recovery = player.getByRole("alert");
+    await expect(recovery).toBeVisible({ timeout: 20_000 });
+    const retry = recovery.getByRole("button", { name: "Retry song" });
+    const skip = recovery.getByRole("button", { name: "Skip this song and play the next song" });
+    const copy = recovery.getByText("Playback was interrupted").locator("..");
+    const actions = retry.locator("..");
+
+    const getBounds = async (locator: typeof player) => {
+      const bounds = await locator.boundingBox();
+      expect(bounds, "expected player content to have visible bounds").not.toBeNull();
+      return bounds!;
+    };
+    const expectNoOverlap = (first: NonNullable<Awaited<ReturnType<typeof getBounds>>>, second: NonNullable<Awaited<ReturnType<typeof getBounds>>>) => {
+      const separated = first.x + first.width <= second.x + 1
+        || second.x + second.width <= first.x + 1
+        || first.y + first.height <= second.y + 1
+        || second.y + second.height <= first.y + 1;
+      expect(separated, "player content should not overlap").toBe(true);
+    };
+
+    const assertLayout = async (width: number) => {
+      await expect(player).toBeVisible();
+      await expect(status).toContainText("Playback interrupted");
+      await expect(retry).toBeVisible();
+      await expect(skip).toBeVisible();
+
+      const playerBounds = await getBounds(player);
+      const titleBounds = await getBounds(title);
+      const statusBounds = await getBounds(status);
+      const recoveryBounds = await getBounds(recovery);
+      const copyBounds = await getBounds(copy);
+      const actionsBounds = await getBounds(actions);
+      const retryBounds = await getBounds(retry);
+      const skipBounds = await getBounds(skip);
+
+      expect(playerBounds.width).toBeLessThanOrEqual(width + 1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1);
+      expect(recoveryBounds.x).toBeGreaterThanOrEqual(playerBounds.x - 1);
+      expect(recoveryBounds.x + recoveryBounds.width).toBeLessThanOrEqual(playerBounds.x + playerBounds.width + 1);
+      expectNoOverlap(titleBounds, statusBounds);
+      expectNoOverlap(copyBounds, actionsBounds);
+      expectNoOverlap(retryBounds, skipBounds);
+    };
+
+    await assertLayout(320);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await assertLayout(1280);
+  });
 });
 
 test.describe("Chhath Radio — Admin Link", () => {
@@ -254,4 +335,65 @@ test.describe("Chhath Radio — Facts ticker", () => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await expectFactAbovePlayer();
   });
+});
+
+test("controlled fixture startup timings", async ({ page }, testInfo) => {
+  test.skip(process.env.PLAYBACK_PERF !== "1", "opt-in performance evidence run");
+  test.setTimeout(120_000);
+  await mockPlaybackEnvironment(page);
+
+  const samples: Array<{ selectionToProgressMs: number; resolverMs: number }> = [];
+  const sampleCount = 20;
+  for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 1) {
+    await page.goto("/");
+    await page.waitForLoadState("domcontentloaded");
+    await expect(page.getByText("First E2E Song", { exact: true }).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("dialog", { name: /click to start/i })).toBeVisible({ timeout: 5_000 });
+    await page.evaluate(() => {
+      (window as Window & { __radioSelectionStartedAt?: number }).__radioSelectionStartedAt = performance.now();
+    });
+    await startFromSplash(page);
+    await expect(page.getByRole("status").first()).toContainText("On air", { timeout: 5_000 });
+
+    samples.push(await page.evaluate(() => {
+      const timingWindow = window as Window & {
+        __radioFirstProgressAt?: number;
+        __radioSelectionStartedAt?: number;
+        __radioResolverStartedAt?: number;
+        __radioResolverFinishedAt?: number;
+      };
+      const selectionStartedAt = timingWindow.__radioSelectionStartedAt;
+      const firstProgressAt = timingWindow.__radioFirstProgressAt;
+      const resolverStartedAt = timingWindow.__radioResolverStartedAt;
+      const resolverFinishedAt = timingWindow.__radioResolverFinishedAt;
+      if (
+        selectionStartedAt === undefined
+        || firstProgressAt === undefined
+        || resolverStartedAt === undefined
+        || resolverFinishedAt === undefined
+      ) throw new Error("Fixture timing instrumentation did not observe the full startup path");
+      return {
+        selectionToProgressMs: firstProgressAt - selectionStartedAt,
+        resolverMs: resolverFinishedAt - resolverStartedAt,
+      };
+    }));
+  }
+
+  const quantile = (values: number[], q: number) => {
+    const ordered = [...values].sort((a, b) => a - b);
+    return Number(ordered[Math.ceil(q * ordered.length) - 1].toFixed(1));
+  };
+  const report = {
+    engine: testInfo.project.name,
+    n: samples.length,
+    selectionToProgressMs: {
+      p50: quantile(samples.map((sample) => sample.selectionToProgressMs), 0.5),
+      p95: quantile(samples.map((sample) => sample.selectionToProgressMs), 0.95),
+    },
+    resolverHttpMs: {
+      p50: quantile(samples.map((sample) => sample.resolverMs), 0.5),
+      p95: quantile(samples.map((sample) => sample.resolverMs), 0.95),
+    },
+  };
+  console.log(`PLAYBACK_PERF ${JSON.stringify(report)}`);
 });

@@ -10,21 +10,39 @@ This is a current problem-observation matrix, not a verified browser support/pas
 
 | Platform and browser | Reported behavior | Evidence |
 |---|---|---|
-| macOS Chrome, Firefox, Zen, Dia | Usually 2–5s after selection; occasional skipped songs | User report; versions and engine/build details unavailable |
+| macOS Chrome, Zen, Dia | Usually 2–5s after selection; occasional skipped songs | User report; versions and engine/build details unavailable |
 | macOS Safari | Often more than 30s; playback sometimes fails | User report; versions and engine/build details unavailable |
-| iOS Safari, Chrome, Firefox | Often more than 30s; playback sometimes fails during simultaneous and sequential attempts | User report; versions and engine/build details unavailable |
+| iOS Safari, Chrome | Often more than 30s; playback sometimes fails during simultaneous and sequential attempts | User report; versions and engine/build details unavailable |
 
 For a comparable baseline, instrument selection, resolver start/end, source assignment, `canplay`, and first advancing `currentTime` separately. Record browser/OS build, engine, network profile, candidate mode, and sample count. Keep controlled-fixture measurements separate from live Invidious results.
 
 ## Prerequisites
 
-Backend dependencies, test DB, Redis; frontend dependencies and Node.js >=20; Playwright Chromium/Firefox/WebKit; macOS and iOS devices with every named browser installed; controlled direct and local-proxy fixtures with range, MIME, latency, expiry, and failure variants.
+Backend dependencies, test DB, Redis; frontend dependencies and Node.js >=20; Playwright Chromium/WebKit; macOS and iOS devices with every named browser installed; controlled direct and local-proxy fixtures with range, MIME, latency, expiry, and failure variants.
 
 ## Automated checks
 
 Backend: pytest tests/unit/test_stream_cache_service.py tests/unit/test_queue_prewarmer.py  
 Frontend: npm run test:unit -- __tests__/unit/html5-audio-adapter.test.ts __tests__/unit/radio-store.test.ts __tests__/unit/stream-selector.test.ts __tests__/unit/piped-client.test.ts  
-E2E: Playwright radio scenarios in Chromium, Firefox, WebKit. On latest stable macOS/iOS, smoke-run macOS Chrome/Firefox/Safari/Zen/Dia and iOS Safari/Chrome/Firefox; record OS, browser build, and actual engine for each.
+E2E: Playwright radio scenarios in Chromium and WebKit. On latest stable macOS/iOS, smoke-run macOS Chrome/Safari/Zen/Dia and iOS Safari/Chrome; record OS, browser build, and actual engine for each.
+
+### Manual browser smoke record
+
+Run each browser shell on its named platform. Record the exact OS/device build, browser build, and actual engine (especially for iOS browser shells). For each run, capture the network profile, selected-to-first-advancing-`currentTime` time, resolver start/end time, candidate mode, retries, terminal reason, queue index, result, and a trace or log reference. Record sample count with timing summaries; do not calculate p50/p95 from a single smoke sample. Keep controlled-fixture results separate from live Invidious results. `Not run` means no device evidence is available; it is not a pass.
+
+| Platform and browser | OS/device build | Browser build / actual engine | Network profile | Timing (n; selection→progress p50/p95; resolver) | Result / evidence |
+|---|---|---|---|---|---|
+| macOS Chrome | Not run | Not run | Not run | Not run | Not run |
+| macOS Safari | Not run | Not run | Not run | Not run | Not run |
+| macOS Zen | Not run | Not run | Not run | Not run | Not run |
+| macOS Dia | Not run | Not run | Not run | Not run | Not run |
+| iOS Safari | Not run | Not run | Not run | Not run | Not run |
+| iOS Chrome | Not run | Not run | Not run | Not run | Not run |
+The automated project matrix is Chromium and WebKit. Manual browser smoke runs remain separate; each named shell needs its own OS/device and network evidence.
+
+The full Playwright suite ran on 2026-11-05 in Chromium and WebKit with a local Next.js server and SQLite-backed FastAPI: 38 passed, 4 skipped in 1.1 minutes. Radio stream/audio and metadata were mocked in-browser; chat history did not persist because Redis was unavailable. The per-engine authenticated admin-toggle case skipped because no test admin account was provisioned; the opt-in timing case was disabled in this default run. Recovery, no-skip, responsive-state, and facts ticker checks passed in both engines.
+
+The opt-in fixture timing command `PLAYBACK_PERF=1 CI=1 NEXT_PUBLIC_API_URL=http://127.0.0.1:8000 ./node_modules/.bin/playwright test __tests__/e2e/radio.spec.ts --grep 'controlled fixture startup timings' --project=chromium --project=webkit --workers=1 --retries=0 --reporter=line` passed (`2 passed`, 50.6s), with 20 samples per engine. Selected-title-visible→synthetic first progress was Chromium p50 46.5ms/p95 54.6ms and WebKit p50 53.0ms/p95 70.0ms. Intercepted resolver HTTP was Chromium p50 3.6ms/p95 7.4ms and WebKit p50 11.0ms/p95 23.0ms. The audio progress and metadata response were synthetic; these are not live-stream, media-byte, or production Redis measurements. See the release evidence in `plan.md`.
 
 ## Resolver and expiry
 

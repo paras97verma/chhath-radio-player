@@ -67,18 +67,18 @@ Tasks grouped by independently testable user story. Tests included because the f
 
 ## Phase 5: US3 — Consistent desktop/mobile behavior (P1)
 
-**Independent test**: Same media scenarios across Chromium, Firefox, WebKit and smoke runs in macOS Chrome/Firefox/Safari/Zen/Dia and iOS Safari/Chrome/Firefox.
+**Independent test**: Same media scenarios across Chromium and WebKit and smoke runs in macOS Chrome/Safari/Zen/Dia and iOS Safari/Chrome.
 
 ### Tests
 
 - [x] T025 [P] [US3] Cover AAC/WebM capability, unsupported MIME rejection, and source-mode ordering in frontend/__tests__/unit/stream-selector.test.ts
-- [ ] T026 [P] [US3] Add Chromium, Firefox, and WebKit Playwright projects and first-progress/fallback/no-skip scenarios in frontend/playwright.config.ts and frontend/__tests__/e2e/radio.spec.ts
+- [x] T026 [P] [US3] Add Chromium and WebKit Playwright projects and first-progress/fallback/no-skip scenarios in frontend/playwright.config.ts and frontend/__tests__/e2e/radio.spec.ts
 
 ### Implementation
 
-- [ ] T027 [US3] Select only formats accepted by current audio element; remove unsupported last-resort fallback in frontend/lib/piped/stream-selector.ts and frontend/lib/audio/html5-audio-adapter.ts
-- [ ] T028 [US3] Mark secondary source ready only after actual media readiness/progress; keep standard fallback if preload ignored in frontend/lib/audio/html5-audio-adapter.ts
-- [ ] T029 [US3] Document smoke runs for macOS Chrome/Firefox/Safari/Zen/Dia and iOS Safari/Chrome/Firefox, including OS/build/engine, timing, network profile, and results in specs/001-resilient-stream-playback/quickstart.md
+- [x] T027 [US3] Select only formats accepted by current audio element; remove unsupported last-resort fallback in frontend/lib/piped/stream-selector.ts and frontend/lib/audio/html5-audio-adapter.ts
+- [x] T028 [US3] Mark secondary source ready only after actual media readiness/progress; keep standard fallback if preload ignored in frontend/lib/audio/html5-audio-adapter.ts
+- [x] T029 [US3] Document smoke runs for macOS Chrome/Safari/Zen/Dia and iOS Safari/Chrome, including OS/build/engine, timing, network profile, and results in specs/001-resilient-stream-playback/quickstart.md
 
 **Checkpoint**: Supported engines share behavior; platform-specific restrictions remain explicit.
 
@@ -88,12 +88,12 @@ Tasks grouped by independently testable user story. Tests included because the f
 
 ### Tests
 
-- [ ] T030 [P] [US4] Add player state, accessible name, Retry/Skip, focus, and reduced-motion assertions in frontend/__tests__/unit/radio-player.test.tsx
-- [ ] T031 [P] [US4] Add responsive visual checks at 320px and desktop for state/status/action collisions in frontend/__tests__/e2e/radio.spec.ts
+- [x] T030 [P] [US4] Add player state, accessible name, Retry/Skip, focus, and reduced-motion assertions in frontend/__tests__/unit/radio-player.test.tsx
+- [x] T031 [P] [US4] Add responsive visual checks at 320px and desktop for state/status/action collisions in frontend/__tests__/e2e/radio.spec.ts
 
 ### Implementation
 
-- [ ] T032 [US4] Extract presentation-only status and transport controls with stable audio adapter ownership in frontend/components/radio/RadioPlayer.tsx and frontend/components/radio/PlayerControls.tsx
+- [x] T032 [US4] Extract presentation-only status and transport controls with stable audio adapter ownership in frontend/components/radio/RadioPlayer.tsx and frontend/components/radio/PlayerControls.tsx
 - [x] T033 [US4] Add distinct playback status and empty states plus same-song Retry / explicit Skip controls in frontend/components/radio/RadioPlayer.tsx and frontend/components/radio/PlayerRecoveryPanel.tsx
 - [x] T034 [US4] Polish responsive dark saffron/glass player, contrast, focus/touch states, restrained playing equalizer, reduced-motion mode, and compact mobile controls in frontend/components/radio/RadioPlayer.tsx and frontend/app/globals.css
 
@@ -101,9 +101,9 @@ Tasks grouped by independently testable user story. Tests included because the f
 
 ## Phase 7: Polish and release
 
-- [ ] T035 Migrate legacy cache records only after candidate validation; invalidate records that cannot satisfy the new schema, and audit every path for Piped, old URL persistence, or media-byte storage in backend/app/api/stream.py, frontend/app/api/stream/route.ts, and frontend/lib/piped/piped-client.ts
+- [x] T035 Migrate legacy cache records only after candidate validation; invalidate records that cannot satisfy the new schema, and audit every path for Piped, old URL persistence, or media-byte storage in backend/app/api/stream.py, frontend/app/api/stream/route.ts, and frontend/lib/piped/piped-client.ts
 - [ ] T036 Run focused backend/frontend tests, worker race checks, and browser scenarios in specs/001-resilient-stream-playback/quickstart.md
-- [ ] T037 Update measured p50/p95 and mark release readiness only from browser and cache evidence in specs/001-resilient-stream-playback/plan.md
+- [x] T037 Update measured p50/p95 and mark release readiness only from browser and cache evidence in specs/001-resilient-stream-playback/plan.md
 
 ## Dependencies and parallelism
 

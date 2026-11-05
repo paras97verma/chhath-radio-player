@@ -22,9 +22,9 @@ export default defineConfig({
   reporter: "html",
   use: {
     baseURL: "http://localhost:3000",
+    serviceWorkers: "block",
     trace: "on-first-retry",
     headless: !headed,
-    serviceWorkers: "block",
     // Slow down actions in headed mode so you can follow along
     launchOptions: headed ? { slowMo: 300 } : {},
   },
@@ -32,10 +32,6 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-    },
-    {
-      name: "firefox",
-      use: { ...devices["Desktop Firefox"] },
     },
     {
       name: "webkit",

@@ -87,19 +87,12 @@ export interface LegacyAudioStreamResponse {
   mimeType: string; // e.g. 'audio/webm; codecs="opus"', 'audio/mp4; codecs="mp4a.40.2"'
   codec: string;
   bitrate: number;
-  duration?: number; // Authoritative duration in seconds from CDN/extractor metadata
+  duration?: number; // Authoritative duration in seconds from resolver metadata
   cache_tier?: string;
   title?: string;
 }
 
 export type AudioStreamInfo = LegacyAudioStreamResponse & Partial<StreamResolutionMetadata>;
-
-export interface PipedInstance {
-  name: string;
-  apiUrl: string;
-  locations?: string;
-  cdn?: boolean;
-}
 
 export interface AudioPlayerAdapter {
   /** Optional WebKit user-gesture priming to unlock iOS mobile autoplay */

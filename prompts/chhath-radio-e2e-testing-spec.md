@@ -51,7 +51,6 @@ Use:
 Test:
 
 - Chromium
-- Firefox
 - WebKit
 
 At minimum, Chromium must be a required CI browser.

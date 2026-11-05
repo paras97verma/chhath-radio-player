@@ -16,7 +16,7 @@ const scriptSrc = isProd
   ? "'self' 'unsafe-inline'"
   : "'self' 'unsafe-eval' 'unsafe-inline'";
 
-// connect-src: must include https: for Piped API instances and the backend URL
+// connect-src: HTTPS media origins and the configured backend URL
 const connectSrcParts = ["'self'", "blob:", "https:", "wss:", "ws:"];
 
 if (PUBLIC_API_URL) {

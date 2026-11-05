@@ -6,7 +6,7 @@
 
 ## Goal and boundaries
 
-Fast, recoverable playback across macOS Chrome, Firefox, Safari, Zen, and Dia, and iOS Safari, Chrome, and Firefox. Resolve stream metadata through configured Invidious instances only. Support two modes: direct Invidious-provided audio URL and raw Invidious proxy endpoint. Keep metadata warm without storing audio bytes or adding an app-owned audio relay, CDN, or media server.
+Fast, recoverable playback across macOS Chrome, Safari, Zen, and Dia, and iOS Safari and Chrome. Resolve stream metadata through configured Invidious instances only. Support two modes: direct Invidious-provided audio URL and raw Invidious proxy endpoint. Keep metadata warm without storing audio bytes or adding an app-owned audio relay, CDN, or media server.
 
 “Direct Invidious” means the URL comes from Invidious; its media bytes may come from Google video delivery. Proxy mode uses Invidious local playback. Public upstream availability and latency remain outside app control. This plan does not establish streaming rights.
 
@@ -94,7 +94,7 @@ Listener can identify resolving, buffering, playing, paused, retrying, and unava
 - **SC-003**: Each completed catalog pass evaluates 100% enabled songs as fresh/refreshed/failed-overdue; failures never disappear from retry work.
 - **SC-004**: Across 100 two-worker refresh/invalidation races, zero post-invalidation responses contain older fence.
 - **SC-005**: Direct failure tries proxy; terminal source failure never changes queue index automatically.
-- **SC-006**: Acceptance scenarios pass on the latest stable macOS and iOS releases at release time using macOS Chrome, Firefox, Safari, Zen, and Dia, plus iOS Safari, Chrome, and Firefox. Record each OS/browser build and engine; Playwright covers Chromium, Firefox, and WebKit, and each named shell gets a smoke run.
+- **SC-006**: Acceptance scenarios pass on the latest stable macOS and iOS releases at release time using macOS Chrome, Safari, Zen, and Dia, plus iOS Safari and Chrome. Record each OS/browser build and engine; Playwright covers Chromium and WebKit, and each named shell gets a smoke run.
 - **SC-007**: Redis loss/eviction/flush returns current Invidious source or explicit unavailable; stale/expired serve counter stays zero.
 - **SC-008**: No app-stored/relayed audio bytes or owned media CDN/server.
 - **SC-009**: No horizontal overflow at 320px; keyboard/screen-reader users can operate controls and identify recovery.

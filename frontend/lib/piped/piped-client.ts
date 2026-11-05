@@ -160,7 +160,7 @@ function subscribeToResolution(flight: InFlightResolution, signal?: AbortSignal)
  * Resolves an audio stream. Completed URLs are never retained in the browser;
  * only identical concurrent requests share one metadata resolution.
  */
-export async function fetchPipedStream(
+export async function fetchInvidiousStream(
   videoId: string,
   _audioElement?: HTMLAudioElement | null,
   signal?: AbortSignal,

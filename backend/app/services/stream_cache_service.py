@@ -102,7 +102,6 @@ class LegacyStreamResponse(TypedDict, total=False):
     expires_at: Optional[float]
     is_audio_only: bool
     cached: bool
-    timestamp: int
 
 # ─── Redis Configuration ───────────────────────────────────────────────────────
 
@@ -343,6 +342,13 @@ end
 return raw
 """
 
+INVALIDATE_CACHE_RAW_LUA = """
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+end
+return 0
+"""
+
 MATCH_FENCE_LUA = """
 if redis.call("HGET", KEYS[1], "generation") == ARGV[1]
 and redis.call("HGET", KEYS[1], "fence_token") == ARGV[2] then
@@ -519,9 +525,40 @@ class StreamCacheService:
 
     @staticmethod
     def _public_response(record: Dict[str, Any]) -> Dict[str, Any]:
-        """Keep internal cache fencing tokens out of API responses."""
+        """Build temporary resolver compatibility fields from validated sources."""
         response = dict(record)
         response.pop("fence_token", None)
+        sources = response.get("sources")
+        if not isinstance(sources, list):
+            return response
+
+        direct = next((source for source in sources if source.get("mode") == "direct"), None)
+        proxy = next((source for source in sources if source.get("mode") == "proxy"), None)
+        primary = direct or proxy
+        if not primary:
+            return response
+
+        mime_type = primary["mime_type"]
+        media_type = mime_type.split(";", 1)[0].strip().lower()
+        try:
+            bitrate = int(response.get("bitrate") or primary.get("bitrate") or 128000)
+        except (TypeError, ValueError):
+            bitrate = 128000
+        if bitrate <= 0:
+            bitrate = 128000
+        response.update({
+            "url": primary["url"],
+            "direct_url": direct["url"] if direct else None,
+            "proxy_url": proxy["url"] if proxy else None,
+            "status": "READY" if direct else "DEGRADED",
+            "format": "M4A" if media_type == "audio/mp4" else "WEBM_OPUS",
+            "quality": f"{round(bitrate / 1000)}kbps",
+            "mimeType": mime_type,
+            "codec": primary.get("codec") or "",
+            "bitrate": bitrate,
+            "expires_at": direct.get("expires_at") if direct else None,
+            "is_audio_only": True,
+        })
         return response
 
     @staticmethod
@@ -572,6 +609,18 @@ class StreamCacheService:
         if not isinstance(record.get("generation"), int) or not record.get("fence_token"):
             return None
         return record
+
+    @staticmethod
+    def _invalidate_raw_cache_record(redis_client: Any, video_id: str, raw_record: Any) -> bool:
+        """Delete only the exact invalid record observed, without disrupting a newer refresh lock."""
+        if not isinstance(raw_record, (str, bytes)):
+            return False
+        return bool(redis_client.eval(
+            INVALIDATE_CACHE_RAW_LUA,
+            1,
+            f"{STREAM_CACHE_PREFIX}{video_id}",
+            raw_record,
+        ))
 
     @staticmethod
     def _advance_fence(redis_client: Any, video_id: str) -> Dict[str, Any]:
@@ -740,9 +789,9 @@ class StreamCacheService:
             if alias is not None and alias not in allowed_aliases:
                 continue
 
-            normalized = dict(candidate)
-            normalized.update({
+            normalized = {
                 "mode": mode,
+                "provider": "invidious",
                 "provider_origin": f"{origin_parts.scheme}://{origin_parts.netloc}",
                 "url": url,
                 "itag": itag,
@@ -751,7 +800,8 @@ class StreamCacheService:
                 "resolved_at": resolved_at,
                 "expires_at": expires_at,
                 "refresh_at": refresh_at,
-            })
+                "validation_state": "validated",
+            }
             valid.append(normalized)
             seen_modes.add(mode)
             if len(valid) == 2:
@@ -763,8 +813,15 @@ class StreamCacheService:
     def _validate_cache_record(
         cls, record: Any, now: Optional[float] = None, video_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        """Reject legacy aggregates and rebuild compatibility fields from valid sources."""
+        """Migrate only fully validated legacy candidates into the canonical record."""
         if not isinstance(record, dict) or not isinstance(record.get("sources"), list):
+            return None
+        schema_version = record.get("schema_version", 0)
+        if (
+            isinstance(schema_version, bool)
+            or not isinstance(schema_version, int)
+            or schema_version not in (0, 1)
+        ):
             return None
         now = time.time() if now is None else float(now)
         record_video_id = str(record.get("video_id") or video_id or "")
@@ -777,10 +834,14 @@ class StreamCacheService:
         direct = next((source for source in sources if source["mode"] == "direct"), None)
         proxy = next((source for source in sources if source["mode"] == "proxy"), None)
         primary = direct or proxy
-        mime_type = primary["mime_type"]
-        media_type = mime_type.split(";", 1)[0].strip().lower()
-        codec = primary.get("codec")
-        bitrate = primary.get("bitrate")
+        source_metadata = next(
+            (
+                source for source in record["sources"]
+                if isinstance(source, dict) and source.get("mode") == primary["mode"]
+            ),
+            {},
+        )
+        bitrate = record.get("bitrate", source_metadata.get("bitrate"))
         try:
             bitrate = int(bitrate) if bitrate is not None else 128000
         except (TypeError, ValueError):
@@ -789,20 +850,17 @@ class StreamCacheService:
             bitrate = 128000
 
         result = dict(record)
+        for compatibility_field in (
+            "url", "direct_url", "proxy_url", "status", "format", "quality",
+            "mimeType", "codec", "expires_at", "is_audio_only", "timestamp",
+            "cached", "cache_tier",
+        ):
+            result.pop(compatibility_field, None)
         result.update({
+            "schema_version": 1,
             "video_id": record_video_id or None,
             "sources": sources,
-            "url": primary["url"],
-            "direct_url": direct["url"] if direct else None,
-            "proxy_url": proxy["url"] if proxy else None,
-            "status": "READY" if direct else "DEGRADED",
-            "format": "M4A" if media_type == "audio/mp4" else "WEBM_OPUS",
-            "quality": f"{round(bitrate / 1000)}kbps",
-            "mimeType": mime_type,
-            "codec": codec or "",
             "bitrate": bitrate,
-            "expires_at": direct.get("expires_at") if direct else None,
-            "is_audio_only": True,
         })
         return result
 
@@ -867,21 +925,48 @@ class StreamCacheService:
                 _l1_cache_ts.pop(clean_id, None)
 
         try:
+            cache_key = f"{STREAM_CACHE_PREFIX}{clean_id}"
             raw_result = redis_client.eval(
                 READ_FENCED_CACHE_LUA,
                 2,
-                f"{STREAM_CACHE_PREFIX}{clean_id}",
+                cache_key,
                 f"{STREAM_FENCE_PREFIX}{clean_id}",
             )
             raw_json = cls._fenced_read_payload(raw_result)
+            if raw_json is None and isinstance(raw_result, (list, tuple)):
+                status = raw_result[0].decode("utf-8") if isinstance(raw_result[0], bytes) else str(raw_result[0])
+                if status == "invalid_cache_record" and len(raw_result) > 1:
+                    cls._invalidate_raw_cache_record(redis_client, clean_id, raw_result[1])
             if raw_json:
-                raw_record = json.loads(raw_json)
+                try:
+                    raw_record = json.loads(raw_json)
+                except (TypeError, ValueError):
+                    cls._invalidate_raw_cache_record(redis_client, clean_id, raw_json)
+                    _record_metric("invalid_cache_records")
+                    return None
                 expired_count = cls._expired_candidate_count(raw_record, now)
                 if expired_count:
                     _record_metric("expired_candidates_rejected", expired_count)
                     _record_metric("expirations_detected", expired_count)
                 stream_data = cls._validate_cache_record(raw_record, now, clean_id)
                 if stream_data and cls._matches_fence(redis_client, clean_id, stream_data):
+                    if raw_record != stream_data:
+                        ttl = cls._cache_retention_ttl(stream_data, now)
+                        if ttl <= 0:
+                            cls._invalidate_raw_cache_record(redis_client, clean_id, raw_json)
+                            return None
+                        migrated = redis_client.eval(
+                            WRITE_FENCED_CACHE_LUA,
+                            2,
+                            f"{STREAM_FENCE_PREFIX}{clean_id}",
+                            cache_key,
+                            str(stream_data["generation"]),
+                            stream_data["fence_token"],
+                            ttl,
+                            json.dumps(stream_data),
+                        )
+                        if not migrated:
+                            return None
                     if record_metrics:
                         _record_metric("redis_hits")
                     _cache_l1(clean_id, stream_data, now)
@@ -889,6 +974,15 @@ class StreamCacheService:
                     cached_response["cached"] = True
                     cached_response["cache_tier"] = "L2_REDIS"
                     return cached_response
+                schema_version = raw_record.get("schema_version", 0) if isinstance(raw_record, dict) else None
+                retain_expired_metadata = (
+                    expired_count > 0
+                    and isinstance(schema_version, int)
+                    and not isinstance(schema_version, bool)
+                    and schema_version in (0, 1)
+                )
+                if not stream_data and not retain_expired_metadata:
+                    cls._invalidate_raw_cache_record(redis_client, clean_id, raw_json)
                 _l1_cache.pop(clean_id, None)
                 _l1_cache_ts.pop(clean_id, None)
                 if not expired_count:
@@ -990,7 +1084,6 @@ class StreamCacheService:
                 _record_metric("extractions_failed")
                 return None
 
-            stream_result["timestamp"] = int(now * 1000)
             if redis_client and lock_acquired and fence:
                 ttl = cls._cache_retention_ttl(stream_result, now)
                 if ttl <= 0:

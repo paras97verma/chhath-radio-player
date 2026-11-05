@@ -164,13 +164,23 @@ class FakeCacheRedis:
                     return None
                 if not fence.get("fence_token"):
                     return ["generation_mismatch", raw]
-                record = json.loads(raw)
+                try:
+                    record = json.loads(raw)
+                except (TypeError, ValueError):
+                    return ["invalid_cache_record", raw]
                 if (
                     int(record.get("generation", 0)) != int(fence.get("generation", 0))
                     or record.get("fence_token") != fence.get("fence_token")
                 ):
                     return ["generation_mismatch", raw]
                 return raw
+            if script == cache_module.INVALIDATE_CACHE_RAW_LUA:
+                (cache_key, expected_raw) = args
+                if self.values.get(cache_key) == expected_raw:
+                    self.values.pop(cache_key, None)
+                    self.ttls.pop(cache_key, None)
+                    return 1
+                return 0
             if script == cache_module.MATCH_FENCE_LUA:
                 fence_key, generation, token = args
                 fence = self.hashes.get(fence_key, {})
@@ -491,10 +501,61 @@ class TestStreamCacheService:
         result = StreamCacheService.get_stream("ZceCoo2p9Tw")
 
         assert result is not None
-        assert result["url"] == cached_payload["url"]
+        assert result["url"] == cached_payload["sources"][0]["url"]
         assert result["cached"] is True
         assert result["cache_tier"] == "L2_REDIS"
-        assert mock_redis.values[f"{STREAM_CACHE_PREFIX}ZceCoo2p9Tw"]
+        stored = json.loads(mock_redis.values[f"{STREAM_CACHE_PREFIX}ZceCoo2p9Tw"])
+        assert "url" not in stored
+        assert "direct_url" not in stored
+        assert "proxy_url" not in stored
+
+    @patch("app.services.stream_cache_service._get_redis")
+    def test_valid_legacy_candidate_record_migrates_after_validation(self, mock_get_redis):
+        redis = FakeCacheRedis()
+        mock_get_redis.return_value = redis
+        now = time.time()
+        video_id = "legacy-valid"
+        source = make_source_candidate("direct", now, video_id=video_id)
+        source.update({"type": "direct", "format": "M4A", "mimeType": "audio/mp4", "bitrate": 192000})
+        record = make_cache_record([source], now)
+        record.update({"schema_version": 0, "video_id": video_id, "url": "https://old.example.test/audio"})
+        cache_key = f"{STREAM_CACHE_PREFIX}{video_id}"
+        redis.values[cache_key] = json.dumps(record)
+        redis.hashes[f"{cache_module.STREAM_FENCE_PREFIX}{video_id}"] = {
+            "generation": str(record["generation"]),
+            "fence_token": record["fence_token"],
+        }
+
+        response = StreamCacheService.get_stream_fast(video_id)
+        migrated = json.loads(redis.values[cache_key])
+
+        assert response is not None
+        assert response["url"] == source["url"]
+        assert migrated["schema_version"] == 1
+        assert migrated["bitrate"] == 192000
+        assert "url" not in migrated
+        assert "direct_url" not in migrated
+        assert "proxy_url" not in migrated
+        assert "format" not in migrated["sources"][0]
+        assert "type" not in migrated["sources"][0]
+
+    @patch("app.services.stream_cache_service._get_redis")
+    def test_unsupported_schema_record_is_invalidated(self, mock_get_redis):
+        redis = FakeCacheRedis()
+        mock_get_redis.return_value = redis
+        now = time.time()
+        video_id = "legacy-invalid"
+        record = make_cache_record([make_source_candidate("direct", now, video_id=video_id)], now)
+        record.update({"schema_version": 2, "video_id": video_id})
+        cache_key = f"{STREAM_CACHE_PREFIX}{video_id}"
+        redis.values[cache_key] = json.dumps(record)
+        redis.hashes[f"{cache_module.STREAM_FENCE_PREFIX}{video_id}"] = {
+            "generation": str(record["generation"]),
+            "fence_token": record["fence_token"],
+        }
+
+        assert StreamCacheService.get_stream_fast(video_id) is None
+        assert cache_key not in redis.values
 
     @patch("app.services.stream_cache_service._get_redis")
     def test_catalog_cache_summary_reports_fenced_mode_readiness_and_overdue_age(self, mock_get_redis):
@@ -594,7 +655,7 @@ class TestStreamCacheService:
         result = StreamCacheService.get_stream("ZceCoo2p9Tw")
 
         assert result is not None
-        assert result["url"] == resolved_payload["url"]
+        assert result["url"] == resolved_payload["sources"][0]["url"]
         assert result["cached"] is False
 
         cache_key = f"{STREAM_CACHE_PREFIX}ZceCoo2p9Tw"
@@ -627,7 +688,7 @@ class TestStreamCacheService:
             result = StreamCacheService.get_stream("ZceCoo2p9Tw")
 
         assert result is not None
-        assert result["url"] == winner_result["url"]
+        assert result["url"] == winner_result["sources"][0]["url"]
         assert result["cached"] is True
         assert result["cache_tier"] == "COALESCED_REDIS"
 
@@ -650,7 +711,7 @@ class TestStreamCacheService:
         # Call 1: Direct extraction
         result1 = StreamCacheService.get_stream("ZceCoo2p9Tw")
         assert result1 is not None
-        assert result1["url"] == direct_payload["url"]
+        assert result1["url"] == direct_payload["sources"][0]["url"]
         assert mock_extract.call_count == 1
 
         # Without Redis, L1 is not authoritative and cannot serve the previous result.
@@ -865,11 +926,13 @@ class TestStreamCacheService:
 
         assert valid is not None
         assert valid["sources"] == [proxy]
-        assert valid["url"] == proxy["url"]
-        assert valid["direct_url"] is None
-        assert valid["proxy_url"] == proxy["url"]
-        assert valid["status"] == "DEGRADED"
-        assert valid["expires_at"] is None
+        assert not {"url", "direct_url", "proxy_url", "status"}.intersection(valid)
+        public = StreamCacheService._public_response(valid)
+        assert public["url"] == proxy["url"]
+        assert public["direct_url"] is None
+        assert public["proxy_url"] == proxy["url"]
+        assert public["status"] == "DEGRADED"
+        assert public["expires_at"] is None
 
     def test_l1_hit_requires_the_matching_current_redis_fence(self, monkeypatch):
         video_id = "fenced-l1-video"
@@ -884,7 +947,7 @@ class TestStreamCacheService:
         monkeypatch.setattr(cache_module, "_get_redis", lambda: redis)
         cache_module._cache_l1(video_id, record, now)
 
-        assert StreamCacheService.get_stream_fast(video_id)["url"] == record["url"]
+        assert StreamCacheService.get_stream_fast(video_id)["url"] == record["sources"][0]["url"]
 
         redis.hashes[f"{cache_module.STREAM_FENCE_PREFIX}{video_id}"]["fence_token"] = "rotated-token"
         assert StreamCacheService.get_stream_fast(video_id) is None
@@ -953,7 +1016,8 @@ class TestStreamCacheService:
         result = StreamCacheService._extract_upstream(video_id)
 
         assert result is not None
-        assert result["proxy_url"] == expected_proxy
+        assert result["sources"][1]["url"] == expected_proxy
+        assert "proxy_url" not in result
         assert [source["mode"] for source in result["sources"]] == ["direct", "proxy"]
         assert result["sources"][1]["itag"] == 251
         assert [request["url"] for request in transport.requests] == [metadata_url]
@@ -1138,7 +1202,8 @@ class TestStreamCacheService:
         assert not old_worker.is_alive()
         assert results["old"] is None
         cached = json.loads(redis.get(f"{STREAM_CACHE_PREFIX}{video_id}"))
-        assert cached["url"] == fresh_result["url"]
+        assert "url" not in cached
+        assert cached["sources"][0]["url"] == fresh_result["sources"][0]["url"]
         assert stale_write_rejections == 1
 
     @patch("app.services.stream_cache_service._get_redis")
@@ -1172,11 +1237,12 @@ class TestStreamCacheService:
 
         # Expired key must be deleted from Redis
         refreshed = json.loads(mock_redis.values[f"{STREAM_CACHE_PREFIX}vidExpired"])
-        assert refreshed["url"] == fresh_payload["url"]
+        assert "url" not in refreshed
+        assert refreshed["sources"][0]["url"] == fresh_payload["sources"][0]["url"]
         assert refreshed["fence_token"] != "expired-token"
         # Fresh payload extracted and returned
         assert result is not None
-        assert result["url"] == fresh_payload["url"]
+        assert result["url"] == fresh_payload["sources"][0]["url"]
 
     @patch("app.services.stream_cache_service._get_redis")
     def test_flush_stream_cache_all(self, mock_get_redis):
@@ -1275,7 +1341,9 @@ class TestStreamCacheService:
         StreamCacheService.invalidate_stream("vidDegrade", source_type="direct")
 
         cached = json.loads(mock_redis.values[f"{STREAM_CACHE_PREFIX}vidDegrade"])
-        assert cached["url"] == cached["proxy_url"]
-        assert cached["status"] == "DEGRADED"
         assert [source["mode"] for source in cached["sources"]] == ["proxy"]
+        assert not {"url", "direct_url", "proxy_url", "status"}.intersection(cached)
         assert cached["generation"] == 3
+        response = StreamCacheService.get_stream_fast("vidDegrade")
+        assert response["status"] == "DEGRADED"
+        assert response["url"] == response["proxy_url"]

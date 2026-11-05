@@ -6,7 +6,9 @@ GET /api/stream?v={videoId}&priority={high|normal}&force_fresh={true|false}
 
 Next.js route forwards to FastAPI only. It never resolves providers or caches resolved URLs. Both layers set Cache-Control: no-store, max-age=0.
 
-Response contains schema_version, video_id, generation, refreshed_at, sources, and temporary compatibility fields. A legacy response uses generation `0`, which is non-authoritative and cannot authorize a source-failure report. Each canonical source includes mode (direct|proxy), provider/provider origin, url, itag, MIME/codec, resolved_at, expires_at, refresh_at, and validation_state. No candidate except configured Invidious.
+Response contains schema_version `1`, video_id, positive generation, refreshed_at, sources, and temporary compatibility fields derived from validated sources. The API returns unavailable when a current fenced response cannot be produced; it never manufactures a generation `0` legacy response. Each canonical source includes mode (direct|proxy), provider/provider origin, url, itag, MIME/codec, resolved_at, expires_at, refresh_at, and validation_state. No candidate except configured Invidious.
+
+Legacy cache records are migrated only after every retained candidate passes the current source validator. Migration writes schema version `1` under the same live generation/fence and persists only canonical candidates plus non-URL descriptive metadata; aggregate URL compatibility fields are generated for the response and are not stored. Records with no valid candidate or an unsupported schema are deleted with a compare-and-delete against the exact observed Redis value, then treated as a cache miss.
 
 Direct url is the signed audio URL returned by Invidious and may be Google-hosted. Proxy url remains raw Invidious latest-version local endpoint and uses the same selected compatible audio itag. Redirect target is transient and never persisted.
 

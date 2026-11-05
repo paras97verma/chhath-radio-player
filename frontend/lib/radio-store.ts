@@ -17,7 +17,7 @@ import { generateUUID as uuidv4 } from "./uuid";
 import type { Song } from "./api";
 import type { AudioPlayerAdapter, PlayerState } from "./audio/types";
 import { onPlaybackStateChange } from "./wake-lock";
-import { fetchPipedStream } from "./piped/piped-client";
+import { fetchInvidiousStream } from "./piped/piped-client";
 import {
   updateMediaSessionMetadata,
   registerMediaSessionHandlers,
@@ -320,7 +320,7 @@ export function triggerCatalogPrewarm(songs: Song[], getState: () => RadioState)
     if (vid && !prewarmedVideoIds.has(vid)) {
       prewarmedVideoIds.add(vid);
       try {
-        await fetchPipedStream(vid);
+        await fetchInvidiousStream(vid);
       } catch {
         /* ignore background prewarm misses */
       }

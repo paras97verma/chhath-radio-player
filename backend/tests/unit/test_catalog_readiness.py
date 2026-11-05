@@ -161,6 +161,7 @@ class TestStreamFastLookupAndFallback:
             "generation": 3,
             "fence_token": "catalog-fence",
             "refreshed_at": now,
+            "bitrate": 128000,
             "sources": [
                 {
                     "mode": "direct", "provider": "invidious", "provider_origin": origin,

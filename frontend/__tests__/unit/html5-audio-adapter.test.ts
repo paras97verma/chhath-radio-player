@@ -3,7 +3,7 @@ import { Html5AudioAdapter } from "@/lib/audio/html5-audio-adapter";
 import type { AudioStreamInfo, CanonicalStreamCandidate } from "@/lib/audio/types";
 
 vi.mock("@/lib/piped/piped-client", () => ({
-  fetchPipedStream: vi.fn(),
+  fetchInvidiousStream: vi.fn(),
   reportStreamFailure: vi.fn(),
 }));
 
@@ -118,6 +118,8 @@ describe("Html5AudioAdapter", () => {
     vi.restoreAllMocks();
     primaryAudio = document.createElement("audio");
     secondaryAudio = document.createElement("audio");
+    vi.spyOn(primaryAudio, "canPlayType").mockReturnValue("probably");
+    vi.spyOn(secondaryAudio, "canPlayType").mockReturnValue("probably");
     adapter = new Html5AudioAdapter(primaryAudio, secondaryAudio);
     await adapter.initialize(null);
   });
@@ -190,11 +192,11 @@ describe("Html5AudioAdapter", () => {
   });
 
   it("discards out-of-order resolved streams from previous loadVideo calls", async () => {
-    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
     const song1 = deferredPromise<AudioStreamInfo>();
     const song2 = deferredPromise<AudioStreamInfo>();
 
-    vi.mocked(fetchPipedStream).mockImplementation(((videoId: string) => {
+    vi.mocked(fetchInvidiousStream).mockImplementation(((videoId: string) => {
       if (videoId === "song1") {
         return song1.promise;
       }
@@ -224,9 +226,26 @@ describe("Html5AudioAdapter", () => {
     expect(primaryAudio.src).toBe("https://audio.example.com/song2.m4a");
   });
 
+  it("does not assign or play a source the current audio element rejects", async () => {
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    const stream = canonicalStream("unsupported_mime", "https://audio.example.com/song.m4a");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(stream);
+    vi.spyOn(primaryAudio, "canPlayType").mockReturnValue("");
+    const play = vi.spyOn(primaryAudio, "play").mockResolvedValue(undefined);
+    const states: string[] = [];
+    adapter.onStateChange((state) => states.push(state));
+
+    await adapter.loadVideo("unsupported_mime");
+
+    expect(primaryAudio.canPlayType).toHaveBeenCalledWith(stream.mimeType);
+    expect(primaryAudio.src).toBe("");
+    expect(play).not.toHaveBeenCalled();
+    expect(states).toContain("ERROR");
+  });
+
   it("suppresses AbortError and does not emit ERROR state when load is aborted", async () => {
-    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
-    vi.mocked(fetchPipedStream).mockImplementation(((_id: string, _el: any, signal?: AbortSignal) => {
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockImplementation(((_id: string, _el: any, signal?: AbortSignal) => {
       return new Promise((_, reject) => {
         if (signal) {
           signal.addEventListener("abort", () => {
@@ -274,8 +293,8 @@ describe("Html5AudioAdapter", () => {
   });
 
   it("getDuration prefers authoritative stream duration over native audio.duration", async () => {
-    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
-    vi.mocked(fetchPipedStream).mockResolvedValue(
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
       canonicalStream("song_dur_test", "https://audio.example.com/song.m4a?dur=298.50", 298.5),
     );
 
@@ -287,8 +306,8 @@ describe("Html5AudioAdapter", () => {
   });
 
   it("deduplicates ENDED events to prevent accidental double-skipping", async () => {
-    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
-    vi.mocked(fetchPipedStream).mockResolvedValue(
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
       canonicalStream("dedup_test", "https://audio.example.com/song.m4a?dur=200.0", 200),
     );
     primaryAudio.play = vi.fn().mockResolvedValue(undefined);
@@ -315,8 +334,8 @@ describe("Html5AudioAdapter", () => {
   });
 
   it("performs instant seamless handoff when secondary audio has preloaded song", async () => {
-    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
-    vi.mocked(fetchPipedStream).mockResolvedValue(
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
       canonicalStream("next_vid_123", "https://audio.example.com/song_preloaded.m4a", 180),
     );
     primaryAudio.play = vi.fn().mockResolvedValue(undefined);
@@ -336,6 +355,9 @@ describe("Html5AudioAdapter", () => {
 
     expect(secondaryAudio.src).toBe("https://audio.example.com/song_preloaded.m4a");
 
+    // Simulate browser confirming media readiness (T028: only ready after canplay/progress, not mere src assignment)
+    secondaryAudio.dispatchEvent(new Event("canplay"));
+
     const states: string[] = [];
     adapter.onStateChange((s) => states.push(s));
 
@@ -351,9 +373,111 @@ describe("Html5AudioAdapter", () => {
     expect(states).toContain("PLAYING");
   });
 
+  it("observes readiness events fired during source assignment", async () => {
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
+      canonicalStream("early_ready", "https://audio.example.com/early.m4a"),
+    );
+    primaryAudio.play = vi.fn().mockResolvedValue(undefined);
+    secondaryAudio.play = vi.fn().mockResolvedValue(undefined);
+    let assignedSource = "";
+    Object.defineProperty(secondaryAudio, "src", {
+      configurable: true,
+      get: () => assignedSource,
+      set: (value: string) => {
+        assignedSource = value;
+        secondaryAudio.dispatchEvent(new Event("canplay"));
+      },
+    });
+
+    await adapter.preloadNextSong({
+      id: "early_ready_song",
+      youtube_video_id: "early_ready",
+      title: "Early Ready",
+      artist: "Singer",
+      youtube_url: null,
+      category: null,
+      enabled: true,
+      sort_order: 1,
+    });
+    await adapter.loadVideo("early_ready");
+
+    expect(secondaryAudio.play).toHaveBeenCalled();
+    expect(primaryAudio.play).not.toHaveBeenCalled();
+  });
+
+  it("uses primary playback when the browser ignores the preload hint", async () => {
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
+      canonicalStream("ignored_preload", "https://audio.example.com/standard.m4a"),
+    );
+    primaryAudio.play = vi.fn().mockResolvedValue(undefined);
+    secondaryAudio.play = vi.fn().mockResolvedValue(undefined);
+
+    await adapter.preloadNextSong({
+      id: "ignored_preload_song",
+      youtube_video_id: "ignored_preload",
+      title: "Ignored Preload",
+      artist: "Singer",
+      youtube_url: null,
+      category: null,
+      enabled: true,
+      sort_order: 1,
+    });
+    await adapter.loadVideo("ignored_preload");
+
+    expect(primaryAudio.src).toBe("https://audio.example.com/standard.m4a");
+    expect(primaryAudio.play).toHaveBeenCalled();
+    expect(secondaryAudio.play).not.toHaveBeenCalled();
+  });
+
+  it("removes preload readiness listeners when destroyed", async () => {
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
+      canonicalStream("destroy_preload", "https://audio.example.com/destroy.m4a"),
+    );
+    const removeListener = vi.spyOn(secondaryAudio, "removeEventListener");
+
+    await adapter.preloadNextSong({
+      id: "destroy_preload_song",
+      youtube_video_id: "destroy_preload",
+      title: "Destroy Preload",
+      artist: "Singer",
+      youtube_url: null,
+      category: null,
+      enabled: true,
+      sort_order: 1,
+    });
+    adapter.destroy();
+
+    expect(removeListener).toHaveBeenCalledWith("canplay", expect.any(Function));
+    expect(removeListener).toHaveBeenCalledWith("progress", expect.any(Function));
+  });
+
+  it("does not preload a MIME type the secondary audio element rejects", async () => {
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    const stream = canonicalStream("unsupported_preload", "https://audio.example.com/song.m4a");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(stream);
+    vi.spyOn(secondaryAudio, "canPlayType").mockReturnValue("");
+
+    await adapter.preloadNextSong({
+      id: "unsupported_preload_song",
+      youtube_video_id: "unsupported_preload",
+      title: "Unsupported Format",
+      artist: "Singer",
+      youtube_url: null,
+      category: null,
+      enabled: true,
+      sort_order: 1,
+    });
+
+    expect(secondaryAudio.canPlayType).toHaveBeenCalledWith(stream.mimeType);
+    expect(secondaryAudio.src).toBe("");
+  });
+
   it("tries the current direct candidate before the proxy candidate", async () => {
-    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
-    vi.mocked(fetchPipedStream).mockResolvedValue(
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
       canonicalStream("degraded_song", "https://googlevideo.com/videoplayback?ip=restricted"),
     );
     primaryAudio.play = vi.fn().mockResolvedValue(undefined);
@@ -365,8 +489,8 @@ describe("Html5AudioAdapter", () => {
 
   it("automatically fails over to proxy_url when direct stream errors", async () => {
     const clock = useFakeClock();
-    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
-    vi.mocked(fetchPipedStream).mockResolvedValue(
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
       canonicalStream("fail_direct_song", "https://googlevideo.com/videoplayback?fail_direct"),
     );
     primaryAudio.play = vi.fn().mockResolvedValue(undefined);
@@ -386,8 +510,8 @@ describe("Html5AudioAdapter", () => {
   });
 
   it("requires advancing media time before reporting PLAYING", async () => {
-    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
-    vi.mocked(fetchPipedStream).mockResolvedValue(
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
       canonicalStream("progress_required", "https://audio.example.com/progress.m4a", 200),
     );
     primaryAudio.play = vi.fn().mockResolvedValue(undefined);
@@ -410,8 +534,8 @@ describe("Html5AudioAdapter", () => {
 
   it("allows five seconds for first progress before switching direct to proxy", async () => {
     const clock = useFakeClock();
-    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
-    vi.mocked(fetchPipedStream).mockResolvedValue(
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
       canonicalStream("progress_timeout", "https://audio.example.com/direct.m4a"),
     );
     primaryAudio.play = vi.fn().mockResolvedValue(undefined);
@@ -426,8 +550,8 @@ describe("Html5AudioAdapter", () => {
 
   it("starts a five-second recovery deadline when a progressing stream stalls", async () => {
     const clock = useFakeClock();
-    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
-    vi.mocked(fetchPipedStream).mockResolvedValue(
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
       canonicalStream("stall_timeout", "https://audio.example.com/stalling.m4a"),
     );
     primaryAudio.play = vi.fn().mockResolvedValue(undefined);
@@ -445,8 +569,8 @@ describe("Html5AudioAdapter", () => {
 
   it("terminates a stalled playback episode within twenty seconds", async () => {
     const clock = useFakeClock();
-    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
-    vi.mocked(fetchPipedStream).mockResolvedValue(
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
       canonicalStream("episode_timeout", "https://audio.example.com/episode.m4a"),
     );
     primaryAudio.play = vi.fn().mockResolvedValue(undefined);
@@ -464,9 +588,9 @@ describe("Html5AudioAdapter", () => {
 
   it("retries a failed direct/proxy cycle with 1s, 2s, and 4s backoff", async () => {
     const clock = useFakeClock();
-    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
-    vi.mocked(fetchPipedStream).mockClear();
-    vi.mocked(fetchPipedStream).mockResolvedValue(
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockClear();
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
       canonicalStream("retry_backoff", "https://audio.example.com/retry.m4a"),
     );
     primaryAudio.play = vi.fn().mockRejectedValue(new Error("upstream unavailable"));
@@ -474,30 +598,30 @@ describe("Html5AudioAdapter", () => {
     adapter.onStateChange((s) => states.push(s));
 
     await adapter.loadVideo("retry_backoff");
-    expect(vi.mocked(fetchPipedStream)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fetchInvidiousStream)).toHaveBeenCalledTimes(1);
     expect(primaryAudio.play).toHaveBeenCalledTimes(2);
 
     await clock.advanceBy(999);
-    expect(vi.mocked(fetchPipedStream)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fetchInvidiousStream)).toHaveBeenCalledTimes(1);
     await clock.advanceBy(1);
-    expect(vi.mocked(fetchPipedStream)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(fetchInvidiousStream)).toHaveBeenCalledTimes(2);
 
     await clock.advanceBy(1999);
-    expect(vi.mocked(fetchPipedStream)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(fetchInvidiousStream)).toHaveBeenCalledTimes(2);
     await clock.advanceBy(1);
-    expect(vi.mocked(fetchPipedStream)).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(fetchInvidiousStream)).toHaveBeenCalledTimes(3);
 
     await clock.advanceBy(3999);
-    expect(vi.mocked(fetchPipedStream)).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(fetchInvidiousStream)).toHaveBeenCalledTimes(3);
     await clock.advanceBy(1);
-    expect(vi.mocked(fetchPipedStream)).toHaveBeenCalledTimes(4);
+    expect(vi.mocked(fetchInvidiousStream)).toHaveBeenCalledTimes(4);
     expect(states).toContain("ERROR");
   });
 
   it("cancels the recovery deadline after media time advances", async () => {
     const clock = useFakeClock();
-    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
-    vi.mocked(fetchPipedStream).mockResolvedValue(
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
       canonicalStream("steady_playback", "https://audio.example.com/steady.m4a", 180),
     );
     primaryAudio.play = vi.fn().mockResolvedValue(undefined);
@@ -513,10 +637,10 @@ describe("Html5AudioAdapter", () => {
   });
 
   it("ignores a late play-promise callback from a superseded selection", async () => {
-    const { fetchPipedStream } = await import("@/lib/piped/piped-client");
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
     const stalePlay = deferredPromise<void>();
     primaryAudio.play = vi.fn().mockReturnValueOnce(stalePlay.promise).mockResolvedValue(undefined);
-    vi.mocked(fetchPipedStream).mockImplementation((videoId) =>
+    vi.mocked(fetchInvidiousStream).mockImplementation((videoId) =>
       Promise.resolve(canonicalStream(videoId, "https://audio.example.com/selection.m4a")),
     );
     const states: string[] = [];

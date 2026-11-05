@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fetchPipedStream, reportStreamFailure } from "@/lib/piped/piped-client";
+import { fetchInvidiousStream, reportStreamFailure } from "@/lib/piped/piped-client";
 import type { AudioStreamInfo, CanonicalStreamCandidate } from "@/lib/audio/types";
 
 function currentResponse(videoId: string): AudioStreamInfo {
@@ -42,14 +42,14 @@ function jsonResponse(data: unknown): Response {
   return { ok: true, json: async () => data } as Response;
 }
 
-describe("Piped Stream Client", () => {
+describe("Invidious Stream Client", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
   it("throws error if invalid videoId is provided", async () => {
-    await expect(fetchPipedStream("")).rejects.toThrow("Invalid videoId provided");
+    await expect(fetchInvidiousStream("")).rejects.toThrow("Invalid videoId provided");
   });
 
   it("fetches audio streams and resolves best stream on HTTP 200", async () => {
@@ -63,7 +63,7 @@ describe("Piped Stream Client", () => {
       })
     );
 
-    const stream = await fetchPipedStream("dQw4w9WgXcQ");
+    const stream = await fetchInvidiousStream("dQw4w9WgXcQ");
     expect(stream.url).toBe("https://googlevideo.example/audio.m4a");
     expect(stream.format).toBe("M4A");
   });
@@ -76,10 +76,10 @@ describe("Piped Stream Client", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    await fetchPipedStream("vid12345");
+    await fetchInvidiousStream("vid12345");
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    const refreshedStream = await fetchPipedStream("vid12345");
+    const refreshedStream = await fetchInvidiousStream("vid12345");
     expect(refreshedStream.url).toBe("https://googlevideo.example/audio.m4a");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -91,14 +91,14 @@ describe("Piped Stream Client", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const first = fetchPipedStream("vidConcurrent");
-    const second = fetchPipedStream("vidConcurrent");
+    const first = fetchInvidiousStream("vidConcurrent");
+    const second = fetchInvidiousStream("vidConcurrent");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     resolveResponse(jsonResponse(currentResponse("vidConcurrent")));
     await expect(Promise.all([first, second])).resolves.toHaveLength(2);
 
     fetchMock.mockImplementation(async () => jsonResponse(currentResponse("vidConcurrent")));
-    await fetchPipedStream("vidConcurrent", null, undefined, true);
+    await fetchInvidiousStream("vidConcurrent", null, undefined, true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1][0]).toBe("/api/stream?v=vidConcurrent&force_fresh=true");
   });
@@ -110,8 +110,8 @@ describe("Piped Stream Client", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     const controller = new AbortController();
-    const cancelled = fetchPipedStream("vidAbortOne", null, controller.signal);
-    const surviving = fetchPipedStream("vidAbortOne");
+    const cancelled = fetchInvidiousStream("vidAbortOne", null, controller.signal);
+    const surviving = fetchInvidiousStream("vidAbortOne");
 
     controller.abort();
     await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
@@ -130,7 +130,7 @@ describe("Piped Stream Client", () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => response });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(fetchPipedStream("vidInvalid")).rejects.toThrow("no current playable source");
+    await expect(fetchInvidiousStream("vidInvalid")).rejects.toThrow("no current playable source");
   });
 
   it("keeps an independently valid proxy when the direct URL is near expiry", async () => {
@@ -146,7 +146,7 @@ describe("Piped Stream Client", () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => response });
     vi.stubGlobal("fetch", fetchMock);
 
-    const stream = await fetchPipedStream("vidProxyOnly");
+    const stream = await fetchInvidiousStream("vidProxyOnly");
     expect(stream.status).toBe("DEGRADED");
     expect(stream.url).toContain("/latest_version");
     expect(stream.direct_url).toBeUndefined();
@@ -157,7 +157,7 @@ describe("Piped Stream Client", () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 503 });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(fetchPipedStream("vidFallback")).rejects.toThrow();
+    await expect(fetchInvidiousStream("vidFallback")).rejects.toThrow();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe("/api/stream?v=vidFallback");
@@ -172,7 +172,7 @@ describe("Piped Stream Client", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(fetchPipedStream("vidLegacyProvider")).rejects.toThrow();
+    await expect(fetchInvidiousStream("vidLegacyProvider")).rejects.toThrow();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -180,7 +180,7 @@ describe("Piped Stream Client", () => {
     const controller = new AbortController();
     controller.abort();
 
-    await expect(fetchPipedStream("vidAbort", null, controller.signal)).rejects.toThrow();
+    await expect(fetchInvidiousStream("vidAbort", null, controller.signal)).rejects.toThrow();
   });
 
   it("reports failure telemetry from explicit candidate metadata", async () => {
@@ -190,12 +190,12 @@ describe("Piped Stream Client", () => {
     }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const first = await fetchPipedStream("vidTelemetry");
+    const first = await fetchInvidiousStream("vidTelemetry");
     await reportStreamFailure("vidTelemetry", "direct", "media_error", {
       providerOrigin: "https://inv.example.test",
       generation: first.generation!,
     });
-    const second = await fetchPipedStream("vidTelemetry");
+    const second = await fetchInvidiousStream("vidTelemetry");
 
     expect(first.url).toBe("https://googlevideo.example/audio.m4a");
     expect(second.url).toBe(first.url);

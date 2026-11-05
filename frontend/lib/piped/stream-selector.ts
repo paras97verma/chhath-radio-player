@@ -33,6 +33,20 @@ export function isSupportedAudioMimeType(value: unknown): value is string {
   return mediaType === "audio/mp4" || mediaType === "audio/webm";
 }
 
+/** Fail closed unless the active media element explicitly accepts the MIME type. */
+export function isMimeTypeSupportedByAudioElement(
+  audioElement: HTMLAudioElement | null | undefined,
+  mimeType: string,
+): boolean {
+  if (!audioElement || typeof audioElement.canPlayType !== "function") return false;
+  try {
+    const support = audioElement.canPlayType(mimeType);
+    return support === "probably" || support === "maybe";
+  } catch {
+    return false;
+  }
+}
+
 function isHttpsUrl(value: unknown): value is string {
   if (typeof value !== "string" || value.length > 8192) return false;
   try {
@@ -140,7 +154,12 @@ function isCurrentStreamInfo(stream: AudioStreamInfo, nowSeconds: number): boole
   );
 }
 
-/** Prefer direct playback, then the highest-bitrate playable Invidious source. */
+/**
+ * Return the best current stream the browser says it can play.
+ * Direct sources are always preferred before proxy sources at the same MIME type.
+ * Among sources of the same mode, the highest bitrate wins.
+ * No last-resort fallback: if canPlayType() rejects a type, that stream is excluded.
+ */
 export function selectBestAudioStream(
   streams: AudioStreamInfo[],
   audioElement?: HTMLAudioElement | null,
@@ -148,31 +167,31 @@ export function selectBestAudioStream(
   if (!streams?.length) return null;
   const nowSeconds = Date.now() / 1000;
   const apple = isAppleWebKit();
+
   const playable = streams.filter((stream) => {
     if (!isCurrentStreamInfo(stream, nowSeconds)) return false;
-    if (audioElement && typeof audioElement.canPlayType === "function") {
-      const support = audioElement.canPlayType(stream.mimeType);
-      return support === "probably" || support === "maybe";
-    }
-    return !apple || /audio\/mp4|aac/i.test(stream.mimeType);
+    return isMimeTypeSupportedByAudioElement(audioElement, stream.mimeType);
   });
   if (!playable.length) return null;
 
-  if (apple) {
-    const aac = playable.filter((stream) => /audio\/mp4|aac/i.test(stream.mimeType));
-    if (aac.length) return sortBySourcePreference(aac)[0];
-  }
-  return sortBySourcePreference(playable)[0];
-}
-
-function sortBySourcePreference(streams: AudioStreamInfo[]): AudioStreamInfo[] {
-  const sourceMode = (stream: AudioStreamInfo) => {
-    const currentSource = stream.sources?.find((source) => source.url === stream.url);
-    return currentSource && "mode" in currentSource ? currentSource.mode : "proxy";
+  // Determine the primary source mode for each stream (direct beats proxy).
+  const primaryMode = (stream: AudioStreamInfo): "direct" | "proxy" => {
+    const src = stream.sources?.find((s) => s.url === stream.url && "mode" in s);
+    return (src as { mode?: string })?.mode === "direct" ? "direct" : "proxy";
   };
-  const preference = (stream: AudioStreamInfo) => sourceMode(stream) === "direct" ? 0 : 1;
 
-  return [...streams].sort((a, b) =>
-    preference(a) - preference(b) || (b.bitrate || 0) - (a.bitrate || 0)
-  );
+  // Sort: direct before proxy; within same mode, higher bitrate first.
+  // On Apple WebKit also prefer AAC/M4A over WebM.
+  const sorted = [...playable].sort((a, b) => {
+    const aMode = primaryMode(a) === "direct" ? 0 : 1;
+    const bMode = primaryMode(b) === "direct" ? 0 : 1;
+    if (aMode !== bMode) return aMode - bMode;
+    if (apple) {
+      const aAac = /audio\/mp4|aac/i.test(a.mimeType) ? 0 : 1;
+      const bAac = /audio\/mp4|aac/i.test(b.mimeType) ? 0 : 1;
+      if (aAac !== bAac) return aAac - bAac;
+    }
+    return (b.bitrate || 0) - (a.bitrate || 0);
+  });
+  return sorted[0] ?? null;
 }
