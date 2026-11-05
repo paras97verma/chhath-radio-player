@@ -50,6 +50,7 @@ Same playback states and recovery contract across the named macOS and iOS browse
 2. Preload is a hint; secondary element is ready only after observed readiness and actual progress.
 3. Autoplay rejection is visible and retryable from a user gesture.
 4. Record resolver time, first response where observable, canplay, first media-time advance, fallback, and terminal result separately.
+5. A prepared candidate set is used only for its matching selected/up-next song, revalidated at selection, and consumed once; when present, call the real media element's `play()` in the user gesture.
 
 ### US4 — Clear, responsive player experience (P2)
 
@@ -80,7 +81,7 @@ Listener can identify resolving, buffering, playing, paused, retrying, and unava
 - **FR-013**: Validate every candidate deadline. Redis TTL is record retention only and must not evict a record before its latest valid candidate's refresh deadline.
 - **FR-014**: Redis owns source-cache authority. Fence writes/invalidation with generation plus unique token; reject old writes.
 - **FR-015**: Redis eviction/restart and refresh cause safe miss/recache. Never serve expired, superseded, stale-if-error, or unverified L1.
-- **FR-016**: Remove long-lived URL maps from browser and Next.js. Permit in-flight coalescing only; responses use Cache-Control: no-store.
+- **FR-016**: Remove long-lived URL maps from browser and Next.js. Permit one adapter-owned, one-shot candidate set for the initial/up-next song, revalidate its candidate deadlines at selection, and consume it once; permit in-flight coalescing. Persist no completed URL or audio bytes; responses use Cache-Control: no-store.
 - **FR-017**: Client failure is generation-scoped telemetry; it cannot globally demote/invalidate shared candidates.
 - **FR-018**: Never persist/relay audio bytes or add app-owned CDN/media delivery.
 - **FR-019**: UI exposes playback states, selected-song Retry/Skip, accessible controls, reduced motion, responsive layout.

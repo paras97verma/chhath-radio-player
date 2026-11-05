@@ -81,6 +81,13 @@ The opt-in fixture timing command `PLAYBACK_PERF=1 CI=1 NEXT_PUBLIC_API_URL=http
 9. Repeated load/swap/destroy leaves no listeners, timers, controllers.
 10. Fake-clock scenarios reach first progress or terminal recovery within 20s; after the deadline no old source, listener, or timer can act.
 
+### Reported startup and WebKit failures
+
+1. Load the home page with a cold stream cache. Confirm page rendering and player readiness do not wait for an unused server-side queue fetch or stream metadata warmup. Record queue request count, resolver start/end, and tap-to-first-progress separately.
+2. On Safari/iOS, tap Play once with a prepared current song and tap Next with a prepared up-next song. Confirm the active media source is selected and `play()` is called in that tap's event path. Record any `NotAllowedError`; Retry must keep the same queue index and use the next user gesture.
+3. During advancing playback, deliver transient `waiting`/`stalled` and late `pause`/`ended` events from a replaced source. Confirm the active candidate stays selected and the play control does not switch to buffering. With currentTime genuinely unchanged for five seconds, confirm recovery begins and reports BUFFERING.
+4. For actual direct and proxy media URLs on iOS Safari, record request method/range, status, `Content-Range`, `Content-Type`, redirect chain, first response time, and first currentTime advance. Source range/MIME behavior is unresolved until this evidence exists.
+
 ## UI and browser matrix
 
 1. Inspect resolving, playing, buffering/retrying, paused, unavailable, and empty states.

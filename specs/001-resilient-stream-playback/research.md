@@ -58,3 +58,28 @@ Keep dark saffron/glass language; improve hierarchy, spacing, focus-visible, tac
 
 Public instance capacity, Google delivery, regional latency, browser restrictions remain external. Report live results separately from fixtures. No rights asserted.
 
+## Follow-up audit: reported startup and WebKit failures
+
+**Date**: 2026-11-05; audited clean `origin/main` at `aefc473`.
+
+### Findings
+
+1. `frontend/app/page.tsx` awaits a server queue fetch, passes `initialSongs` through `PageClient`, and `RadioPlayer` never reads that prop. `GlobalRadioProvider` separately fetches the queue, so the server-rendered route waits for unused data and startup repeats the queue request.
+2. `GlobalRadioProvider` awaits `Html5AudioAdapter.initialize()`. `initialize()` then awaits a stream-metadata request for the first song before the provider installs the queue and marks the player ready. The stream route has a five-second backend timeout; the browser resolver itself has no timeout unless its caller supplies one. This serializes queue setup and metadata warmup before the player is usable.
+3. `primeAudio()` marks interaction and calls `play()` on both elements with an empty WAV data URI. The real selected source is assigned only after `fetchInvidiousStream()` resolves, so the silent calls do not prove that Safari permits the later real `play()`.
+4. `onWaiting()` immediately emits `BUFFERING`; `onPause()` and `onEnded()` are not scoped to the active request/source. A transient or late event can replace the active state. The five-second watchdog then swaps candidates if no media-time progress is observed.
+5. The repository does not contain a captured direct/proxy response from the affected devices. iOS source range, MIME, redirect, and first-byte behavior remain unverified; do not attribute the whole Safari failure to the gesture path without device evidence.
+
+### Decisions
+
+- Remove the unused server queue fetch and its unused prop chain; keep the global provider as the single queue owner.
+- Start first-song metadata warming without awaiting it. Keep at most one adapter-owned prepared candidate set for the initial/up-next song, validate candidate deadlines at selection, and consume it once. Use its source synchronously from the user's play gesture; do not persist it or store media bytes.
+- Scope `pause`, `waiting`, `stalled`, `ended`, and progress events to the active request and source. A transient wait does not change UI state or switch candidates; recover only after five seconds without media-time progress.
+- Preserve the selected song and the existing user-gesture Retry path on `NotAllowedError`. Record actual-device evidence separately before changing provider order or media transport.
+
+### Primary documentation
+
+- Apple documents that iOS disables preload/autoplay until user action and applies the rule to `<audio>` and `play()`/`load()`: [iOS-specific media considerations](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/Using_HTML5_Audio_Video/Device-SpecificConsiderations/Device-SpecificConsiderations.html).
+- Safari treats preload as a hint, and playback after a media source/track change still needs policy-aware handling: [Delivering video content for Safari](https://developer.apple.com/documentation/webkit/delivering-video-content-for-safari).
+- Apple's iOS media guidance requires byte-range support from media servers. Verify actual direct and proxy responses before assigning source-format/network causes: [Creating video for Safari on iPhone](https://developer.apple.com/library/archive/documentation/AppleApplications/Reference/SafariWebContent/CreatingVideoforSafarioniPhone/CreatingVideoforSafarioniPhone.html).
+

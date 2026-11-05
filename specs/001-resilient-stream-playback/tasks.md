@@ -105,11 +105,28 @@ Tasks grouped by independently testable user story. Tests included because the f
 - [ ] T036 Run focused backend/frontend tests, worker race checks, and browser scenarios in specs/001-resilient-stream-playback/quickstart.md
 - [x] T037 Update measured p50/p95 and mark release readiness only from browser and cache evidence in specs/001-resilient-stream-playback/plan.md
 
+## Phase 8: Follow-up for reported startup and WebKit failures
+
+**Purpose**: Remove avoidable startup waits, preserve the real user gesture for prepared media, and prevent stale media events from interrupting playback.
+
+**Independent test**: Run the targeted startup and WebKit scenarios in `specs/001-resilient-stream-playback/quickstart.md`; T036's six named shell runs remain required for release evidence.
+
+### US1 — Start and continue selected song reliably (P1)
+
+- [ ] T038 [US1] Remove the unused server queue fetch and make first-song metadata warming non-blocking in frontend/app/page.tsx, frontend/components/radio/PageClient.tsx, frontend/components/radio/RadioPlayer.tsx, frontend/components/radio/GlobalRadioProvider.tsx, and frontend/lib/audio/html5-audio-adapter.ts
+- [ ] T039 [US1] Scope pause, waiting, stalled, ended, and progress events to the active request/source; recover only after five seconds without media-time progress in frontend/lib/audio/html5-audio-adapter.ts
+
+### US3 — Consistent desktop/mobile behavior (P1)
+
+- [ ] T040 [US3] Keep one adapter-owned prepared candidate set for the initial/up-next song, revalidate and consume it on selection, and call the real media element's play() from the user gesture in frontend/lib/audio/html5-audio-adapter.ts
+
 ## Dependencies and parallelism
 
 T001-T003 precede T004-T006. US1 and US2 share foundational contract. US3 depends on US1 source state machine. US4 depends on explicit store recovery states. Release follows all stories.
 
 Parallel: T001/T002; T007/T008; T014/T015/T016; T025/T026 after contract; T030/T031; provider/cache implementation T017-T019 must serialize on the same service file; T032-T034 must serialize on shared UI components.
+
+Follow-up dependency: T038 precedes T039, which precedes T040; all three edit the adapter or startup path and run serially. T036 manual shell evidence follows the code changes. No follow-up tasks are parallelizable.
 
 ## MVP
 

@@ -168,3 +168,11 @@ This policy governs implementation handoff; it does not add runtime product beha
 - Mark a task complete only after its criteria and required validation pass. Leave interrupted or externally blocked tasks open, record the blocker, and continue independent tasks only when dependencies allow.
 - When no tasks remain, verify the release evidence in T037 and mark the checkpoint complete. If the checkout changes between accounts or machines, sync the repository state before resuming.
 
+## Follow-up plan: startup latency and WebKit recovery
+
+The current source audit identifies three app-controlled fixes. First, remove the unused queue fetch awaited by the server page and make adapter metadata warming non-blocking, so route rendering and player readiness do not wait on a source lookup. Second, retain a single adapter-owned prepared candidate set for the initial/up-next song; revalidate its source deadlines and consume it once so a ready source can be assigned and played directly from the user's gesture. This is bounded playback preparation, not a persistent URL cache. Third, scope media events to the active request/source, and defer buffering/recovery transitions until media time has stopped advancing for five seconds.
+
+The Safari gesture path is a code-level hypothesis supported by the current async call sequence and Apple's documented iOS policy. Actual direct/proxy range responses and the user's affected browser builds are unavailable in this checkout, so device confirmation remains under T036. Keep resolver time, source response/redirect/range/MIME, `play()` rejection, and first media-time advance separate in the smoke record. Do not change provider order or add a media relay based on the current evidence.
+
+Implementation order: T038 startup request removal and non-blocking warm; T039 event scoping and progress-based buffering; T040 one-shot prepared-source use from the gesture. These touch the shared adapter and therefore run serially. MVP: all three US1/US3 follow-up tasks; T036's six named shell runs remain a release gate.
+

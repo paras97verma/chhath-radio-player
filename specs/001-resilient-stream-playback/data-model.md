@@ -26,10 +26,15 @@ Fields: request_generation, video_id, candidate_mode/provider, cache_generation,
 
 Client failure reports carry request generation, candidate mode/provider, cache generation, timestamp, and reason as telemetry only; they never mutate shared candidate validity or provider health.
 
+## PreparedPlaybackSource
+
+One adapter-owned in-memory slot keyed to the initial or next video ID. Holds the canonical direct/proxy metadata returned by the resolver, never audio bytes. The slot is replaced by the next preparation, consumed when that song is selected, and each candidate is revalidated against its own `refresh_at` before use. Expired or unsupported candidates trigger a fresh resolution. Prepared metadata does not mean the media element is ready or playing.
+
 ## Invariants
 
 - Song has zero to two current source candidates.
 - Playback tries direct then proxy; bounded automatic retries are scoped to one recovery episode and cannot reuse a failed candidate after its retry budget is exhausted.
 - Source failure never changes queue index. Retry preserves song; Skip is explicit.
+- The adapter retains at most one prepared song candidate set; it is neither persisted nor served to a different video ID.
 - Redis eviction/restart is a miss. No audio bytes, browser URL persistence, or prior-generation fallback.
 
