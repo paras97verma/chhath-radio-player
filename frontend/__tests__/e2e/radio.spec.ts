@@ -225,3 +225,33 @@ test.describe("Chhath Radio — Admin Link", () => {
     await expect(page).toHaveTitle(/.+/);
   });
 });
+
+test.describe("Chhath Radio — Facts ticker", () => {
+  test("stays above the player and hides while the playlist is open", async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 820 });
+    await openRadio(page);
+    await startFromSplash(page);
+
+    const fact = page.locator('[aria-label="Chhath Puja fact"]');
+    const player = page.getByRole("region", { name: "Radio player" });
+    const expectFactAbovePlayer = async () => {
+      await expect(fact).toBeVisible();
+      const factBounds = await fact.boundingBox();
+      const playerBounds = await player.boundingBox();
+      expect(factBounds, "fact should have visible bounds").not.toBeNull();
+      expect(playerBounds, "player should have visible bounds").not.toBeNull();
+      expect(factBounds!.y + factBounds!.height).toBeLessThanOrEqual(playerBounds!.y);
+    };
+
+    await expectFactAbovePlayer();
+    await page.getByRole("button", { name: "Toggle playlist" }).click();
+    await expect(page.getByRole("button", { name: "Close playlist" })).toBeVisible();
+    await expect(fact).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Close playlist" }).click();
+    await expectFactAbovePlayer();
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await expectFactAbovePlayer();
+  });
+});
