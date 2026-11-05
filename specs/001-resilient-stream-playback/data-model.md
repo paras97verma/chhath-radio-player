@@ -18,7 +18,11 @@ Known expiry is valid only when more than 600s remains. Unknown-expiry metadata 
 
 ## CatalogWarmState
 
-Fields: video_id, last_attempt_at, next_attempt_at, status (fresh/direct_only/proxy_only/failed/overdue), retry_count, bounded last_error. Derived from candidates and retry schedule, never TTL alone.
+Fields: video_id, last_attempt_at, next_attempt_at, next_refresh_at, status (fully_warm/direct_only/proxy_only/partial/failed/overdue), retry_count, bounded last_error. `fully_warm` requires both direct and proxy candidates with `refresh_at > now + 900s`; derived from candidates and retry schedule, never Redis TTL alone.
+
+## StreamRefreshSchedule
+
+One Redis sorted-set member per video ID. Score is the earliest current candidate `refresh_at` minus 900 seconds; processing a due member refreshes the song and atomically replaces its cache generation and score with newly validated candidates. The current generation remains readable during the network refresh. Failed refreshes retain still-valid old candidates and move the member to a bounded retry deadline. Cache flush removes the member; startup/full-catalog reconciliation rebuilds missing schedule entries. The schedule contains IDs/deadlines only, never media bytes or raw URLs.
 
 ## PlaybackAttempt
 
@@ -26,10 +30,15 @@ Fields: request_generation, video_id, candidate_mode/provider, cache_generation,
 
 Client failure reports carry request generation, candidate mode/provider, cache generation, timestamp, and reason as telemetry only; they never mutate shared candidate validity or provider health.
 
+## PreparedPlaybackSource
+
+One adapter-owned in-memory slot keyed to the initial or next video ID. Holds the canonical direct/proxy metadata returned by the resolver, never audio bytes. The slot is replaced by the next preparation, consumed when that song is selected, and each candidate is revalidated against its own `refresh_at` before use. Expired or unsupported candidates trigger a fresh resolution. Prepared metadata does not mean the media element is ready or playing.
+
 ## Invariants
 
 - Song has zero to two current source candidates.
 - Playback tries direct then proxy; bounded automatic retries are scoped to one recovery episode and cannot reuse a failed candidate after its retry budget is exhausted.
 - Source failure never changes queue index. Retry preserves song; Skip is explicit.
+- The adapter retains at most one prepared song candidate set; it is neither persisted nor served to a different video ID.
 - Redis eviction/restart is a miss. No audio bytes, browser URL persistence, or prior-generation fallback.
 

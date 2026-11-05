@@ -105,11 +105,54 @@ Tasks grouped by independently testable user story. Tests included because the f
 - [ ] T036 Run focused backend/frontend tests, worker race checks, and browser scenarios in specs/001-resilient-stream-playback/quickstart.md
 - [x] T037 Update measured p50/p95 and mark release readiness only from browser and cache evidence in specs/001-resilient-stream-playback/plan.md
 
+## Phase 8: Follow-up for reported startup and WebKit failures
+
+**Purpose**: Remove avoidable startup waits, preserve the real user gesture for prepared media, and prevent stale media events from interrupting playback.
+
+**Independent test**: Run the targeted startup and WebKit scenarios in `specs/001-resilient-stream-playback/quickstart.md`; T036's six named shell runs remain required for release evidence.
+
+### US1 — Start and continue selected song reliably (P1)
+
+- [ ] T038 [US1] Remove the unused server queue fetch and make first-song metadata warming non-blocking in frontend/app/page.tsx, frontend/components/radio/PageClient.tsx, frontend/components/radio/RadioPlayer.tsx, frontend/components/radio/GlobalRadioProvider.tsx, and frontend/lib/audio/html5-audio-adapter.ts
+- [ ] T039 [US1] Scope pause, waiting, stalled, ended, and progress events to the active request/source; recover only after five seconds without media-time progress in frontend/lib/audio/html5-audio-adapter.ts
+
+### US3 — Consistent desktop/mobile behavior (P1)
+
+- [ ] T040 [US3] Keep one adapter-owned prepared candidate set for the initial/up-next song, revalidate and consume it on selection, and call the real media element's play() from the user gesture in frontend/lib/audio/html5-audio-adapter.ts
+
+## Phase 9: Follow-up for durable freshness and lock-screen consistency
+
+**Purpose**: Keep every enabled track's direct/proxy metadata ahead of its refresh deadline, preserve still-valid playback during refresh outages, and make system Play idempotent.
+
+**Independent test**: Run the new cache freshness and system-controls scenarios in `specs/001-resilient-stream-playback/quickstart.md`; T036's named-shell evidence remains open.
+
+### US2 — Keep all catalog metadata fresh (P1)
+
+- [ ] T041 [US2] Require both current direct and proxy candidates outside the 900-second refresh window for full warmth, and report full/partial/degraded readiness in backend/app/services/queue_prewarmer.py and backend/app/services/stream_cache_service.py
+- [ ] T042 [US2] Add a per-video Redis refresh due schedule at the earliest `refresh_at - 900s`, persist schedule updates on cache commits, retain still-valid candidates after failed refresh, and remove due entries during cache invalidation/flush in backend/app/services/stream_cache_service.py
+- [ ] T043 [US2] Process due refreshes continuously with bounded backoff, seed missing schedule entries during startup/full catalog reconciliation, retry failures, skip disabled/deleted songs, and let the shared origin limiter pace requests instead of sleeping on cache hits in backend/app/services/queue_prewarmer.py
+- [ ] T044 [US2] Remove the page-lifetime one-shot all-queue prewarm; keep shared backend catalog warming responsible for freshness in frontend/lib/radio-store.ts
+
+### US3 — Keep lock-screen playback actions stable (P1)
+
+- [ ] T045 [US3] Make Media Session Play idempotent while the selected song is PLAYING or BUFFERING, and keep lock-screen metadata paused until the adapter confirms PLAYING in frontend/lib/radio-store.ts
+
+## Phase 10: Follow-up for first-progress truth and bitrate policy
+
+**Purpose**: Keep the player in BUFFERING until media time advances, preserve rapid source-failure recovery during gesture priming, and make bitrate decisions from measured startup/buffer evidence.
+
+**Independent test**: Run the adapter progress-gate test, WebKit direct-to-proxy recovery scenarios, and record controlled slow-network startup/underrun measurements in quickstart.md.
+
+- [x] T046 [US1] Emit PLAYING only after active media time advances, process active-source errors during gesture priming, and make the WebKit media mock track `currentSrc` in frontend/lib/audio/html5-audio-adapter.ts and frontend/__tests__/e2e/radio.spec.ts
+- [ ] T047 [US1] Measure random-track selection-to-first-progress, resolver latency, media TTFB, and underruns on slow-network profiles before setting a moderate startup-bitrate target or adding segmented ABR in specs/001-resilient-stream-playback/quickstart.md and specs/001-resilient-stream-playback/plan.md
+
 ## Dependencies and parallelism
 
 T001-T003 precede T004-T006. US1 and US2 share foundational contract. US3 depends on US1 source state machine. US4 depends on explicit store recovery states. Release follows all stories.
 
 Parallel: T001/T002; T007/T008; T014/T015/T016; T025/T026 after contract; T030/T031; provider/cache implementation T017-T019 must serialize on the same service file; T032-T034 must serialize on shared UI components.
+
+Follow-up dependency: T038 precedes T039, which precedes T040; T041 precedes T042, which precedes T043; T044 and T045 follow the cache contract. T047 needs the device/browser scenarios in T036. The backend tasks edit shared cache/reconciliation services and run serially. No follow-up tasks are parallelizable.
 
 ## MVP
 

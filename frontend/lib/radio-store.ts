@@ -17,7 +17,6 @@ import { generateUUID as uuidv4 } from "./uuid";
 import type { Song } from "./api";
 import type { AudioPlayerAdapter, PlayerState } from "./audio/types";
 import { onPlaybackStateChange } from "./wake-lock";
-import { fetchInvidiousStream } from "./piped/piped-client";
 import {
   updateMediaSessionMetadata,
   registerMediaSessionHandlers,
@@ -295,45 +294,6 @@ interface RadioState {
   getTotalOfferings: () => number;
 }
 
-let catalogPrewarmTimer: any = null;
-const prewarmedVideoIds = new Set<string>();
-
-export function triggerCatalogPrewarm(songs: Song[], getState: () => RadioState): void {
-  if (typeof window === "undefined" || !songs || songs.length === 0) return;
-  if (catalogPrewarmTimer) clearTimeout(catalogPrewarmTimer);
-
-  const songsToPrewarm = [...songs];
-  let idx = 0;
-
-  const runNext = async () => {
-    if (idx >= songsToPrewarm.length) return;
-
-    const state = getState();
-    // Do NOT compete for network bandwidth if active player is currently buffering
-    if (state.playState === "BUFFERING") {
-      catalogPrewarmTimer = setTimeout(runNext, 500);
-      return;
-    }
-
-    const song = songsToPrewarm[idx++];
-    const vid = song?.youtube_video_id;
-    if (vid && !prewarmedVideoIds.has(vid)) {
-      prewarmedVideoIds.add(vid);
-      try {
-        await fetchInvidiousStream(vid);
-      } catch {
-        /* ignore background prewarm misses */
-      }
-    }
-
-    // Pace requests gently by 200ms so network is never flooded
-    catalogPrewarmTimer = setTimeout(runNext, 200);
-  };
-
-  // Start 1.5s after load to give page rendering 100% bandwidth
-  catalogPrewarmTimer = setTimeout(runNext, 1500);
-}
-
 export const useRadioStore = create<RadioState>((set, get) => ({
   allSongs: [],
   queue: [],
@@ -501,7 +461,6 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       error: null,
     });
 
-    triggerCatalogPrewarm(songs, get);
   },
 
   setVolume: (volume: number) => {
@@ -592,20 +551,26 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const { adapter, queue, currentIndex } = get();
     if (!adapter || queue.length === 0) return;
 
+    const song = queue[currentIndex];
+    const currentState = adapter.getState();
+    const { userIntent } = get();
+    if (currentState === "PLAYING") {
+      set({ playState: "PLAYING", userIntent: "playing" });
+      updateMediaSessionMetadata(song, true, adapter.getDuration(), adapter.getCurrentTime());
+      return;
+    }
+    if (currentState === "BUFFERING" && userIntent === "playing") return;
+
     primeAudioForUserGesture(adapter);
     set({ userIntent: "playing", error: null, consecutiveErrors: 0 });
-    onPlaybackStateChange(true);
-
-    const song = queue[currentIndex];
-    updateMediaSessionMetadata(song, true);
 
     const dur = adapter.getDuration();
     const cur = adapter.getCurrentTime();
     if (dur > 0) {
-      updateMediaSessionPositionState(cur, dur);
+      updateMediaSessionPositionState(cur, dur, 0);
     }
+    updateMediaSessionMetadata(song, false, dur, cur);
 
-    const currentState = adapter.getState();
     const isLoaded = adapter.isSongLoaded ? adapter.isSongLoaded(song.youtube_video_id) : true;
     if ((currentState === "PAUSED" || currentState === "CUED") && isLoaded) {
       set({ playState: "BUFFERING" });
@@ -658,7 +623,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
 
     set({ currentIndex: nextIndex, playState: "BUFFERING", userIntent: "playing", error: null });
-    updateMediaSessionMetadata(queue[nextIndex], true);
+    updateMediaSessionMetadata(queue[nextIndex], false);
     try {
       await adapter.loadVideo(queue[nextIndex].youtube_video_id);
     } catch {
@@ -684,7 +649,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
 
     const prevIndex = currentIndex > 0 ? currentIndex - 1 : queue.length - 1;
     set({ currentIndex: prevIndex, playState: "BUFFERING", userIntent: "playing", error: null });
-    updateMediaSessionMetadata(queue[prevIndex], true);
+    updateMediaSessionMetadata(queue[prevIndex], false);
     try {
       await adapter.loadVideo(queue[prevIndex].youtube_video_id);
     } catch {
@@ -706,7 +671,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       error: null,
       consecutiveErrors: 0,
     });
-    updateMediaSessionMetadata(targetSong, true);
+    updateMediaSessionMetadata(targetSong, false);
     try {
       await adapter.loadVideo(targetSong.youtube_video_id);
     } catch (err: any) {
@@ -738,7 +703,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
         error: null,
         consecutiveErrors: 0,
       });
-      updateMediaSessionMetadata(song, true);
+      updateMediaSessionMetadata(song, false);
       try {
         await adapter.loadVideo(song.youtube_video_id);
       } catch (err: any) {
@@ -791,6 +756,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
 
       case "BUFFERING":
         set({ playState: "BUFFERING" });
+        setMediaSessionPlaybackState("paused");
         break;
 
       case "ENDED": {
@@ -800,7 +766,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
           const { isShuffleEnabled } = get();
           const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
           set({ currentIndex: nextIndex, playState: "BUFFERING", userIntent: "playing", error: null });
-          updateMediaSessionMetadata(queue[nextIndex], true);
+          updateMediaSessionMetadata(queue[nextIndex], false);
           try {
             await adapter?.loadVideo(queue[nextIndex].youtube_video_id);
           } catch {

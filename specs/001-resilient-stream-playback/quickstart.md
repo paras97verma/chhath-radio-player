@@ -81,6 +81,13 @@ The opt-in fixture timing command `PLAYBACK_PERF=1 CI=1 NEXT_PUBLIC_API_URL=http
 9. Repeated load/swap/destroy leaves no listeners, timers, controllers.
 10. Fake-clock scenarios reach first progress or terminal recovery within 20s; after the deadline no old source, listener, or timer can act.
 
+### Reported startup and WebKit failures
+
+1. Load the home page with a cold stream cache. Confirm page rendering and player readiness do not wait for an unused server-side queue fetch or stream metadata warmup. Record queue request count, resolver start/end, and tap-to-first-progress separately.
+2. On Safari/iOS, tap Play once with a prepared current song and tap Next with a prepared up-next song. Confirm the active media source is selected and `play()` is called in that tap's event path. Record any `NotAllowedError`; Retry must keep the same queue index and use the next user gesture.
+3. During advancing playback, deliver transient `waiting`/`stalled` and late `pause`/`ended` events from a replaced source. Confirm the active candidate stays selected and the play control does not switch to buffering. With currentTime genuinely unchanged for five seconds, confirm recovery begins and reports BUFFERING.
+4. For actual direct and proxy media URLs on iOS Safari, record request method/range, status, `Content-Range`, `Content-Type`, redirect chain, first response time, and first currentTime advance. Source range/MIME behavior is unresolved until this evidence exists.
+
 ## UI and browser matrix
 
 1. Inspect resolving, playing, buffering/retrying, paused, unavailable, and empty states.
@@ -88,4 +95,12 @@ The opt-in fixture timing command `PLAYBACK_PERF=1 CI=1 NEXT_PUBLIC_API_URL=http
 3. Keyboard focus, accessible names, pressed/disabled states, reduced motion.
 4. Select, play, pause, next, previous, seek, volume, MediaSession, background/foreground, end in all named macOS and iOS browsers; record each browser shell even where engines match.
 5. Record selection-to-first-progress, resolution time, first byte if observable, canplay, candidate/provider, retries, terminal reason, queue index. Measure p50/p95 on fixtures; live upstream separately.
+
+## Cache freshness and system controls
+
+1. Seed one enabled song with direct and proxy candidates, then verify its Redis due score is the earliest candidate `refresh_at - 900s`; confirm both candidates count toward full warmth.
+2. Make only one source mode current, or place either candidate inside its 900-second lead window. Readiness must report partial/degraded, keep any still-valid alternate playable, and schedule refresh.
+3. Advance the clock through a due refresh. During a delayed resolver request, confirm a concurrent playback lookup still returns the current valid generation. On success, confirm the pair and next deadline are replaced atomically. On resolver failure, confirm still-valid candidates remain fenced and playable, retry is delayed with bounded backoff, invalidation wins any writer race, and no candidate at/past `refresh_at` is served.
+4. Restart/evict/flush Redis state and verify startup/full reconciliation rebuilds due entries for every enabled song; verify disabled/deleted songs leave the due queue.
+5. Repeatedly invoke Media Session Play during PLAYING and BUFFERING. Confirm no `loadVideo()` call, queue-index change, or duplicate playback start. Record OS/browser/engine and which lock-screen actions the device actually exposes.
 

@@ -104,8 +104,40 @@ class FakeCacheRedis:
     def __init__(self):
         self.values = {}
         self.hashes = {}
+        self.sorted_sets = {}
         self.ttls = {}
         self._lock = Lock()
+
+    def zadd(self, key, mapping):
+        with self._lock:
+            target = self.sorted_sets.setdefault(key, {})
+            added = sum(member not in target for member in mapping)
+            target.update({member: float(score) for member, score in mapping.items()})
+            return added
+
+    def zrem(self, key, *members):
+        with self._lock:
+            target = self.sorted_sets.get(key, {})
+            removed = sum(member in target for member in members)
+            for member in members:
+                target.pop(member, None)
+            return removed
+
+    def zscore(self, key, member):
+        with self._lock:
+            return self.sorted_sets.get(key, {}).get(member)
+
+    def zrangebyscore(self, key, min, max, start=0, num=None, withscores=False):
+        lower = float("-inf") if min == "-inf" else float(min)
+        upper = float("inf") if max == "+inf" else float(max)
+        with self._lock:
+            rows = sorted(
+                (member, score)
+                for member, score in self.sorted_sets.get(key, {}).items()
+                if lower <= score <= upper
+            )
+        rows = rows[start: start + num if num is not None else None]
+        return rows if withscores else [member for member, _score in rows]
 
     def pipeline(self, transaction=False):
         return FakeCachePipeline(self)
@@ -140,6 +172,7 @@ class FakeCacheRedis:
                     del self.values[key]
                 self.ttls.pop(key, None)
                 self.hashes.pop(key, None)
+                self.sorted_sets.pop(key, None)
         return deleted
 
     def scan(self, cursor=0, match="*", count=100):
@@ -189,19 +222,25 @@ class FakeCacheRedis:
                     and fence.get("fence_token") == token
                 )
             if script == cache_module.COMMIT_FENCED_CACHE_LUA:
-                fence_key, lock_key, cache_key, generation, fence_token, lock_token, _ttl, raw = args
+                (
+                    fence_key, lock_key, cache_key, refresh_key,
+                    expected_generation, expected_token, generation, fence_token,
+                    lock_token, _ttl, raw, video_id, due_at,
+                ) = args
                 fence = self.hashes.get(fence_key, {})
                 if (
-                    str(fence.get("generation")) != str(generation)
-                    or fence.get("fence_token") != fence_token
+                    str(fence.get("generation")) != str(expected_generation)
+                    or fence.get("fence_token") != expected_token
                     or self.values.get(lock_key) != lock_token
                 ):
                     return 0
+                fence.update({"generation": str(generation), "fence_token": fence_token})
                 self.values[cache_key] = raw
                 self.ttls[cache_key] = int(_ttl)
+                self.sorted_sets.setdefault(refresh_key, {})[video_id] = float(due_at)
                 return 1
             if script == cache_module.WRITE_FENCED_CACHE_LUA:
-                fence_key, cache_key, generation, fence_token, _ttl, raw = args
+                fence_key, cache_key, refresh_key, generation, fence_token, _ttl, raw, video_id, due_at = args
                 fence = self.hashes.get(fence_key, {})
                 if (
                     str(fence.get("generation")) != str(generation)
@@ -210,9 +249,10 @@ class FakeCacheRedis:
                     return 0
                 self.values[cache_key] = raw
                 self.ttls[cache_key] = int(_ttl)
+                self.sorted_sets.setdefault(refresh_key, {})[video_id] = float(due_at)
                 return 1
             if script == cache_module.EVICT_FENCED_CACHE_LUA:
-                fence_key, cache_key, lock_key, expected_token, new_token = args
+                fence_key, cache_key, lock_key, refresh_key, expected_token, new_token, video_id = args
                 fence = self.hashes.setdefault(fence_key, {})
                 if expected_token and fence.get("fence_token") != expected_token:
                     return [0, 0]
@@ -222,6 +262,7 @@ class FakeCacheRedis:
                 self.values.pop(cache_key, None)
                 self.values.pop(lock_key, None)
                 self.ttls.pop(cache_key, None)
+                self.sorted_sets.get(refresh_key, {}).pop(video_id, None)
                 return [generation, deleted]
             if script == cache_module.RENEW_LOCK_LUA:
                 lock_key, token, _ttl = args

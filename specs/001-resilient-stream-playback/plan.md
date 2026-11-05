@@ -168,3 +168,30 @@ This policy governs implementation handoff; it does not add runtime product beha
 - Mark a task complete only after its criteria and required validation pass. Leave interrupted or externally blocked tasks open, record the blocker, and continue independent tasks only when dependencies allow.
 - When no tasks remain, verify the release evidence in T037 and mark the checkpoint complete. If the checkout changes between accounts or machines, sync the repository state before resuming.
 
+## Follow-up plan: startup latency and WebKit recovery
+
+The current source audit identifies three app-controlled fixes. First, remove the unused queue fetch awaited by the server page and make adapter metadata warming non-blocking, so route rendering and player readiness do not wait on a source lookup. Second, retain a single adapter-owned prepared candidate set for the initial/up-next song; revalidate its source deadlines and consume it once so a ready source can be assigned and played directly from the user's gesture. This is bounded playback preparation, not a persistent URL cache. Third, scope media events to the active request/source, and defer buffering/recovery transitions until media time has stopped advancing for five seconds.
+
+The Safari gesture path is a code-level hypothesis supported by the current async call sequence and Apple's documented iOS policy. Actual direct/proxy range responses and the user's affected browser builds are unavailable in this checkout, so device confirmation remains under T036. Keep resolver time, source response/redirect/range/MIME, `play()` rejection, and first media-time advance separate in the smoke record. Do not change provider order or add a media relay based on the current evidence.
+
+Implementation order: T038 startup request removal and non-blocking warm; T039 event scoping and progress-based buffering; T040 one-shot prepared-source use from the gesture. These touch the shared adapter and therefore run serially. MVP: all three US1/US3 follow-up tasks; T036's six named shell runs remain a release gate.
+
+## Follow-up plan: durable catalog freshness and system controls
+
+The latest requirement audit found that current warm semantics and schedule do not meet all-track freshness: a proxy-only record is considered warm, the 30-minute proxy deadline can pass between hourly scans, and the browser's one-time catalog sweep neither tracks candidate deadlines nor retries. Repair in this order:
+
+1. Define complete warmth as both direct and proxy candidates current and more than 900 seconds from `refresh_at`. Report partial/degraded coverage distinctly while preserving valid alternate playback.
+2. Add a Redis sorted set keyed by video ID, scored at the earliest candidate `refresh_at - 900s`. Cache writes and warm catalog reads seed/update the score; cache payload, generation fence, and due score commit atomically. A due worker processes it every loop with fenced single-flight resolution and bounded retry while the prior still-valid generation remains readable. Failed refreshes leave that generation intact and move the next attempt to a backoff deadline; invalidation wins against an in-flight writer. Keep full reconciliation as recovery for lost due-index entries; actual upstream traffic remains governed by configured per-origin rate and concurrency limits.
+3. Remove the browser's one-shot all-queue sweep; backend cache remains shared owner. Keep one selected/up-next candidate slot for immediate playback.
+4. Make Media Session Play idempotent during PLAYING/BUFFERING and keep controls/state consistent with the active song. Device/OS support remains feature-detected and must be recorded per shell.
+
+Do not claim literal Spotify parity or always-warm behavior during provider/cache outage. The release target is full pair coverage when configured upstream capacity is sufficient, zero expired-candidate serves, bounded retries when it is not, and no app-generated reload on duplicate system Play. **T041–T045** are the follow-up tasks; T036 remains the device evidence gate.
+
+## Bitrate and random-track startup audit
+
+The resolver does not implement adaptive bitrate. It returns one selected audio format per track; the direct Google delivery URL and Invidious proxy URL use the same itag, so switching between them changes delivery path, not quality. The backend picks the first AAC-LC format when present; otherwise it picks the highest-bitrate M4A (or highest available audio format). This is neither a guaranteed high-quality-only policy nor a slow-network policy. The frontend's highest-bitrate sort does not currently adapt playback because the resolver supplies one format.
+
+Do not blindly select the absolute lowest format. Lower bitrate reduces sustained bandwidth demand, but cannot remove DNS/TLS, request round-trip, CDN time-to-first-byte, or browser startup buffering. Very low audio quality is permanent for this progressive stream. A mid-range startup target (roughly 96–128 kbps AAC when available) is a better experiment than minimum bitrate; true seamless quality changes require multiple aligned audio renditions in segmented HLS/DASH and a player that can switch renditions without restarting the file.
+
+For arbitrary random selection, keep all-track metadata warm, start the selected rendition immediately, and preload only the known next track. Do not fetch every track's audio bytes to the browser. Before changing the production bitrate rule, record selection-to-resolver, resolver-to-media-request, media TTFB, first advancing media time, and underruns on controlled slow-network profiles and real iOS/Android/macOS devices. Treat zero delay as a measurable p95 target, not a guarantee for an uncached random media URL.
+

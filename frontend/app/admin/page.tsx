@@ -378,6 +378,7 @@ function StatusDisplayCard({
 
   const readyCount = useMemo(() => {
     if (!catalog) return 0;
+    if (typeof catalog.stream_fully_warm === "number") return catalog.stream_fully_warm;
     if (typeof catalog.stream_ready === "number" && catalog.stream_ready > 0) {
       return catalog.stream_ready;
     }
@@ -465,15 +466,15 @@ function StatusDisplayCard({
 
           {/* Prewarmed Inventory Card */}
           <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
-            <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Prewarmed Inventory</div>
+            <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Fully Warm Pairs</div>
             <div className="text-lg font-extrabold text-sky-400">
               {catalog ? `${readyCount} / ${catalog.eligible_songs}` : "—"}
             </div>
             <div className="text-xs text-gray-300">
-              <span className="text-sky-300 font-bold">{catalog?.stream_readiness_percent ?? 0}%</span> Warm Streams
+              <span className="text-sky-300 font-bold">{catalog?.stream_full_warmth_percent ?? catalog?.stream_readiness_percent ?? 0}%</span> Fully warm
             </div>
             <div className="text-[10px] text-gray-500">
-              Expiring (&lt;10m): <span className="text-amber-400">{catalog?.stream_expiring ?? 0}</span> | Missing: <span className="text-red-400">{catalog?.stream_missing ?? 0}</span>
+              Due now: <span className="text-amber-400">{catalog?.stream_refresh_due_count ?? 0}</span> | Refresh window (&lt;15m): <span className="text-amber-300">{catalog?.stream_expiring ?? 0}</span> | Missing: <span className="text-red-400">{catalog?.stream_missing ?? 0}</span>
             </div>
           </div>
 
@@ -498,13 +499,13 @@ function StatusDisplayCard({
           <div className="bg-gray-900/80 border border-gray-800/80 rounded-lg p-3 space-y-1">
             <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Stream Readiness</div>
             <div className="text-lg font-extrabold text-emerald-400">
-              {catalog ? `${catalog.stream_readiness_percent}%` : "—"}
+              {catalog ? `${catalog.stream_full_warmth_percent ?? catalog.stream_readiness_percent}%` : "—"}
             </div>
             <div className="text-xs text-gray-300">
-              <span className="text-emerald-400 font-bold">{readyCount}</span> / {catalog?.eligible_songs ?? 0} Ready
+              <span className="text-emerald-400 font-bold">{readyCount}</span> / {catalog?.eligible_songs ?? 0} Fully warm
             </div>
             <div className="text-[10px] text-gray-500">
-              Expiring (&lt;10m): <span className="text-amber-400">{catalog?.stream_expiring ?? 0}</span> | Missing: <span className="text-red-400">{catalog?.stream_missing ?? 0}</span>
+              Due now: <span className="text-amber-400">{catalog?.stream_refresh_due_count ?? 0}</span> | Refresh window (&lt;15m): <span className="text-amber-300">{catalog?.stream_expiring ?? 0}</span> | Missing: <span className="text-red-400">{catalog?.stream_missing ?? 0}</span>
             </div>
           </div>
 

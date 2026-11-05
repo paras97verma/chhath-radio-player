@@ -42,6 +42,11 @@ type PlaybackCandidate = {
   mimeType?: string;
 };
 
+type PreparedPlaybackSource = {
+  videoId: string;
+  stream: AudioStreamInfo;
+};
+
 type RecoveryEpisode = {
   requestId: number;
   deadlineAt: number;
@@ -54,6 +59,10 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   private currentState: PlayerState = "UNSTARTED";
   private stateListeners: Set<(state: PlayerState) => void> = new Set();
   private progressListeners: Set<(currentTime: number, duration: number) => void> = new Set();
+  private preparedStream: PreparedPlaybackSource | null = null;
+  private initialWarmupPromise: Promise<AudioStreamInfo> | null = null;
+  private initialWarmupVideoId: string | null = null;
+  private initialWarmupController: AbortController | null = null;
   private preloadedSongId: string | null = null;
   /** True only after the secondary element has fired canplay or progress (not just src assignment). */
   private preloadedSongReady = false;
@@ -85,6 +94,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   private activeRequestId = 0;
   private activeAbortController: AbortController | null = null;
   private preloadAbortController: AbortController | null = null;
+  private preloadingSongId: string | null = null;
+  private latestRequestedVideoId: string | null = null;
 
   // Active event listener cleanup callbacks
   private cleanupFns: Array<() => void> = [];
@@ -96,6 +107,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
   private _discardPreloadedSource(): void {
     this._clearPreloadReadinessListeners();
+    this.preparedStream = null;
     this.preloadedSongId = null;
     this.preloadedSongReady = false;
     if (this.secondaryAudio?.src) {
@@ -162,6 +174,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
   private _scheduleAutomaticRetry(videoId: string, requestId: number, resumePosition: number): void {
     this._startRecoveryEpisode(requestId);
+    this._emitState("BUFFERING");
     const episode = this.recoveryEpisode;
     if (!episode || episode.retriesUsed >= 3) {
       this._finishRecoveryEpisode(requestId);
@@ -240,8 +253,22 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     );
   }
 
-  private _recordMediaProgress(audio: HTMLAudioElement): void {
+  private _getCurrentMediaAttempt(audio: HTMLAudioElement): ActivePlaybackAttempt | null {
     const attempt = this.activeAttempt;
+    const currentSource = audio.currentSrc || audio.src;
+    if (
+      !attempt ||
+      audio !== this.primaryAudio ||
+      attempt.requestId !== this.activeRequestId ||
+      currentSource !== attempt.url
+    ) {
+      return null;
+    }
+    return attempt;
+  }
+
+  private _recordMediaProgress(audio: HTMLAudioElement): void {
+    const attempt = this._getCurrentMediaAttempt(audio);
     if (
       !attempt ||
       attempt.requestId !== this.activeRequestId ||
@@ -324,6 +351,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
         ? Math.max(audio.currentTime, attempt.lastProgressTime)
         : attempt.lastProgressTime;
       this._startRecoveryEpisode(requestId);
+      this._emitState("BUFFERING");
       this._reportAttemptFailure(this.currentVideoId!, attempt, "stall_timeout");
       this._attemptPlayCandidate(
         this.currentVideoId!,
@@ -416,17 +444,35 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     this._applyVolume(this.primaryAudio);
     this._applyVolume(this.secondaryAudio);
 
-    // Warm up initial song metadata in cache if provided (without assigning unprimed src on mobile)
+    // Warm initial metadata in the background; player readiness must not wait on an upstream resolver.
     const videoId = typeof initial === "string" ? initial : initial?.youtube_video_id;
     if (videoId) {
-      try {
-        const stream = await fetchInvidiousStream(videoId, this.primaryAudio);
-        if (stream.duration) {
-          this.streamDuration = stream.duration;
-        }
-      } catch (err) {
-        console.warn("[Html5AudioAdapter] Could not pre-warm initial song stream:", err);
-      }
+      const controller = new AbortController();
+      const warmup = fetchInvidiousStream(videoId, this.primaryAudio, controller.signal);
+      this.initialWarmupPromise = warmup;
+      this.initialWarmupVideoId = videoId;
+      this.initialWarmupController = controller;
+      void warmup
+        .then((stream) => {
+          if (
+            this.isDestroyed ||
+            this.latestRequestedVideoId !== null ||
+            this.preparedStream !== null
+          ) return;
+          this.preparedStream = { videoId, stream };
+          this.preloadedSongId = videoId;
+        })
+        .catch((err) => {
+          if (controller.signal.aborted) return;
+          console.warn("[Html5AudioAdapter] Could not pre-warm initial song stream:", err);
+        })
+        .finally(() => {
+          if (this.initialWarmupPromise === warmup) {
+            this.initialWarmupPromise = null;
+            this.initialWarmupVideoId = null;
+            this.initialWarmupController = null;
+          }
+        });
     }
   }
 
@@ -438,6 +484,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     };
     const onPlaying = () => {
       if (this.isPriming) return;
+      const attempt = this._getCurrentMediaAttempt(audio);
+      if (this.hasUserInteracted && !attempt) return;
       this._recordMediaProgress(audio);
       const dur = this.getDuration() || audio.duration;
       if (Number.isFinite(dur) && dur > 0) {
@@ -447,13 +495,18 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     };
     const onCanPlay = () => {
       if (this.isPriming) return;
-      if (this.activeAttempt?.requestId === this.activeRequestId) {
-        this.activeAttempt.ready = true;
+      const attempt = this._getCurrentMediaAttempt(audio);
+      if (attempt) {
+        attempt.ready = true;
       }
     };
     const onPause = () => {
       // Avoid emitting PAUSED if track just ended or if hardware is silently priming
-      if (this.isPriming || audio.ended || this.hasEndedEmitted) return;
+      if (this.isPriming || !audio.paused || audio.ended || this.hasEndedEmitted) return;
+      if (this.hasUserInteracted) {
+        const attempt = this._getCurrentMediaAttempt(audio);
+        if (!attempt?.hasProgress) return;
+      }
       this._emitState("PAUSED");
       const dur = this.getDuration() || audio.duration;
       if (Number.isFinite(dur) && dur > 0) {
@@ -462,15 +515,20 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     };
     const onWaiting = () => {
       if (this.isPriming) return;
-      this._emitState("BUFFERING");
-      const attempt = this.activeAttempt;
-      if (attempt?.requestId === this.activeRequestId && attempt.hasProgress) {
+      const attempt = this._getCurrentMediaAttempt(audio);
+      if (this.hasUserInteracted && !attempt) return;
+      if (!this.hasUserInteracted) {
+        this._emitState("BUFFERING");
+      }
+      if (attempt && !audio.paused && attempt.hasProgress) {
         attempt.waiting = true;
         this._startStallWatchdog(audio, attempt);
       }
     };
     const onEnded = () => {
       if (this.isPriming || this.hasEndedEmitted) return;
+      const attempt = this._getCurrentMediaAttempt(audio);
+      if (this.hasUserInteracted && !attempt?.hasProgress) return;
       this._clearRecoveryWatchdog();
       this._clearRecoveryEpisode();
       this.activeAttempt = null;
@@ -478,10 +536,11 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       this._emitState("ENDED");
     };
     const onError = async () => {
-      // If a newer load request is active or audio element was reset, ignore stale errors
-      if (this.isPriming || this.activeAbortController?.signal.aborted || this.isDestroyed) return;
-      const attempt = this.activeAttempt;
-      if (!attempt || attempt.requestId !== this.activeRequestId) return;
+      // A real source can fail while gesture priming is still settling. The active
+      // attempt/source check below filters errors from the temporary silent source.
+      if (this.activeAbortController?.signal.aborted || this.isDestroyed) return;
+      const attempt = this._getCurrentMediaAttempt(audio);
+      if (!attempt) return;
       // If user has not interacted yet, or error is MEDIA_ERR_ABORTED (code 1), ignore
       if (!this.hasUserInteracted || audio.error?.code === 1) return;
       console.warn(`[Html5AudioAdapter] Audio error encountered for ${this.currentVideoId}:`, audio.error);
@@ -504,6 +563,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     };
 
     const onTimeUpdate = () => {
+      if (this.hasUserInteracted && !this._getCurrentMediaAttempt(audio)) return;
       const dur = this.getDuration() || audio.duration;
       const cur = audio.currentTime;
       this._recordMediaProgress(audio);
@@ -519,7 +579,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     };
 
     const onMetadata = () => {
-      const attempt = this.activeAttempt;
+      const attempt = this._getCurrentMediaAttempt(audio);
+      if (this.hasUserInteracted && !attempt) return;
       if (
         attempt?.requestId === this.activeRequestId &&
         !attempt.hasProgress &&
@@ -581,6 +642,21 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
   async loadVideo(videoId: string): Promise<void> {
     if (!videoId) return;
+    const initialWarmup = this.initialWarmupVideoId === videoId
+      ? this.initialWarmupPromise
+      : null;
+    this.latestRequestedVideoId = videoId;
+    const preparedStream = this.preparedStream?.videoId === videoId
+      ? this.preparedStream.stream
+      : null;
+    if (preparedStream) this.preparedStream = null;
+
+    if (this.initialWarmupVideoId && this.initialWarmupVideoId !== videoId) {
+      this.initialWarmupController?.abort("Initial stream warmup no longer selected");
+      this.initialWarmupPromise = null;
+      this.initialWarmupVideoId = null;
+      this.initialWarmupController = null;
+    }
 
     // Reset completion emission flag for newly requested song
     this.hasEndedEmitted = false;
@@ -589,13 +665,14 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     this.activeAttempt = null;
 
     // 1. Cancel any in-flight background preload so it does not contend with live playback
-    if (this.preloadAbortController) {
+    if (this.preloadAbortController && this.preloadingSongId !== videoId) {
       try {
         this.preloadAbortController.abort("Playback track load started");
       } catch {
         /* ignore */
       }
       this.preloadAbortController = null;
+      this.preloadingSongId = null;
     }
 
     // 2. Cancel previous load request if in flight
@@ -618,67 +695,77 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       this.preloadedSongId === videoId &&
       this.preloadedSongReady &&
       this.secondaryAudio &&
-      this.secondaryAudio.src
+      this.secondaryAudio.src &&
+      preparedStream
     ) {
-      this.hasEndedEmitted = false;
-      // Instant seamless handoff! Swap primary and secondary
-      const oldPrimary = this.primaryAudio;
-      const newPrimary = this.secondaryAudio;
+      const candidates = this._buildCandidates(preparedStream);
+      const candidate = candidates[0];
+      if (!candidate) {
+        this._discardPreloadedSource();
+      } else {
+        this.hasEndedEmitted = false;
+        // Instant seamless handoff! Swap primary and secondary
+        const oldPrimary = this.primaryAudio;
+        const newPrimary = this.secondaryAudio;
 
-      this.primaryAudio = newPrimary;
-      this.secondaryAudio = oldPrimary;
-      this._clearPreloadReadinessListeners();
-      this.preloadedSongId = null;
-      this.preloadedSongReady = false;
-      this.currentVideoId = videoId;
-      this.streamDuration = extractDurationFromUrl(this.primaryAudio.src);
+        this.primaryAudio = newPrimary;
+        this.secondaryAudio = oldPrimary;
+        this._clearPreloadReadinessListeners();
+        this.preloadedSongId = null;
+        this.preloadedSongReady = false;
+        this.currentVideoId = videoId;
+        this.currentProxyUrl = preparedStream.proxy_url || null;
+        this.streamDuration = preparedStream.duration ?? extractDurationFromUrl(candidate.url) ?? null;
+        this.hasUserInteracted = true;
 
-      // Rebind events for the active primary
-      this.cleanupFns.forEach((fn) => fn());
-      this.cleanupFns = [];
-      this._bindAudioEvents(this.primaryAudio);
-      this._applyVolume(this.primaryAudio);
+        // Rebind events for the active primary
+        this.cleanupFns.forEach((fn) => fn());
+        this.cleanupFns = [];
+        this._bindAudioEvents(this.primaryAudio);
+        this._applyVolume(this.primaryAudio);
 
-      this.currentCandidates = [{ url: this.primaryAudio.src, type: "direct" }];
-      this.currentCandidateIndex = 0;
-      const attempt = this._beginPlaybackAttempt(
-        videoId,
-        requestId,
-        0,
-        this.primaryAudio.src,
-        "direct",
-        this.primaryAudio,
-        this.primaryAudio.currentTime || 0,
-      );
-      this._emitState("BUFFERING");
-      // Start new audio first to maintain continuous audio session on iOS/Android lockscreen
-      try {
-        await this.primaryAudio.play();
-      } catch (playError: any) {
-        if (!this._isCurrentAttempt(requestId, attempt.id)) return;
-        this._clearRecoveryWatchdog();
-        this.activeAttempt = null;
-        if (playError?.name === "NotAllowedError") {
-          this._clearRecoveryEpisode();
-          this._emitState("PAUSED");
+        this.currentCandidates = candidates;
+        this.currentCandidateIndex = 0;
+        const attempt = this._beginPlaybackAttempt(
+          videoId,
+          requestId,
+          0,
+          candidate.url,
+          candidate.type,
+          this.primaryAudio,
+          this.primaryAudio.currentTime || 0,
+          candidate,
+        );
+        this._emitState("BUFFERING");
+        // Start new audio first to maintain continuous audio session on iOS/Android lockscreen
+        try {
+          await this.primaryAudio.play();
+        } catch (playError: any) {
+          if (!this._isCurrentAttempt(requestId, attempt.id)) return;
+          this._clearRecoveryWatchdog();
+          this.activeAttempt = null;
+          if (playError?.name === "NotAllowedError") {
+            this._clearRecoveryEpisode();
+            this._emitState("PAUSED");
+            return;
+          }
+          await this._attemptPlayCandidate(videoId, requestId, 1, this.primaryAudio.currentTime || 0);
           return;
         }
-        await this._attemptPlayCandidate(videoId, requestId, 1, this.primaryAudio.currentTime || 0);
+        if (!this._isCurrentAttempt(requestId, attempt.id)) return;
+
+        if (this.streamDuration && this.streamDuration > 0) {
+          updateMediaSessionPositionState(0, this.streamDuration, 1);
+        }
+
+        // Only after new audio has started playing, clean up the previous audio element
+        if (oldPrimary) {
+          oldPrimary.pause();
+          oldPrimary.removeAttribute("src");
+          oldPrimary.load();
+        }
         return;
       }
-      if (!this._isCurrentAttempt(requestId, attempt.id)) return;
-
-      if (this.streamDuration && this.streamDuration > 0) {
-        updateMediaSessionPositionState(0, this.streamDuration, 1);
-      }
-
-      // Only after new audio has started playing, clean up the previous audio element
-      if (oldPrimary) {
-        oldPrimary.pause();
-        oldPrimary.removeAttribute("src");
-        oldPrimary.load();
-      }
-      return;
     }
 
     // If preload was ignored, discard its pending source and continue through the normal path.
@@ -687,7 +774,18 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     // Standard resolution path
     this._emitState("BUFFERING");
     try {
-      const stream = await fetchInvidiousStream(videoId, this.primaryAudio, controller.signal);
+      let stream: AudioStreamInfo;
+      if (preparedStream) {
+        stream = preparedStream;
+      } else if (initialWarmup) {
+        try {
+          stream = await initialWarmup;
+        } catch {
+          stream = await fetchInvidiousStream(videoId, this.primaryAudio, controller.signal);
+        }
+      } else {
+        stream = await fetchInvidiousStream(videoId, this.primaryAudio, controller.signal);
+      }
 
       // Check if superseded or destroyed while fetching
       if (this.activeRequestId !== requestId || this.isDestroyed || controller.signal.aborted) {
@@ -696,11 +794,18 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
       if (!this.primaryAudio) throw new Error("Audio element not initialized");
 
+      let candidates = this._buildCandidates(stream);
+      if (candidates.length === 0 && preparedStream) {
+        stream = await fetchInvidiousStream(videoId, this.primaryAudio, controller.signal);
+        if (this.activeRequestId !== requestId || this.isDestroyed || controller.signal.aborted) return;
+        candidates = this._buildCandidates(stream);
+      }
+
       this.hasUserInteracted = true;
       this.currentVideoId = videoId;
       this.currentProxyUrl = stream.proxy_url || null;
       this.streamDuration = stream.duration ?? extractDurationFromUrl(stream.url) ?? null;
-      this.currentCandidates = this._buildCandidates(stream);
+      this.currentCandidates = candidates;
       this.currentCandidateIndex = 0;
 
       if (this.currentCandidates.length === 0) {
@@ -737,6 +842,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       return;
     }
 
+    this._emitState("BUFFERING");
     this.currentCandidateIndex = candidateIdx;
     const candidate = this.currentCandidates[candidateIdx];
     this.primaryAudio.src = candidate.url;
@@ -852,27 +958,36 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
         /* ignore */
       }
       this.preloadAbortController = null;
+      this.preloadingSongId = null;
     }
     this._discardPreloadedSource();
     const controller = new AbortController();
     this.preloadAbortController = controller;
+    this.preloadingSongId = song.youtube_video_id;
 
     try {
       const stream = await fetchInvidiousStream(song.youtube_video_id, this.secondaryAudio, controller.signal);
-      if (controller.signal.aborted || this.isDestroyed) return;
+      if (
+        controller.signal.aborted ||
+        this.isDestroyed ||
+        this.latestRequestedVideoId === song.youtube_video_id
+      ) return;
+
+      const candidate = this._buildCandidates(stream)[0];
+      if (!candidate) return;
+
+      this.preparedStream = { videoId: song.youtube_video_id, stream };
+      this.preloadedSongReady = false;
+      this.preloadedSongId = song.youtube_video_id;
 
       const secondary = this.secondaryAudio;
       if (secondary) {
         const source = stream.sources?.find(
-          (candidate) => "mode" in candidate && candidate.url === stream.url,
+          (sourceCandidate) => "mode" in sourceCandidate && sourceCandidate.url === candidate.url,
         );
         if (!source || !("mode" in source) || !isMimeTypeSupportedByAudioElement(secondary, source.mime_type)) return;
 
         const videoId = song.youtube_video_id;
-        // Reset readiness — src assignment alone is not enough.
-        this.preloadedSongReady = false;
-        this.preloadedSongId = videoId;
-
         // Mark ready after the browser confirms actual media data is available.
         const markReady = () => {
           if (this.preloadedSongId === videoId && !this.preloadedSongReady) {
@@ -886,11 +1001,16 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
         secondary.addEventListener("canplay", markReady);
         secondary.addEventListener("progress", markReady);
         this.preloadCleanupFns = [removeCanPlay, removeProgress];
-        secondary.src = stream.url;
+        secondary.src = candidate.url;
         secondary.preload = "auto";
       }
     } catch {
       // Safely swallow all preload errors/aborts so no unhandled rejections reach the console/overlay
+    } finally {
+      if (this.preloadAbortController === controller) {
+        this.preloadAbortController = null;
+        this.preloadingSongId = null;
+      }
     }
   }
 
@@ -991,8 +1111,14 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
         /* ignore */
       }
       this.preloadAbortController = null;
+      this.preloadingSongId = null;
     }
+    this.initialWarmupController?.abort("Adapter destroyed");
+    this.initialWarmupController = null;
+    this.initialWarmupPromise = null;
+    this.initialWarmupVideoId = null;
     this._clearPreloadReadinessListeners();
+    this.preparedStream = null;
     this.preloadedSongId = null;
     this.preloadedSongReady = false;
     this.cleanupFns.forEach((fn) => fn());
