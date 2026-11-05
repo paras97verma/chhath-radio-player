@@ -34,6 +34,14 @@ export const OFFERINGS_STORAGE_KEY = "chhath_offerings_v1";
 export const LEGACY_ARGHYA_KEY = "chhath_arghya_count";
 export const LEGACY_REACTIONS_KEY = "chhath_reactions_session_v1";
 
+function primeAudioForUserGesture(adapter: AudioPlayerAdapter | null): void {
+  try {
+    adapter?.primeAudio?.();
+  } catch {
+    // Priming is best-effort; it must not prevent the requested playback action.
+  }
+}
+
 export function loadOfferingsFromStorage(): Record<string, number> {
   if (typeof window === "undefined") return {};
   try {
@@ -463,19 +471,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     // Register OS Media Session controls (Lock screen, Control Center, Bluetooth headsets).
     // Standardizes prev, next, seekto, seekbackward, seekforward across Android, iOS, and desktop.
     registerMediaSessionHandlers({
-      onPlay: async () => {
-        const { adapter, startPlayback } = get();
-        // Immediate direct resume within the lockscreen user-action window
-        if (adapter && (adapter.getState() === "PAUSED" || adapter.getState() === "CUED")) {
-          try {
-            await adapter.play();
-            return;
-          } catch {
-            /* fallback to full startPlayback if direct resume fails */
-          }
-        }
-        await startPlayback();
-      },
+      onPlay: () => get().startPlayback(),
       onPause: () => get().pausePlayback(),
       onNext: () => get().nextSong(),
       onPrev: () => get().prevSong(),
@@ -596,6 +592,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const { adapter, queue, currentIndex } = get();
     if (!adapter || queue.length === 0) return;
 
+    primeAudioForUserGesture(adapter);
     set({ userIntent: "playing", error: null, consecutiveErrors: 0 });
     onPlaybackStateChange(true);
 
@@ -611,11 +608,14 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const currentState = adapter.getState();
     const isLoaded = adapter.isSongLoaded ? adapter.isSongLoaded(song.youtube_video_id) : true;
     if ((currentState === "PAUSED" || currentState === "CUED") && isLoaded) {
+      set({ playState: "BUFFERING" });
       try {
         await adapter.play();
       } catch (err) {
         console.warn("[RadioController] play() failed:", err);
-        set({ playState: "ERROR", error: "Playback failed" });
+        set({ playState: "ERROR", userIntent: "idle", error: "Playback failed" });
+        onPlaybackStateChange(false);
+        setMediaSessionPlaybackState("none");
       }
       return;
     }
@@ -623,10 +623,11 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     set({ playState: "BUFFERING" });
     try {
       await adapter.loadVideo(song.youtube_video_id);
-      await adapter.play();
     } catch (err) {
       console.warn("[RadioController] loadVideo/play failed:", err);
-      set({ playState: "ERROR", error: "Playback failed" });
+      set({ playState: "ERROR", userIntent: "idle", error: "Playback failed" });
+      onPlaybackStateChange(false);
+      setMediaSessionPlaybackState("none");
     }
   },
 
@@ -653,6 +654,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const { queue, currentIndex, adapter, isShuffleEnabled } = get();
     if (!adapter || queue.length === 0) return;
 
+    primeAudioForUserGesture(adapter);
     const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
 
     set({ currentIndex: nextIndex, playState: "BUFFERING", userIntent: "playing", error: null });
@@ -660,18 +662,23 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     try {
       await adapter.loadVideo(queue[nextIndex].youtube_video_id);
     } catch {
-      set({ playState: "ERROR", error: "Could not load next track" });
+      set({ playState: "ERROR", userIntent: "idle", error: "Could not load next track" });
+      onPlaybackStateChange(false);
+      setMediaSessionPlaybackState("none");
     }
   },
 
   prevSong: async () => {
-    const { queue, currentIndex, adapter, currentTime } = get();
+    const { queue, currentIndex, adapter, currentTime, duration } = get();
     if (!adapter || queue.length === 0) return;
 
+    primeAudioForUserGesture(adapter);
     // If current song has played more than 3 seconds, restart the song from beginning
     if (currentTime > 3) {
       adapter.seekTo(0);
       set({ currentTime: 0 });
+      const activeDuration = duration || adapter.getDuration();
+      if (activeDuration > 0) updateMediaSessionPositionState(0, activeDuration);
       return;
     }
 
@@ -681,7 +688,9 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     try {
       await adapter.loadVideo(queue[prevIndex].youtube_video_id);
     } catch {
-      set({ playState: "ERROR", error: "Could not load previous track" });
+      set({ playState: "ERROR", userIntent: "idle", error: "Could not load previous track" });
+      onPlaybackStateChange(false);
+      setMediaSessionPlaybackState("none");
     }
   },
 
@@ -689,7 +698,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const { queue, adapter } = get();
     if (!adapter || index < 0 || index >= queue.length) return;
     const targetSong = queue[index];
-    adapter.primeAudio?.();
+    primeAudioForUserGesture(adapter);
     set({
       currentIndex: index,
       playState: "BUFFERING",
@@ -702,7 +711,9 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       await adapter.loadVideo(targetSong.youtube_video_id);
     } catch (err: any) {
       if (err?.name !== "AbortError") {
-        set({ playState: "ERROR", error: "Could not play track" });
+        set({ playState: "ERROR", userIntent: "idle", error: "Could not play track" });
+        onPlaybackStateChange(false);
+        setMediaSessionPlaybackState("none");
       }
     }
   },
@@ -719,7 +730,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       set({ queue: newQueue });
       const { adapter } = get();
       if (!adapter) return;
-      adapter.primeAudio?.();
+      primeAudioForUserGesture(adapter);
       set({
         currentIndex: 0,
         playState: "BUFFERING",
@@ -732,7 +743,9 @@ export const useRadioStore = create<RadioState>((set, get) => ({
         await adapter.loadVideo(song.youtube_video_id);
       } catch (err: any) {
         if (err?.name !== "AbortError") {
-          set({ playState: "ERROR", error: "Could not play track" });
+          set({ playState: "ERROR", userIntent: "idle", error: "Could not play track" });
+          onPlaybackStateChange(false);
+          setMediaSessionPlaybackState("none");
         }
       }
     }
@@ -806,40 +819,14 @@ export const useRadioStore = create<RadioState>((set, get) => ({
         console.warn(
           `[RadioController] Audio error for song at index ${currentIndex} (consecutive: ${errCount}).`
         );
-
-        // Circuit breaker: halt auto-skipping if multiple consecutive tracks fail
-        if (errCount >= 3 || queue.length <= 1) {
-          console.warn(
-            "[RadioController] Too many consecutive audio playback failures. Halting auto-skip."
-          );
-          set({
-            playState: "ERROR",
-            userIntent: "idle",
-            error: "Playback failed. Tap Play to retry.",
-            consecutiveErrors: 0,
-          });
-          onPlaybackStateChange(false);
-          setMediaSessionPlaybackState("none");
-          break;
-        }
-
-        const { isShuffleEnabled } = get();
-        const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
         set({
-          currentIndex: nextIndex,
-          playState: "BUFFERING",
-          userIntent: "playing",
-          error: null,
+          playState: "ERROR",
+          userIntent: "idle",
+          error: "Playback failed. Retry this song or skip to the next one.",
           consecutiveErrors: errCount,
         });
-        updateMediaSessionMetadata(queue[nextIndex], true);
-        try {
-          await adapter?.loadVideo(queue[nextIndex].youtube_video_id);
-        } catch {
-          set({ playState: "ERROR", userIntent: "idle", error: "Playback error on track", consecutiveErrors: 0 });
-          onPlaybackStateChange(false);
-          setMediaSessionPlaybackState("none");
-        }
+        onPlaybackStateChange(false);
+        setMediaSessionPlaybackState("none");
         break;
       }
     }

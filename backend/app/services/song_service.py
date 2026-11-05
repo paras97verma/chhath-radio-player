@@ -22,6 +22,7 @@ from typing import Optional, Any, Dict, List
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 
+from app.db.database import SessionLocal
 from app.models.song import Song
 from app.schemas.song import SongCreate, SongUpdate, extract_youtube_video_id
 from app.core.redis import get_redis_client as _get_redis
@@ -32,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 QUEUE_CACHE_KEY = "chhath:queue"
 RECONCILER_PRIORITY_KEY = "chhath:queue:reconciler_priority"
+RECONCILER_RETRY_KEY = "chhath:queue:reconciler_retry"
+RECONCILER_RETRY_ATTEMPTS_KEY = "chhath:queue:reconciler_retry_attempts"
 # Cache TTL in seconds (default: 30 days). Set to 0 to bypass caching (e.g. for instant DB updates in dev).
 QUEUE_CACHE_TTL = int(os.getenv("QUEUE_CACHE_TTL", "2592000"))
 
@@ -84,6 +87,8 @@ def enqueue_priority_warming(video_id: str) -> None:
         if client is not None:
             client.lpush(RECONCILER_PRIORITY_KEY, clean_id)
             client.ltrim(RECONCILER_PRIORITY_KEY, 0, 999)
+            client.zrem(RECONCILER_RETRY_KEY, clean_id)
+            client.hdel(RECONCILER_RETRY_ATTEMPTS_KEY, clean_id)
             logger.debug("[SongService] Enqueued %s for priority warming", clean_id)
     except Exception as exc:
         logger.warning("[SongService] Failed to enqueue priority warming for %s: %s", clean_id, exc)
@@ -316,6 +321,22 @@ class SongService:
             db.rollback()
             logger.warning("[SongService] Failed to persist metadata sync for %s: %s", song.youtube_video_id, exc)
             return False
+
+    @staticmethod
+    def sync_song_metadata_by_id(song_id: Any, force: bool = False) -> bool:
+        """Load, synchronize, and close one song's session in the calling worker thread."""
+        db = SessionLocal()
+        try:
+            song = db.get(Song, song_id)
+            if song is None:
+                return False
+            return SongService.sync_song_metadata(db, song, force=force)
+        except Exception as exc:
+            logger.warning("[SongService] Metadata sync failed for song %s: %s", song_id, exc)
+            db.rollback()
+            return False
+        finally:
+            db.close()
 
     @staticmethod
     def create(db: Session, data: SongCreate) -> Song:

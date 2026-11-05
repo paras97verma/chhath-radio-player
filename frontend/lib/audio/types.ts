@@ -24,16 +24,59 @@ export type StreamReadinessStatus =
   | "EXPIRED"
   | "FAILED";
 
-export interface StreamCandidateSource {
+export type StreamSourceMode = "direct" | "proxy";
+export type StreamProviderKind = "invidious";
+export type StreamValidationState = "validated" | "unvalidated" | "expired" | "rejected";
+export type LegacyStreamSourceType =
+  | "direct"
+  | "direct_alt"
+  | "proxy"
+  | "proxy_fallback"
+  | "fallback";
+
+/** Canonical metadata for one independently expiring Invidious source. */
+export interface CanonicalStreamCandidate {
+  mode: StreamSourceMode;
+  provider: StreamProviderKind;
+  provider_origin: string;
   url: string;
-  type: "direct" | "direct_alt" | "proxy" | "proxy_fallback" | "fallback";
+  itag: number;
+  mime_type: string;
+  codec: string | null;
+  resolved_at: number;
+  expires_at: number | null;
+  refresh_at: number;
+  validation_state: StreamValidationState;
+  /** Temporary compatibility fields consumed by the current player. */
+  type?: LegacyStreamSourceType;
+  format?: string;
+  mimeType?: string;
+  bitrate?: number;
+}
+
+/** Existing response source shape retained during the API migration. */
+export interface LegacyStreamCandidateSource {
+  url: string;
+  type?: LegacyStreamSourceType;
   format?: string;
   mimeType?: string;
   bitrate?: number;
   expires_at?: number;
 }
 
-export interface AudioStreamInfo {
+export type StreamCandidateSource = CanonicalStreamCandidate | LegacyStreamCandidateSource;
+
+export interface StreamResolutionMetadata {
+  schema_version: number;
+  video_id: string;
+  generation: number;
+  refreshed_at: number;
+  sources: StreamCandidateSource[];
+  last_resolution?: string;
+}
+
+/** Legacy playback fields remain available while consumers migrate to candidates. */
+export interface LegacyAudioStreamResponse {
   url: string;
   direct_url?: string;
   proxy_url?: string;
@@ -48,6 +91,8 @@ export interface AudioStreamInfo {
   cache_tier?: string;
   title?: string;
 }
+
+export type AudioStreamInfo = LegacyAudioStreamResponse & Partial<StreamResolutionMetadata>;
 
 export interface PipedInstance {
   name: string;

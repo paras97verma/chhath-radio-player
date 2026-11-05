@@ -13,17 +13,31 @@ Returns catalog readiness and observability metrics.
 """
 
 import asyncio
-from typing import Optional
-from fastapi import APIRouter, HTTPException, Query, Header, status, BackgroundTasks
-from app.services.stream_cache_service import StreamCacheService
+import time
+from typing import Literal, Optional
+from fastapi import APIRouter, HTTPException, Query, Header, status, BackgroundTasks, Response
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from app.core.redis import get_redis_client
+from app.services.stream_cache_service import STREAM_METRICS_KEY, StreamCacheService
 from app.services.queue_prewarmer import CatalogReconciliationService, QueuePrewarmer
 from app.core.config import settings
 
 router = APIRouter(prefix="/api", tags=["stream"])
+NO_STORE_HEADERS = {"Cache-Control": "no-store, max-age=0"}
+
+
+class SourceFailureReport(BaseModel):
+    video_id: str = Field(min_length=5, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
+    mode: Literal["direct", "proxy"]
+    provider: str = Field(min_length=1, max_length=200)
+    generation: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=120)
 
 
 @router.get("/stream")
 def get_stream(
+    response: Response,
     v: str = Query(..., min_length=5, max_length=32, description="YouTube Video ID"),
     priority: str = Query("high", description="Resolution priority: high (user-selected) or normal (background)"),
     force_fresh: bool = Query(False, description="Bypass cache and force upstream re-extraction"),
@@ -33,14 +47,60 @@ def get_stream(
     Leverages Redis L2 caching and single-flight lock to support 10,000+ concurrent listeners.
     Returns in 1-2ms on cache hit.
     """
+    response.headers.update(NO_STORE_HEADERS)
+
     stream = StreamCacheService.get_stream(v, priority=priority, force_fresh=force_fresh)
     if not stream:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Unable to resolve playable audio stream for video '{v}'.",
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"error": "stream_unavailable", "retryable": True},
+            headers=NO_STORE_HEADERS,
         )
 
-    return stream
+    # Keep old resolver fields during rollout. Generation zero marks legacy records
+    # that cannot authorize source-failure telemetry until fenced cache records land.
+    result = dict(stream)
+    result.setdefault("schema_version", 1)
+    result.setdefault("video_id", v)
+    generation = result.get("generation")
+    if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
+        generation = 0
+    result["generation"] = generation
+    refreshed_at = result.get("refreshed_at")
+    if not isinstance(refreshed_at, (int, float)):
+        timestamp_ms = result.get("timestamp")
+        refreshed_at = timestamp_ms / 1000 if isinstance(timestamp_ms, (int, float)) else time.time()
+    result["refreshed_at"] = refreshed_at
+    return result
+
+
+@router.post("/stream/source-failure")
+def report_source_failure(response: Response, report: SourceFailureReport):
+    """Record aggregate telemetry only for the currently cached generation."""
+    response.headers.update(NO_STORE_HEADERS)
+    current = StreamCacheService.get_stream_fast(report.video_id)
+    if not current or current.get("generation") != report.generation:
+        return {"recorded": False, "stale": True}
+
+    sources = current.get("sources") or []
+    matching_source = any(
+        isinstance(source, dict)
+        and source.get("mode") == report.mode
+        and (source.get("provider_origin") or source.get("provider")) == report.provider
+        for source in sources
+    )
+    if not matching_source:
+        return {"recorded": False, "stale": True}
+
+    recorded = False
+    try:
+        redis_client = get_redis_client()
+        if redis_client:
+            redis_client.hincrby(STREAM_METRICS_KEY, f"source_failure_{report.mode}", 1)
+            recorded = True
+    except Exception:
+        pass
+    return {"recorded": recorded, "stale": False}
 
 
 @router.get("/stream/catalog/status")

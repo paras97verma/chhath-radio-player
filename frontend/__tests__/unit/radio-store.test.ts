@@ -76,6 +76,43 @@ describe("TestLoadQueue", () => {
     // After ENDED on song 0, should advance to song 1
     expect(getStore().currentIndex).toBe(1);
   });
+
+  it("routes MediaSession play through the synchronous gesture priming path", async () => {
+    const previousDescriptor = Object.getOwnPropertyDescriptor(navigator, "mediaSession");
+    const handlers = new Map<string, ((details?: unknown) => unknown) | null>();
+    Object.defineProperty(navigator, "mediaSession", {
+      configurable: true,
+      value: {
+        setActionHandler: (action: string, handler: ((details?: unknown) => unknown) | null) => {
+          handlers.set(action, handler);
+        },
+        metadata: null,
+        playbackState: "none",
+      },
+    });
+
+    try {
+      const adapter = new MockYouTubePlayerAdapter();
+      const songs = makeSongs(1);
+      const primeAudio = vi.fn();
+      Object.assign(adapter, { primeAudio });
+      const loadVideoSpy = vi.spyOn(adapter, "loadVideo");
+      await getStore().loadQueue(songs, adapter);
+
+      const playRequest = handlers.get("play")?.({});
+      expect(primeAudio).toHaveBeenCalledOnce();
+      await playRequest;
+
+      expect(loadVideoSpy).toHaveBeenCalledWith(songs[0].youtube_video_id);
+      expect(getStore().currentSong()).toEqual(songs[0]);
+    } finally {
+      if (previousDescriptor) {
+        Object.defineProperty(navigator, "mediaSession", previousDescriptor);
+      } else {
+        Reflect.deleteProperty(navigator, "mediaSession");
+      }
+    }
+  });
 });
 
 // ─── TestCurrentSong ──────────────────────────────────────────────────────────
@@ -131,13 +168,17 @@ describe("TestStartPlayback", () => {
     const adapter = new MockYouTubePlayerAdapter();
     const songs = makeSongs(2);
     await getStore().loadQueue(songs, adapter);
+    const primeAudio = vi.fn();
+    Object.assign(adapter, { primeAudio });
 
     // Manually set adapter state to PAUSED
     vi.spyOn(adapter, "getState").mockReturnValue("PAUSED");
     const playSpy = vi.spyOn(adapter, "play");
     const loadVideoSpy = vi.spyOn(adapter, "loadVideo");
 
-    await getStore().startPlayback();
+    const resume = getStore().startPlayback();
+    expect(primeAudio).toHaveBeenCalledOnce();
+    await resume;
 
     expect(playSpy).toHaveBeenCalled();
     expect(loadVideoSpy).not.toHaveBeenCalled();
@@ -160,13 +201,19 @@ describe("TestStartPlayback", () => {
     const adapter = new MockYouTubePlayerAdapter();
     const songs = makeSongs(2);
     await getStore().loadQueue(songs, adapter);
+    const primeAudio = vi.fn();
+    Object.assign(adapter, { primeAudio });
 
     vi.spyOn(adapter, "getState").mockReturnValue("UNSTARTED");
     const loadVideoSpy = vi.spyOn(adapter, "loadVideo");
+    const playSpy = vi.spyOn(adapter, "play");
 
-    await getStore().startPlayback();
+    const start = getStore().startPlayback();
+    expect(primeAudio).toHaveBeenCalledOnce();
+    await start;
 
     expect(loadVideoSpy).toHaveBeenCalledWith(songs[0].youtube_video_id);
+    expect(playSpy).not.toHaveBeenCalled();
   });
 
   it("is a no-op when queue is empty", async () => {
@@ -207,10 +254,14 @@ describe("TestNextSong", () => {
     const adapter = new MockYouTubePlayerAdapter();
     const songs = makeSongs(3);
     await getStore().loadQueue(songs, adapter);
+    const primeAudio = vi.fn();
+    Object.assign(adapter, { primeAudio });
 
     const loadVideoSpy = vi.spyOn(adapter, "loadVideo");
 
-    await getStore().nextSong();
+    const next = getStore().nextSong();
+    expect(primeAudio).toHaveBeenCalledOnce();
+    await next;
 
     expect(getStore().currentIndex).toBe(1);
     expect(loadVideoSpy).toHaveBeenCalledWith(songs[1].youtube_video_id);
@@ -269,11 +320,15 @@ describe("TestPrevSong", () => {
     const adapter = new MockYouTubePlayerAdapter();
     const songs = makeSongs(3);
     await getStore().loadQueue(songs, adapter);
+    const primeAudio = vi.fn();
+    Object.assign(adapter, { primeAudio });
 
     useRadioStore.setState({ currentIndex: 0, currentTime: 1 });
     const loadVideoSpy = vi.spyOn(adapter, "loadVideo");
 
-    await getStore().prevSong();
+    const previous = getStore().prevSong();
+    expect(primeAudio).toHaveBeenCalledOnce();
+    await previous;
 
     expect(getStore().currentIndex).toBe(2);
     expect(loadVideoSpy).toHaveBeenCalledWith(songs[2].youtube_video_id);
@@ -332,14 +387,31 @@ describe("TestHandleAdapterStateChange", () => {
     expect(getStore().playState).toBe("PLAYING");
   });
 
-  it("ERROR → skips broken song and loads next", async () => {
+  it("ERROR preserves the selected song until the listener chooses an action", async () => {
     const { adapter, songs, sessionId } = await setupStore(3);
     const loadVideoSpy = vi.spyOn(adapter, "loadVideo");
 
     await getStore().handleAdapterStateChange("ERROR", sessionId);
 
+    expect(getStore().currentIndex).toBe(0);
+    expect(getStore().currentSong()).toEqual(songs[0]);
+    expect(getStore().playState).toBe("ERROR");
+    expect(loadVideoSpy).not.toHaveBeenCalled();
+  });
+
+  it("Retry reloads the current song and Skip explicitly advances", async () => {
+    const { adapter, songs, sessionId } = await setupStore(3);
+    const loadVideoSpy = vi.spyOn(adapter, "loadVideo");
+
+    await getStore().handleAdapterStateChange("ERROR", sessionId);
+    await getStore().startPlayback();
+    expect(getStore().currentIndex).toBe(0);
+    expect(loadVideoSpy).toHaveBeenLastCalledWith(songs[0].youtube_video_id);
+
+    await getStore().handleAdapterStateChange("ERROR", sessionId);
+    await getStore().nextSong();
     expect(getStore().currentIndex).toBe(1);
-    expect(loadVideoSpy).toHaveBeenCalledWith(songs[1].youtube_video_id);
+    expect(loadVideoSpy).toHaveBeenLastCalledWith(songs[1].youtube_video_id);
   });
 
   it("ERROR at last song → playState=ERROR", async () => {
@@ -348,6 +420,7 @@ describe("TestHandleAdapterStateChange", () => {
     await getStore().handleAdapterStateChange("ERROR", sessionId);
 
     expect(getStore().playState).toBe("ERROR");
+    expect(getStore().currentIndex).toBe(0);
   });
 
   it("stale session ID → event is ignored", async () => {
@@ -535,9 +608,13 @@ describe("TestArbitrarySongSelection", () => {
     const adapter = new MockYouTubePlayerAdapter();
     const songs = makeSongs(5);
     await getStore().loadQueue(songs, adapter);
+    const primeAudio = vi.fn();
+    Object.assign(adapter, { primeAudio });
 
     // Arbitrarily pick song 4 (index 3)
-    await getStore().playSongAtIndex(3);
+    const selection = getStore().playSongAtIndex(3);
+    expect(primeAudio).toHaveBeenCalledOnce();
+    await selection;
 
     const state = getStore();
     expect(state.currentIndex).toBe(3);

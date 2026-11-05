@@ -8,7 +8,12 @@ import pytest
 
 from app.models.song import Song
 from app.schemas.song import SongCreate, SongUpdate
-from app.services.song_service import SongService
+from app.services.song_service import (
+    SongService,
+    RECONCILER_RETRY_KEY,
+    RECONCILER_RETRY_ATTEMPTS_KEY,
+    enqueue_priority_warming,
+)
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -41,6 +46,35 @@ def make_mock_db() -> MagicMock:
     db = MagicMock()
     db.scalars.return_value.all.return_value = []
     return db
+
+
+class TestPriorityWarmQueue:
+    @patch("app.services.song_service._get_redis")
+    def test_enqueue_clears_delayed_retry_state(self, mock_get_redis):
+        redis = MagicMock()
+        mock_get_redis.return_value = redis
+
+        enqueue_priority_warming(" vid123 ")
+
+        redis.lpush.assert_called_once()
+        redis.ltrim.assert_called_once()
+        redis.zrem.assert_called_once_with(RECONCILER_RETRY_KEY, "vid123")
+        redis.hdel.assert_called_once_with(RECONCILER_RETRY_ATTEMPTS_KEY, "vid123")
+
+    @patch("app.services.song_service.SessionLocal")
+    @patch.object(SongService, "sync_song_metadata", return_value=True)
+    def test_sync_by_id_owns_and_closes_its_database_session(
+        self, mock_sync, mock_session_local
+    ):
+        db = mock_session_local.return_value
+        song = make_song_model()
+        db.get.return_value = song
+
+        assert SongService.sync_song_metadata_by_id(song.id, force=True) is True
+
+        db.get.assert_called_once_with(Song, song.id)
+        mock_sync.assert_called_once_with(db, song, force=True)
+        db.close.assert_called_once()
 
 
 # ─── get_all_enabled ──────────────────────────────────────────────────────────

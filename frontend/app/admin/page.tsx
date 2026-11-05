@@ -23,6 +23,8 @@ import {
   adminCreateSongsBatch,
   adminUpdateSong,
   adminDeleteSong,
+  adminBulkDeleteSongs,
+  adminBulkSetSongEnabled,
   adminReorderSongs,
   adminFetchCatalogStatus,
   adminFetchStreamStatus,
@@ -660,23 +662,12 @@ function CatalogStatusSection({ token }: { token: string }) {
     };
   }, [fetchBothStatuses, reconciling, flushing]);
 
-  // Sequential active polling helper for background operations (never piles up requests)
-  const runActivePolling = async (passes: number, delayMs: number) => {
-    for (let i = 0; i < passes; i++) {
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-      await fetchBothStatuses(false);
-    }
-  };
-
   const handleTriggerReconcile = async () => {
     setReconciling(true);
     setReconcileMessage("Reconciliation started: synchronizing metadata in database and prewarming streams...");
     try {
       const res = await adminTriggerReconcile(token);
-      setReconcileMessage(res.message || "Reconciliation pass dispatched in background!");
-      await fetchBothStatuses(false);
-      await runActivePolling(4, 2500);
-      setReconcileMessage("Reconciliation complete: metadata synchronized and audio streams verified!");
+      setReconcileMessage(res.message || "Reconciliation started in the background.");
     } catch (err: unknown) {
       setReconcileMessage(err instanceof Error ? err.message : "Failed to trigger reconciliation");
     } finally {
@@ -692,10 +683,7 @@ function CatalogStatusSection({ token }: { token: string }) {
     setReconcileMessage("Flushing stream cache, resetting telemetry, and starting catalog re-warming pass...");
     try {
       const res = await adminFlushAndRefreshCache(token);
-      setReconcileMessage(res.message || "Cache flushed, telemetry reset, and re-warming pass launched!");
-      await fetchBothStatuses(false);
-      await runActivePolling(5, 2500);
-      setReconcileMessage("Audio stream cache refreshed: all streams validated and ready!");
+      setReconcileMessage(res.message || "Cache refresh started in the background.");
     } catch (err: unknown) {
       setReconcileMessage(err instanceof Error ? err.message : "Failed to flush and refresh cache");
     } finally {
@@ -821,6 +809,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
   const loadSongsAbortRef = useRef<AbortController | null>(null);
+  const songListRef = useRef<HTMLDivElement | null>(null);
 
   const loadSongs = useCallback(async () => {
     if (loadSongsAbortRef.current) {
@@ -914,8 +903,9 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
     setIsProcessingBulk(true);
     try {
       const idsArray = Array.from(selectedIds);
-      await Promise.all(idsArray.map((id) => adminDeleteSong(token, id)));
-      setSongs((prev) => prev.filter((s) => !selectedIds.has(s.id)));
+      await adminBulkDeleteSongs(token, idsArray);
+      const deletedIds = new Set(idsArray);
+      setSongs((prev) => prev.filter((s) => !deletedIds.has(s.id)));
       setSelectedIds(new Set());
     } catch {
       alert("Failed to delete some selected songs. Please try again.");
@@ -931,11 +921,11 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
     setIsProcessingBulk(true);
     try {
       const idsArray = Array.from(selectedIds);
-      const updatedList = await Promise.all(
-        idsArray.map((id) => adminUpdateSong(token, id, { enabled }))
-      );
-      const updatedMap = new Map(updatedList.map((s) => [s.id, s]));
-      setSongs((prev) => prev.map((s) => updatedMap.get(s.id) ?? s));
+      await adminBulkSetSongEnabled(token, idsArray, enabled);
+      const updatedIds = new Set(idsArray);
+      setSongs((prev) => prev.map((song) =>
+        updatedIds.has(song.id) ? { ...song, enabled } : song
+      ));
       setSelectedIds(new Set());
     } catch {
       alert("Failed to update some selected songs.");
@@ -987,7 +977,26 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
   // Drag & Drop Reordering Handlers
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDraggedIndex(index);
+    e.dataTransfer.setData("text/plain", String(index));
     e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleSongListDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (draggedIndex === null) return;
+    e.preventDefault();
+
+    const container = songListRef.current;
+    if (!container) return;
+    const bounds = container.getBoundingClientRect();
+    const edgeSize = 48;
+    const maxStep = 36;
+    if (e.clientY < bounds.top + edgeSize) {
+      const strength = (bounds.top + edgeSize - e.clientY) / edgeSize;
+      container.scrollTop -= Math.max(8, Math.ceil(strength * maxStep));
+    } else if (e.clientY > bounds.bottom - edgeSize) {
+      const strength = (e.clientY - (bounds.bottom - edgeSize)) / edgeSize;
+      container.scrollTop += Math.max(8, Math.ceil(strength * maxStep));
+    }
   };
 
   const handleDragOver = (e: React.DragEvent, index: number) => {
@@ -1227,7 +1236,11 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
             <p className="text-gray-500 text-sm text-center py-12">Loading song catalog…</p>
           ) : (
             <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-lg">
-              <div className="overflow-x-auto max-h-[650px] overflow-y-auto">
+              <div
+                ref={songListRef}
+                onDragOver={handleSongListDragOver}
+                className="overflow-x-auto max-h-[650px] overflow-y-auto"
+              >
                 <table className="w-full text-left text-xs" aria-label="Song catalog">
                   <thead className="sticky top-0 bg-gray-950 border-b border-gray-800 text-gray-400 select-none z-10">
                     <tr>

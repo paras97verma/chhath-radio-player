@@ -10,10 +10,39 @@
  */
 
 import type { Song } from "../api";
-import type { AudioPlayerAdapter, PlayerState, StreamCandidateSource } from "./types";
+import type { AudioPlayerAdapter, AudioStreamInfo, PlayerState } from "./types";
 import { fetchPipedStream, reportStreamFailure } from "../piped/piped-client";
-import { extractDurationFromUrl } from "../piped/stream-selector";
+import { extractDurationFromUrl, isCurrentCanonicalSource } from "../piped/stream-selector";
 import { updateMediaSessionPositionState } from "../media-session";
+
+type ActivePlaybackAttempt = {
+  id: number;
+  requestId: number;
+  candidateIndex: number;
+  mode: "direct" | "proxy";
+  providerOrigin?: string;
+  generation?: number;
+  url: string;
+  ready: boolean;
+  hasProgress: boolean;
+  waiting: boolean;
+  lastProgressTime: number;
+};
+
+type PlaybackCandidate = {
+  url: string;
+  type: string;
+  mode?: "direct" | "proxy";
+  providerOrigin?: string;
+  generation?: number;
+  mimeType?: string;
+};
+
+type RecoveryEpisode = {
+  requestId: number;
+  deadlineAt: number;
+  retriesUsed: number;
+};
 
 export class Html5AudioAdapter implements AudioPlayerAdapter {
   private primaryAudio: HTMLAudioElement | null = null;
@@ -34,11 +63,16 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   private currentProxyUrl: string | null = null;
   private hasEndedEmitted = false;
 
-  // Immediate recovery watchdog and multi-source failover hierarchy
-  private recoveryTimer: any = null;
-  private currentCandidates: Array<{ url: string; type: string }> = [];
+  // Per-attempt readiness/progress state and bounded recovery timers
+  private firstProgressTimer: ReturnType<typeof setTimeout> | null = null;
+  private stallTimer: ReturnType<typeof setTimeout> | null = null;
+  private attemptSequence = 0;
+  private activeAttempt: ActivePlaybackAttempt | null = null;
+  private recoveryEpisode: RecoveryEpisode | null = null;
+  private episodeDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
+  private episodeRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private currentCandidates: PlaybackCandidate[] = [];
   private currentCandidateIndex = 0;
-  private hasTriedFreshExtraction = false;
 
   // Request sequencing and cooperative cancellation
   private activeRequestId = 0;
@@ -54,10 +88,227 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   }
 
   private _clearRecoveryWatchdog(): void {
-    if (this.recoveryTimer) {
-      clearTimeout(this.recoveryTimer);
-      this.recoveryTimer = null;
+    if (this.firstProgressTimer !== null) {
+      clearTimeout(this.firstProgressTimer);
+      this.firstProgressTimer = null;
     }
+    if (this.stallTimer !== null) {
+      clearTimeout(this.stallTimer);
+      this.stallTimer = null;
+    }
+  }
+
+  private _clearRecoveryEpisode(): void {
+    if (this.episodeDeadlineTimer !== null) clearTimeout(this.episodeDeadlineTimer);
+    if (this.episodeRetryTimer !== null) clearTimeout(this.episodeRetryTimer);
+    this.episodeDeadlineTimer = null;
+    this.episodeRetryTimer = null;
+    this.recoveryEpisode = null;
+  }
+
+  private _startRecoveryEpisode(requestId: number): void {
+    if (this.recoveryEpisode?.requestId === requestId && this.episodeDeadlineTimer !== null) return;
+    this._clearRecoveryEpisode();
+    const episode = { requestId, deadlineAt: Date.now() + 20_000, retriesUsed: 0 };
+    this.recoveryEpisode = episode;
+    this.episodeDeadlineTimer = setTimeout(() => {
+      this._finishRecoveryEpisode(requestId);
+    }, 20_000);
+  }
+
+  private _clearEpisodeAfterProgress(requestId: number): void {
+    if (this.recoveryEpisode?.requestId === requestId) this._clearRecoveryEpisode();
+  }
+
+  private _reportAttemptFailure(videoId: string, attempt: ActivePlaybackAttempt, reason: string): void {
+    if (!attempt.providerOrigin || !attempt.generation) return;
+    void reportStreamFailure(videoId, attempt.mode, reason, {
+      providerOrigin: attempt.providerOrigin,
+      generation: attempt.generation,
+    });
+  }
+
+  private _finishRecoveryEpisode(requestId: number): void {
+    if (this.activeRequestId !== requestId || this.isDestroyed) return;
+    this._clearRecoveryWatchdog();
+    this._clearRecoveryEpisode();
+    this.activeAttempt = null;
+    this.activeRequestId += 1;
+    this.activeAbortController?.abort("Playback recovery deadline reached");
+    this._emitState("ERROR");
+  }
+
+  private _scheduleAutomaticRetry(videoId: string, requestId: number, resumePosition: number): void {
+    this._startRecoveryEpisode(requestId);
+    const episode = this.recoveryEpisode;
+    if (!episode || episode.retriesUsed >= 3) {
+      this._finishRecoveryEpisode(requestId);
+      return;
+    }
+
+    const delay = [1000, 2000, 4000][episode.retriesUsed++];
+    if (Date.now() + delay >= episode.deadlineAt) return;
+    this.episodeRetryTimer = setTimeout(async () => {
+      this.episodeRetryTimer = null;
+      const controller = this.activeAbortController;
+      if (
+        this.activeRequestId !== requestId ||
+        this.isDestroyed ||
+        this.recoveryEpisode !== episode ||
+        controller?.signal.aborted
+      ) {
+        return;
+      }
+
+      try {
+        const stream = await fetchPipedStream(videoId, this.primaryAudio, controller?.signal, true);
+        if (
+          this.activeRequestId !== requestId ||
+          this.isDestroyed ||
+          controller?.signal.aborted
+        ) {
+          return;
+        }
+        this.streamDuration = stream.duration ?? extractDurationFromUrl(stream.url) ?? null;
+        this.currentProxyUrl = stream.proxy_url || null;
+        this.currentCandidates = this._buildCandidates(stream);
+        this.currentCandidateIndex = 0;
+        if (this.currentCandidates.length === 0) {
+          this._scheduleAutomaticRetry(videoId, requestId, resumePosition);
+          return;
+        }
+        await this._attemptPlayCandidate(videoId, requestId, 0, resumePosition);
+      } catch (error: any) {
+        if (this.activeRequestId !== requestId || this.isDestroyed || error?.name === "AbortError") return;
+        this._scheduleAutomaticRetry(videoId, requestId, resumePosition);
+      }
+    }, delay);
+  }
+
+  private _buildCandidates(stream: AudioStreamInfo): PlaybackCandidate[] {
+    const candidates: PlaybackCandidate[] = [];
+    const seen = new Set<string>();
+    for (const source of stream.sources || []) {
+      if (
+        !("mode" in source) ||
+        !isCurrentCanonicalSource(source, Date.now() / 1000, stream.video_id) ||
+        seen.has(source.url)
+      ) continue;
+      seen.add(source.url);
+      candidates.push({
+        url: source.url,
+        type: source.mode,
+        mode: source.mode,
+        providerOrigin: source.provider_origin,
+        generation: stream.generation,
+        mimeType: source.mime_type,
+      });
+    }
+    candidates.sort((a, b) => (a.mode === "direct" ? -1 : 1) - (b.mode === "direct" ? -1 : 1));
+    return candidates;
+  }
+
+  private _isCurrentAttempt(requestId: number, attemptId: number): boolean {
+    return (
+      !this.isDestroyed &&
+      this.activeRequestId === requestId &&
+      this.activeAttempt?.requestId === requestId &&
+      this.activeAttempt.id === attemptId
+    );
+  }
+
+  private _recordMediaProgress(audio: HTMLAudioElement): void {
+    const attempt = this.activeAttempt;
+    if (
+      !attempt ||
+      attempt.requestId !== this.activeRequestId ||
+      audio.paused ||
+      audio.ended ||
+      !Number.isFinite(audio.currentTime) ||
+      audio.currentTime <= attempt.lastProgressTime + 0.01
+    ) {
+      return;
+    }
+
+    attempt.lastProgressTime = audio.currentTime;
+    attempt.hasProgress = true;
+    this._clearEpisodeAfterProgress(attempt.requestId);
+    if (this.firstProgressTimer !== null) {
+      clearTimeout(this.firstProgressTimer);
+      this.firstProgressTimer = null;
+    }
+    if (attempt.waiting) {
+      attempt.waiting = false;
+      if (this.stallTimer !== null) {
+        clearTimeout(this.stallTimer);
+        this.stallTimer = null;
+      }
+    }
+    if (this.currentState !== "PLAYING") this._emitState("PLAYING");
+  }
+
+  private _beginPlaybackAttempt(
+    videoId: string,
+    requestId: number,
+    candidateIndex: number,
+    url: string,
+    candidateType: string,
+    audio: HTMLAudioElement,
+    resumePosition: number,
+    candidate?: PlaybackCandidate,
+  ): ActivePlaybackAttempt {
+    const attempt: ActivePlaybackAttempt = {
+      id: ++this.attemptSequence,
+      requestId,
+      candidateIndex,
+      mode: candidateType.includes("proxy") ? "proxy" : "direct",
+      providerOrigin: candidate?.providerOrigin,
+      generation: candidate?.generation,
+      url,
+      ready: audio.readyState >= 3,
+      hasProgress: false,
+      waiting: false,
+      lastProgressTime: resumePosition,
+    };
+    this.activeAttempt = attempt;
+    this.firstProgressTimer = setTimeout(() => {
+      this.firstProgressTimer = null;
+      if (!this._isCurrentAttempt(requestId, attempt.id)) return;
+      this._recordMediaProgress(audio);
+      if (!this._isCurrentAttempt(requestId, attempt.id) || attempt.hasProgress) return;
+
+      this._reportAttemptFailure(videoId, attempt, "first_progress_timeout");
+      const currentPosition = attempt.hasProgress
+        ? attempt.lastProgressTime
+        : Number.isFinite(audio.currentTime)
+          ? audio.currentTime
+          : resumePosition;
+      this._attemptPlayCandidate(videoId, requestId, candidateIndex + 1, currentPosition);
+    }, 5000);
+    return attempt;
+  }
+
+  private _startStallWatchdog(audio: HTMLAudioElement, attempt: ActivePlaybackAttempt): void {
+    if (this.stallTimer !== null) return;
+    const { requestId, id: attemptId, candidateIndex } = attempt;
+    this.stallTimer = setTimeout(() => {
+      this.stallTimer = null;
+      if (!this._isCurrentAttempt(requestId, attemptId)) return;
+
+      this._recordMediaProgress(audio);
+      if (!this._isCurrentAttempt(requestId, attemptId) || !attempt.waiting) return;
+      const resumePosition = Number.isFinite(audio.currentTime)
+        ? Math.max(audio.currentTime, attempt.lastProgressTime)
+        : attempt.lastProgressTime;
+      this._startRecoveryEpisode(requestId);
+      this._reportAttemptFailure(this.currentVideoId!, attempt, "stall_timeout");
+      this._attemptPlayCandidate(
+        this.currentVideoId!,
+        requestId,
+        candidateIndex + 1,
+        resumePosition,
+      );
+    }, 5000);
   }
 
   /**
@@ -161,12 +412,10 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
     const onPlay = () => {
       if (this.isPriming) return;
-      this._emitState("PLAYING");
     };
     const onPlaying = () => {
       if (this.isPriming) return;
-      this._clearRecoveryWatchdog();
-      this._emitState("PLAYING");
+      this._recordMediaProgress(audio);
       const dur = this.getDuration() || audio.duration;
       if (Number.isFinite(dur) && dur > 0) {
         this._emitProgress(audio.currentTime, dur);
@@ -175,9 +424,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     };
     const onCanPlay = () => {
       if (this.isPriming) return;
-      this._clearRecoveryWatchdog();
-      if (this.currentState === "BUFFERING" || this.currentState === "UNSTARTED") {
-        this._emitState("PLAYING");
+      if (this.activeAttempt?.requestId === this.activeRequestId) {
+        this.activeAttempt.ready = true;
       }
     };
     const onPause = () => {
@@ -192,38 +440,50 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     const onWaiting = () => {
       if (this.isPriming) return;
       this._emitState("BUFFERING");
+      const attempt = this.activeAttempt;
+      if (attempt?.requestId === this.activeRequestId && attempt.hasProgress) {
+        attempt.waiting = true;
+        this._startStallWatchdog(audio, attempt);
+      }
     };
     const onEnded = () => {
       if (this.isPriming || this.hasEndedEmitted) return;
       this._clearRecoveryWatchdog();
+      this._clearRecoveryEpisode();
+      this.activeAttempt = null;
       this.hasEndedEmitted = true;
       this._emitState("ENDED");
     };
     const onError = async () => {
       // If a newer load request is active or audio element was reset, ignore stale errors
       if (this.isPriming || this.activeAbortController?.signal.aborted || this.isDestroyed) return;
+      const attempt = this.activeAttempt;
+      if (!attempt || attempt.requestId !== this.activeRequestId) return;
       // If user has not interacted yet, or error is MEDIA_ERR_ABORTED (code 1), ignore
       if (!this.hasUserInteracted || audio.error?.code === 1) return;
       console.warn(`[Html5AudioAdapter] Audio error encountered for ${this.currentVideoId}:`, audio.error);
       this._clearRecoveryWatchdog();
+      this._startRecoveryEpisode(attempt.requestId);
 
-      // Trigger immediate failover to next candidate source (Constraint 3)
-      if (this.currentCandidates && this.currentCandidateIndex < this.currentCandidates.length - 1) {
-        const curCandidate = this.currentCandidates[this.currentCandidateIndex];
-        if (curCandidate?.type.includes("direct") && this.currentVideoId) {
-          reportStreamFailure(this.currentVideoId, "direct");
+      // A failed direct source switches to the proxy immediately; retries happen after both modes fail.
+      if (attempt.candidateIndex < this.currentCandidates.length - 1) {
+        if (this.currentVideoId) {
+          this._reportAttemptFailure(this.currentVideoId, attempt, "media_error");
         }
-        const curPos = audio.currentTime || 0;
-        await this._attemptPlayCandidate(this.currentVideoId!, this.activeRequestId, this.currentCandidateIndex + 1, curPos);
+        const curPos = attempt.hasProgress ? attempt.lastProgressTime : audio.currentTime || 0;
+        await this._attemptPlayCandidate(this.currentVideoId!, attempt.requestId, attempt.candidateIndex + 1, curPos);
         return;
       }
 
-      this._emitState("ERROR");
+      this.activeAttempt = null;
+      const resumePosition = attempt.hasProgress ? attempt.lastProgressTime : audio.currentTime || 0;
+      this._scheduleAutomaticRetry(this.currentVideoId!, attempt.requestId, resumePosition);
     };
 
     const onTimeUpdate = () => {
       const dur = this.getDuration() || audio.duration;
       const cur = audio.currentTime;
+      this._recordMediaProgress(audio);
       if (Number.isFinite(dur) && dur > 0 && Number.isFinite(cur)) {
         this._emitProgress(cur, dur);
         updateMediaSessionPositionState(cur, dur, audio.playbackRate || 1);
@@ -236,6 +496,16 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     };
 
     const onMetadata = () => {
+      const attempt = this.activeAttempt;
+      if (
+        attempt?.requestId === this.activeRequestId &&
+        !attempt.hasProgress &&
+        Number.isFinite(audio.currentTime) &&
+        audio.currentTime < attempt.lastProgressTime
+      ) {
+        // A source without usable range seeking starts at zero; measure progress from there.
+        attempt.lastProgressTime = audio.currentTime;
+      }
       const dur = this.getDuration() || audio.duration;
       const cur = audio.currentTime;
       if (Number.isFinite(dur) && dur > 0) {
@@ -252,6 +522,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     audio.addEventListener("waiting", onWaiting);
     audio.addEventListener("ended", onEnded);
     audio.addEventListener("error", onError);
+    audio.addEventListener("stalled", onWaiting);
     audio.addEventListener("timeupdate", onTimeUpdate);
     audio.addEventListener("loadedmetadata", onMetadata);
     audio.addEventListener("durationchange", onMetadata);
@@ -266,6 +537,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       audio.removeEventListener("waiting", onWaiting);
       audio.removeEventListener("ended", onEnded);
       audio.removeEventListener("error", onError);
+      audio.removeEventListener("stalled", onWaiting);
       audio.removeEventListener("timeupdate", onTimeUpdate);
       audio.removeEventListener("loadedmetadata", onMetadata);
       audio.removeEventListener("durationchange", onMetadata);
@@ -290,6 +562,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     // Reset completion emission flag for newly requested song
     this.hasEndedEmitted = false;
     this._clearRecoveryWatchdog();
+    this._clearRecoveryEpisode();
+    this.activeAttempt = null;
 
     // 1. Cancel any in-flight background preload so it does not contend with live playback
     if (this.preloadAbortController) {
@@ -314,6 +588,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     const requestId = ++this.activeRequestId;
     const controller = new AbortController();
     this.activeAbortController = controller;
+    this._startRecoveryEpisode(requestId);
 
     // Check if the secondary audio element already has this song pre-buffered or has a resolved src
     if (
@@ -338,9 +613,34 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       this._bindAudioEvents(this.primaryAudio);
       this._applyVolume(this.primaryAudio);
 
-      this._emitState("PLAYING");
+      this.currentCandidates = [{ url: this.primaryAudio.src, type: "direct" }];
+      this.currentCandidateIndex = 0;
+      const attempt = this._beginPlaybackAttempt(
+        videoId,
+        requestId,
+        0,
+        this.primaryAudio.src,
+        "direct",
+        this.primaryAudio,
+        this.primaryAudio.currentTime || 0,
+      );
+      this._emitState("BUFFERING");
       // Start new audio first to maintain continuous audio session on iOS/Android lockscreen
-      await this.primaryAudio.play();
+      try {
+        await this.primaryAudio.play();
+      } catch (playError: any) {
+        if (!this._isCurrentAttempt(requestId, attempt.id)) return;
+        this._clearRecoveryWatchdog();
+        this.activeAttempt = null;
+        if (playError?.name === "NotAllowedError") {
+          this._clearRecoveryEpisode();
+          this._emitState("PAUSED");
+          return;
+        }
+        await this._attemptPlayCandidate(videoId, requestId, 1, this.primaryAudio.currentTime || 0);
+        return;
+      }
+      if (!this._isCurrentAttempt(requestId, attempt.id)) return;
 
       if (this.streamDuration && this.streamDuration > 0) {
         updateMediaSessionPositionState(0, this.streamDuration, 1);
@@ -370,38 +670,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       this.hasUserInteracted = true;
       this.currentVideoId = videoId;
       this.currentProxyUrl = stream.proxy_url || null;
-      this.hasTriedFreshExtraction = false;
       this.streamDuration = stream.duration ?? extractDurationFromUrl(stream.url) ?? null;
-
-      // Build candidate sources in priority order (Constraint 3)
-      const candidates: Array<{ url: string; type: string }> = [];
-
-      // If backend already marked stream as DEGRADED (direct is IP-bound or confirmed 403),
-      // place verified proxy FIRST so user experiences 0 delay!
-      if (stream.status === "DEGRADED" && stream.proxy_url) {
-        candidates.push({ url: stream.proxy_url, type: "proxy" });
-        if (stream.direct_url && stream.direct_url !== stream.proxy_url) {
-          candidates.push({ url: stream.direct_url, type: "direct" });
-        }
-      } else {
-        if (stream.url) {
-          candidates.push({ url: stream.url, type: stream.status === "DEGRADED" ? "proxy" : "direct" });
-        }
-        if (stream.proxy_url && stream.proxy_url !== stream.url) {
-          candidates.push({ url: stream.proxy_url, type: "proxy" });
-        }
-      }
-
-      // Add extra candidates from sources if available
-      if (Array.isArray(stream.sources)) {
-        for (const s of stream.sources) {
-          if (s.url && !candidates.some((c) => c.url === s.url)) {
-            candidates.push({ url: s.url, type: s.type || "fallback" });
-          }
-        }
-      }
-
-      this.currentCandidates = candidates.length > 0 ? candidates : [{ url: stream.url, type: "direct" }];
+      this.currentCandidates = this._buildCandidates(stream);
       this.currentCandidateIndex = 0;
 
       await this._attemptPlayCandidate(videoId, requestId, 0, 0);
@@ -411,8 +681,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
         return;
       }
       console.error(`[Html5AudioAdapter] Failed to play video ${videoId}:`, err);
-      this._emitState("ERROR");
-      throw err;
+      this._scheduleAutomaticRetry(videoId, requestId, 0);
     }
   }
 
@@ -428,27 +697,9 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     if (!this.primaryAudio) return;
 
     if (candidateIdx >= this.currentCandidates.length) {
-      // Last resort: Forced fresh extraction through another instance (Constraint 3)
-      if (!this.hasTriedFreshExtraction) {
-        this.hasTriedFreshExtraction = true;
-        console.warn(`[Html5AudioAdapter] All cached sources failed for ${videoId}. Attempting forced upstream fresh extraction...`);
-        try {
-          const fresh = await fetchPipedStream(videoId, this.primaryAudio, undefined, true);
-          if (this.activeRequestId === requestId && fresh?.url) {
-            this.currentCandidates = [
-              { url: fresh.url, type: fresh.status === "DEGRADED" ? "fresh_proxy" : "fresh_direct" },
-            ];
-            if (fresh.proxy_url && fresh.proxy_url !== fresh.url) {
-              this.currentCandidates.push({ url: fresh.proxy_url, type: "fresh_proxy" });
-            }
-            return this._attemptPlayCandidate(videoId, requestId, 0, resumePos);
-          }
-        } catch {
-          /* ignore */
-        }
-      }
+      this.activeAttempt = null;
       this._clearRecoveryWatchdog();
-      this._emitState("ERROR");
+      this._scheduleAutomaticRetry(videoId, requestId, resumePos);
       return;
     }
 
@@ -470,40 +721,35 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       updateMediaSessionPositionState(resumePos, this.streamDuration, 1);
     }
 
-    // Schedule Immediate Recovery Watchdog (Constraint 3)
-    // 1.8s for direct streams (to catch 403 / stalls before browser 15s retry loop), 2.8s for proxy streams
-    const deadlineMs = candidate.type.includes("direct") ? 1800 : 2800;
-    this.recoveryTimer = setTimeout(() => {
-      if (this.activeRequestId !== requestId || this.isDestroyed) return;
-      if (this.primaryAudio && !this.primaryAudio.paused && (this.primaryAudio.currentTime > 0 || this.currentState === "PLAYING")) {
-        return; // successfully playing
-      }
-      console.warn(
-        `[Html5AudioAdapter] Source ${candidate.type} exceeded ${deadlineMs}ms readiness deadline for ${videoId}. Auto-recovering to next candidate...`
-      );
-      if (candidate.type.includes("direct")) {
-        reportStreamFailure(videoId, "direct");
-      }
-      const curPos = this.primaryAudio?.currentTime || resumePos;
-      this._attemptPlayCandidate(videoId, requestId, candidateIdx + 1, curPos);
-    }, deadlineMs);
+    const attempt = this._beginPlaybackAttempt(
+      videoId,
+      requestId,
+      candidateIdx,
+      candidate.url,
+      candidate.type,
+      this.primaryAudio,
+      resumePos,
+      candidate,
+    );
 
     try {
       await this.primaryAudio.play();
-      if (this.activeRequestId === requestId && !this.isDestroyed) {
-        this._emitState("PLAYING");
-      }
+      if (!this._isCurrentAttempt(requestId, attempt.id)) return;
     } catch (playErr: any) {
+      if (!this._isCurrentAttempt(requestId, attempt.id)) return;
       this._clearRecoveryWatchdog();
+      this.activeAttempt = null;
       if (playErr?.name === "NotAllowedError") {
+        this._clearRecoveryEpisode();
         console.warn("[Html5AudioAdapter] Autoplay restricted by browser, waiting for user gesture:", playErr);
         this._emitState("PAUSED");
         return;
       }
-      if (candidate.type.includes("direct")) {
-        reportStreamFailure(videoId, "direct");
-      }
-      await this._attemptPlayCandidate(videoId, requestId, candidateIdx + 1, resumePos);
+      this._reportAttemptFailure(videoId, attempt, "play_rejected");
+      const currentPosition = Number.isFinite(this.primaryAudio.currentTime)
+        ? this.primaryAudio.currentTime
+        : resumePos;
+      await this._attemptPlayCandidate(videoId, requestId, candidateIdx + 1, currentPosition);
     }
   }
 
@@ -512,11 +758,27 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
    */
   async recoverPlayback(videoId: string, lastPosition: number = 0): Promise<boolean> {
     if (!videoId || this.isDestroyed) return false;
+    this._clearRecoveryEpisode();
+    const requestId = ++this.activeRequestId;
+    this.activeAbortController?.abort("Superseded by playback recovery");
+    const controller = new AbortController();
+    this.activeAbortController = controller;
+    this._startRecoveryEpisode(requestId);
     try {
       this._emitState("BUFFERING");
-      const stream = await fetchPipedStream(videoId, this.primaryAudio);
-      if (!this.primaryAudio) return false;
-      this.primaryAudio.src = stream.url;
+      const stream = await fetchPipedStream(videoId, this.primaryAudio, controller.signal);
+      if (!this.primaryAudio || this.activeRequestId !== requestId || this.isDestroyed || controller.signal.aborted) return false;
+      this._clearRecoveryWatchdog();
+      this.currentVideoId = videoId;
+      this.streamDuration = stream.duration ?? extractDurationFromUrl(stream.url) ?? null;
+      this.currentCandidates = this._buildCandidates(stream);
+      this.currentCandidateIndex = 0;
+      const candidate = this.currentCandidates[0];
+      if (!candidate) {
+        this._scheduleAutomaticRetry(videoId, requestId, lastPosition);
+        return false;
+      }
+      this.primaryAudio.src = candidate.url;
       if (lastPosition > 0) {
         try {
           this.primaryAudio.currentTime = lastPosition;
@@ -524,12 +786,22 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
           /* ignore */
         }
       }
+      const attempt = this._beginPlaybackAttempt(
+        videoId,
+        requestId,
+        0,
+        candidate.url,
+        candidate.type,
+        this.primaryAudio,
+        lastPosition,
+      );
       await this.primaryAudio.play();
-      this._emitState("PLAYING");
-      return true;
+      return this._isCurrentAttempt(requestId, attempt.id);
     } catch (err) {
       console.warn(`[Html5AudioAdapter] Recovery failed for ${videoId}:`, err);
-      this._emitState("ERROR");
+      if (this.activeRequestId === requestId && !this.isDestroyed) {
+        this._scheduleAutomaticRetry(videoId, requestId, lastPosition);
+      }
       return false;
     }
   }
@@ -568,7 +840,6 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     if (this.primaryAudio) {
       try {
         await this.primaryAudio.play();
-        this._emitState("PLAYING");
       } catch (err) {
         console.warn("[Html5AudioAdapter] Play was prevented by browser policy:", err);
         throw err;
@@ -645,6 +916,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   destroy(): void {
     this.isDestroyed = true;
     this._clearRecoveryWatchdog();
+    this._clearRecoveryEpisode();
+    this.activeAttempt = null;
     if (this.activeAbortController) {
       try {
         this.activeAbortController.abort("Adapter destroyed");

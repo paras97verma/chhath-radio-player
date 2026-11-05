@@ -245,6 +245,11 @@ The `NowPlaying` component has a Share button that uses `navigator.share()` on m
 | `SECRET_KEY` | JWT secret key |
 | `LOG_LEVEL` | Logging level (default: `info`) |
 | `WEB_CONCURRENCY` | Gunicorn worker count (default: `2*CPU+1`) |
+| `INVIDIOUS_INSTANCES` | Optional comma-separated HTTPS origins; blank uses the built-in registry |
+| `INVIDIOUS_REQUESTS_PER_SECOND` | Maximum metadata requests per origin (default: `2`) |
+| `INVIDIOUS_MAX_CONCURRENCY` | Concurrent metadata requests per origin (default: `1`) |
+
+Stream resolution queries at most two configured Invidious origins within a five-second budget. Redis coordinates per-origin limits across backend workers. Playback uses the selected Invidious format's direct URL with its raw `/latest_version` proxy URL as fallback.
 
 ---
 

@@ -6,6 +6,8 @@
 // Use relative URLs so Next.js rewrites proxy /api/* → backend.
 // NEXT_PUBLIC_API_URL can override for direct backend access (e.g. production).
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
+// Admin traffic stays same-origin through Next.js rewrites to avoid CORS preflights.
+const ADMIN_API_BASE = "/api/admin";
 
 export interface Song {
   id: string;
@@ -201,7 +203,7 @@ export async function adminLogin(
       ? btoa(unescape(encodeURIComponent(password)))
       : password;
 
-  const res = await fetch(`${API_BASE}/api/admin/login`, {
+  const res = await fetch(`${ADMIN_API_BASE}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password: obfuscatedPassword }),
@@ -211,7 +213,7 @@ export async function adminLogin(
 }
 
 export async function adminFetchSongs(token: string, signal?: AbortSignal): Promise<Song[]> {
-  const res = await fetch(`${API_BASE}/api/admin/songs`, {
+  const res = await fetch(`${ADMIN_API_BASE}/songs`, {
     headers: { Authorization: `Bearer ${token}` },
     signal,
   });
@@ -223,7 +225,7 @@ export async function adminCreateSong(
   token: string,
   data: { title?: string; artist?: string; youtube_url: string; category?: string }
 ): Promise<Song> {
-  const res = await fetch(`${API_BASE}/api/admin/songs`, {
+  const res = await fetch(`${ADMIN_API_BASE}/songs`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -242,7 +244,7 @@ export async function adminCreateSongsBatch(
   token: string,
   urls: string
 ): Promise<Song[]> {
-  const res = await fetch(`${API_BASE}/api/admin/songs/batch`, {
+  const res = await fetch(`${ADMIN_API_BASE}/songs/batch`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -262,7 +264,7 @@ export async function adminUpdateSong(
   songId: string,
   data: Partial<{ title: string; artist: string; category: string; enabled: boolean; sort_order: number; youtube_url: string }>
 ): Promise<Song> {
-  const res = await fetch(`${API_BASE}/api/admin/songs/${songId}`, {
+  const res = await fetch(`${ADMIN_API_BASE}/songs/${songId}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -275,11 +277,44 @@ export async function adminUpdateSong(
 }
 
 export async function adminDeleteSong(token: string, songId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/admin/songs/${songId}`, {
+  const res = await fetch(`${ADMIN_API_BASE}/songs/${songId}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error("Failed to delete song");
+}
+
+export async function adminBulkSetSongEnabled(
+  token: string,
+  songIds: string[],
+  enabled: boolean
+): Promise<{ status: string; count: number }> {
+  const res = await fetch(`${ADMIN_API_BASE}/songs/bulk-enabled`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ ids: songIds, enabled }),
+  });
+  if (!res.ok) throw new Error("Failed to update selected songs");
+  return res.json();
+}
+
+export async function adminBulkDeleteSongs(
+  token: string,
+  songIds: string[]
+): Promise<{ status: string; count: number }> {
+  const res = await fetch(`${ADMIN_API_BASE}/songs/bulk-delete`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ ids: songIds }),
+  });
+  if (!res.ok) throw new Error("Failed to delete selected songs");
+  return res.json();
 }
 
 export interface CatalogReadinessStatus {
@@ -321,7 +356,7 @@ export async function adminReorderSongs(
   token: string,
   orders: { id: string; sort_order: number }[]
 ): Promise<{ status: string; count: number }> {
-  const res = await fetch(`${API_BASE}/api/admin/songs/reorder`, {
+  const res = await fetch(`${ADMIN_API_BASE}/songs/reorder`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -334,7 +369,7 @@ export async function adminReorderSongs(
 }
 
 export async function adminFetchCatalogStatus(token: string, signal?: AbortSignal): Promise<CatalogReadinessStatus> {
-  const res = await fetch(`${API_BASE}/api/admin/songs/status`, {
+  const res = await fetch(`${ADMIN_API_BASE}/songs/status`, {
     headers: { Authorization: `Bearer ${token}` },
     signal,
   });
@@ -343,7 +378,7 @@ export async function adminFetchCatalogStatus(token: string, signal?: AbortSigna
 }
 
 export async function adminFetchStreamStatus(token: string, signal?: AbortSignal): Promise<CatalogReadinessStatus> {
-  const res = await fetch(`${API_BASE}/api/stream/catalog/status`, {
+  const res = await fetch("/api/stream/catalog/status", {
     headers: { Authorization: `Bearer ${token}` },
     signal,
   });
@@ -352,7 +387,7 @@ export async function adminFetchStreamStatus(token: string, signal?: AbortSignal
 }
 
 export async function adminTriggerReconcile(token: string): Promise<{ status: string; message: string }> {
-  const res = await fetch(`${API_BASE}/api/admin/songs/reconcile`, {
+  const res = await fetch(`${ADMIN_API_BASE}/songs/reconcile`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -365,7 +400,7 @@ export async function adminFlushAndRefreshCache(
   videoIds?: string | string[]
 ): Promise<{ status: string; message: string; flushed_count: number; target?: string; video_ids?: string[] }> {
   const body = videoIds ? JSON.stringify({ video_ids: videoIds }) : undefined;
-  const res = await fetch(`${API_BASE}/api/admin/songs/cache/refresh`, {
+  const res = await fetch(`${ADMIN_API_BASE}/songs/cache/refresh`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,

@@ -6,8 +6,11 @@ Stream Caching, and Multi-Worker Lease Coordination.
 import json
 import time
 from unittest.mock import MagicMock, patch
+from fastapi import Response
 import pytest
 
+import app.services.queue_prewarmer as prewarmer_module
+from app.api.admin.songs import get_admin_catalog_status
 from app.models.song import Song
 from app.services.song_service import (
     SongService,
@@ -20,9 +23,9 @@ from app.services.stream_cache_service import (
     StreamCacheService,
     _l1_cache,
     _l1_cache_ts,
-    STREAM_CACHE_PREFIX,
-    STREAM_LOCK_PREFIX,
+    STREAM_FENCE_PREFIX,
 )
+import app.services.stream_cache_service as cache_module
 from app.services.queue_prewarmer import (
     CatalogReconciliationService,
     LEADER_KEY,
@@ -130,34 +133,63 @@ class TestMetadataSynchronization:
 class TestStreamFastLookupAndFallback:
     """Tests for instant cache lookup and proxy fallback URL generation."""
 
-    def test_get_stream_fast_l1_hit_returns_immediately(self):
+    @patch("app.services.stream_cache_service._get_redis")
+    def test_get_stream_fast_l1_hit_returns_immediately(self, mock_get_redis):
         now = time.time()
-        _l1_cache["fast_vid"] = {
-            "url": "https://cdn.googlevideo.com/videoplayback?id=fast&expire=9999999999",
-            "format": "M4A",
-            "duration": 300,
-            "proxy_url": "https://yt.chocolatemoo53.com/latest_version?id=fast_vid&itag=140&local=true",
-        }
+        record = self._record("fast_vid", now)
+        _l1_cache["fast_vid"] = record
         _l1_cache_ts["fast_vid"] = now
+        mock_redis = MagicMock()
+        mock_redis.eval.return_value = 1
+        mock_get_redis.return_value = mock_redis
 
         result = StreamCacheService.get_stream_fast("fast_vid")
         assert result is not None
         assert result["cached"] is True
         assert result["cache_tier"] == "L1_MEMORY"
         assert "proxy_url" in result
+        assert "fence_token" not in result
+
+    @staticmethod
+    def _record(video_id, now):
+        origin = cache_module.INVIDIOUS_REGISTRY[0].origin
+        expires_at = now + 7200
+        proxy_url = f"{origin}/latest_version?id={video_id}&itag=140&local=true"
+        return {
+            "schema_version": 1,
+            "video_id": video_id,
+            "generation": 3,
+            "fence_token": "catalog-fence",
+            "refreshed_at": now,
+            "sources": [
+                {
+                    "mode": "direct", "provider": "invidious", "provider_origin": origin,
+                    "url": f"https://cdn.googlevideo.com/audio?itag=140&expire={int(expires_at)}",
+                    "itag": 140, "mime_type": 'audio/mp4; codecs="mp4a.40.2"',
+                    "codec": "mp4a.40.2", "resolved_at": now, "expires_at": expires_at,
+                    "refresh_at": expires_at - 600, "validation_state": "validated",
+                },
+                {
+                    "mode": "proxy", "provider": "invidious", "provider_origin": origin,
+                    "url": proxy_url, "itag": 140, "mime_type": 'audio/mp4; codecs="mp4a.40.2"',
+                    "codec": "mp4a.40.2", "resolved_at": now, "expires_at": None,
+                    "refresh_at": now + 1800, "validation_state": "validated",
+                },
+            ],
+            "duration": 300,
+            "title": "Catalog test song",
+        }
 
     @patch("app.services.stream_cache_service._get_redis")
     def test_get_stream_fast_redis_hit_populates_l1(self, mock_get_redis):
         mock_redis = MagicMock()
         mock_get_redis.return_value = mock_redis
 
-        cached_payload = {
-            "url": "https://cdn.googlevideo.com/videoplayback?id=redis_fast&expire=9999999999",
-            "format": "M4A",
-            "duration": 280,
-            "proxy_url": "https://yt.chocolatemoo53.com/latest_version?id=redis_fast&itag=140&local=true",
-        }
-        mock_redis.get.return_value = json.dumps(cached_payload)
+        cached_payload = self._record("redis_fast", time.time())
+        mock_redis.eval.side_effect = lambda script, *_args: (
+            json.dumps(cached_payload) if script == cache_module.READ_FENCED_CACHE_LUA
+            else 1 if script == cache_module.MATCH_FENCE_LUA else 0
+        )
 
         result = StreamCacheService.get_stream_fast("redis_fast")
         assert result is not None
@@ -169,7 +201,7 @@ class TestStreamFastLookupAndFallback:
     def test_get_stream_fast_miss_returns_none(self, mock_get_redis):
         mock_redis = MagicMock()
         mock_get_redis.return_value = mock_redis
-        mock_redis.get.return_value = None
+        mock_redis.eval.return_value = None
 
         result = StreamCacheService.get_stream_fast("unknown_vid")
         assert result is None
@@ -178,13 +210,21 @@ class TestStreamFastLookupAndFallback:
     def test_invalidate_stream_clears_l1_and_redis(self, mock_get_redis):
         mock_redis = MagicMock()
         mock_get_redis.return_value = mock_redis
+        mock_redis.eval.side_effect = lambda script, *_args: (
+            None if script == cache_module.READ_FENCED_CACHE_LUA
+            else [1, 0] if script == cache_module.EVICT_FENCED_CACHE_LUA else 0
+        )
 
         _l1_cache["to_clear"] = {"url": "http://example.com"}
         _l1_cache_ts["to_clear"] = time.time()
 
         StreamCacheService.invalidate_stream("to_clear")
         assert "to_clear" not in _l1_cache
-        mock_redis.delete.assert_called_once_with(f"{STREAM_CACHE_PREFIX}to_clear")
+        assert any(
+            call.args[0] == cache_module.EVICT_FENCED_CACHE_LUA
+            and call.args[2] == f"{STREAM_FENCE_PREFIX}to_clear"
+            for call in mock_redis.eval.call_args_list
+        )
 
 
 class TestDistributedCoordinationAndReconciliation:
@@ -203,28 +243,66 @@ class TestDistributedCoordinationAndReconciliation:
         assert res["count"] == 2
         assert res["has_more"] is True
 
-    @patch("app.services.queue_prewarmer._get_redis")
-    @patch("app.services.queue_prewarmer.SessionLocal")
-    @patch("app.services.queue_prewarmer.SongService.get_all")
-    def test_get_catalog_readiness_status(self, mock_get_all, mock_session, mock_get_redis):
-        mock_db = MagicMock()
-        mock_session.return_value = mock_db
-
+    def test_get_catalog_readiness_status_reports_mode_health_and_overdue_age(self, monkeypatch):
         song1 = Song(title="S1", artist="A1", youtube_video_id="v1", enabled=True, metadata_status="complete", duration_seconds=120)
         song2 = Song(title="S2", artist="A2", youtube_video_id="v2", enabled=True, metadata_status="pending", duration_seconds=None)
-        mock_get_all.return_value = [song1, song2]
-
+        mock_db = MagicMock()
         mock_redis = MagicMock()
-        mock_get_redis.return_value = mock_redis
-        # v1 is cached in Redis with valid unexpired url
-        mock_redis.get.side_effect = lambda k: json.dumps({"url": "http://cdn.com?expire=9999999999"}).encode("utf-8") if "v1" in k else None
+        now = time.time()
+        mock_redis.get.return_value = None
+        mock_redis.zrangebyscore.return_value = [(b"retry_vid", now - 12)]
+        cache_summary = {
+            "cache_available": True,
+            "lookup_errors": 0,
+            "songs_ready": 1,
+            "songs_missing": 1,
+            "songs_expiring": 1,
+            "modes": {
+                "direct": {
+                    "ready": 1, "expiring": 0, "overdue": 1, "missing": 0,
+                    "oldest_overdue_age_seconds": 37,
+                },
+                "proxy": {
+                    "ready": 1, "expiring": 1, "overdue": 0, "missing": 1,
+                    "oldest_overdue_age_seconds": 0,
+                },
+            },
+        }
+        telemetry = {
+            "generation_mismatches": 2,
+            "stale_write_rejections": 3,
+            "expired_candidates_rejected": 4,
+            "stale_expired_serves": 0,
+        }
+        monkeypatch.setattr(prewarmer_module, "SessionLocal", lambda: mock_db)
+        monkeypatch.setattr(prewarmer_module.SongService, "get_all", lambda _db: [song1, song2])
+        monkeypatch.setattr(prewarmer_module, "_get_redis", lambda: mock_redis)
+        monkeypatch.setattr(StreamCacheService, "get_catalog_cache_summary", lambda ids: cache_summary)
+        monkeypatch.setattr(StreamCacheService, "get_metrics", lambda: telemetry)
 
-        status = CatalogReconciliationService.get_catalog_readiness_status()
+        status = CatalogReconciliationService.get_catalog_readiness_status(force=True)
+
         assert status["catalog"]["total_songs"] == 2
         assert status["catalog"]["eligible_songs"] == 2
         assert status["catalog"]["metadata_ready"] == 1
         assert status["catalog"]["stream_ready"] == 1
+        assert status["catalog"]["stream_proxy_ready"] == 1
+        assert status["catalog"]["stream_direct_ready"] == 1
         assert status["catalog"]["stream_missing"] == 1
+        assert status["catalog"]["stream_modes"] == cache_summary["modes"]
+        assert status["catalog"]["oldest_overdue_age_seconds"] == 37
+        assert status["warmer"]["retry_overdue_count"] == 1
+        assert status["warmer"]["oldest_retry_overdue_age_seconds"] == pytest.approx(12, abs=0.1)
+        assert status["telemetry"]["stale_expired_serves"] == 0
+        assert status["telemetry"]["generation_mismatches"] == 2
+        assert status["telemetry"]["stale_write_rejections"] == 3
+
+    def test_admin_catalog_status_disables_http_caching(self):
+        response = Response()
+        result = {"catalog": {"stream_ready": 1}}
+        with patch.object(CatalogReconciliationService, "get_catalog_readiness_status", return_value=result):
+            assert get_admin_catalog_status(response=response, _admin=MagicMock()) == result
+        assert response.headers["cache-control"] == "no-store, max-age=0"
 
     @pytest.mark.asyncio
     @patch("app.services.queue_prewarmer.SONG_PACE_DELAY_SECONDS", 0.0)

@@ -193,37 +193,36 @@ export default function PageClient({ initialSongs }: PageClientProps) {
           BOTTOM STACK
       ══════════════════════════════════════════════════════════ */}
 
-      {/* Facts ticker — always visible, elevated above player but BELOW playlist drawer */}
+      {/* Facts stay above the player's actual height and leave room when the playlist opens. */}
       <div
-        className={`fixed left-0 right-0 flex justify-center px-4 pointer-events-none ${showPlaylist ? "z-10" : "z-30"}`}
-        style={{ bottom: "var(--facts-bottom)" }}
+        className="fixed inset-x-0 flex flex-col items-center pointer-events-none"
+        style={{ bottom: "var(--player-bottom)", zIndex: showPlaylist ? 40 : 30 }}
       >
-        <ChhathFacts />
-      </div>
+        {!showPlaylist && (
+          <div className="w-full flex justify-center px-4 pb-[var(--stack-gap)]">
+            <ChhathFacts />
+          </div>
+        )}
 
-      {/* Player row — always visible, pill centered */}
-      <div
-        className={`fixed left-0 right-0 flex items-center justify-center px-3 sm:px-4 ${showPlaylist ? "z-40" : "z-20"}`}
-        style={{ bottom: "var(--player-bottom)" }}
-      >
-        {/* Radio player pill */}
-        <div className="relative min-w-0 max-w-lg w-full">
-          <RadioPlayer
-            hasTunedIn={hasTunedIn}
-            showPlaylist={showPlaylist}
-            onPlaylistToggle={handlePlaylistToggle}
-            initialSongs={initialSongs}
-          />
+        {/* Player row — always visible, pill centered */}
+        <div className="w-full flex items-center justify-center px-3 sm:px-4 pointer-events-auto">
+          <div className="relative min-w-0 max-w-lg w-full">
+            <RadioPlayer
+              hasTunedIn={hasTunedIn}
+              showPlaylist={showPlaylist}
+              onPlaylistToggle={handlePlaylistToggle}
+              initialSongs={initialSongs}
+            />
 
-          {/* Desktop only: Reaction FAB — right of pill */}
-          <div
-            className="absolute top-1/2 -translate-y-1/2 hidden sm:block"
-            style={{ left: "calc(100% + 12px)" }}
-          >
-            <ReactionBar onReact={handleReact} />
+            {/* Desktop only: Reaction FAB — right of pill */}
+            <div
+              className="absolute top-1/2 -translate-y-1/2 hidden sm:block"
+              style={{ left: "calc(100% + 12px)" }}
+            >
+              <ReactionBar onReact={handleReact} />
+            </div>
           </div>
         </div>
-
       </div>
 
       {/* Desktop only: Chat FAB + drawer — rendered OUTSIDE the player row so that
