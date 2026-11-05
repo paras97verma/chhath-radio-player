@@ -14,6 +14,7 @@ import type { AudioPlayerAdapter, AudioStreamInfo, PlayerState } from "./types";
 import { fetchInvidiousStream, reportStreamFailure } from "../piped/piped-client";
 import {
   extractDurationFromUrl,
+  isAppleWebKit,
   isCurrentCanonicalSource,
   isMimeTypeSupportedByAudioElement,
 } from "../piped/stream-selector";
@@ -28,6 +29,7 @@ type ActivePlaybackAttempt = {
   generation?: number;
   url: string;
   ready: boolean;
+  readyProgressGraceUsed: boolean;
   hasProgress: boolean;
   waiting: boolean;
   lastProgressTime: number;
@@ -52,6 +54,39 @@ type RecoveryEpisode = {
   deadlineAt: number;
   retriesUsed: number;
 };
+
+const FIRST_PROGRESS_TIMEOUT_MS = 5_000;
+const WEBKIT_FIRST_PROGRESS_TIMEOUT_MS = 18_000;
+const WEBKIT_READY_PROGRESS_GRACE_MS = 5_000;
+const RECOVERY_DEADLINE_MS = 20_000;
+const WEBKIT_RECOVERY_DEADLINE_MS = 35_000;
+
+function createSilentWavBytes(): Uint8Array {
+  const sampleRate = 44_100;
+  const dataSize = sampleRate / 10 * 2;
+  const bytes = new Uint8Array(44 + dataSize);
+  const view = new DataView(bytes.buffer);
+  const writeText = (offset: number, value: string) => {
+    for (let index = 0; index < value.length; index += 1) {
+      bytes[offset + index] = value.charCodeAt(index);
+    }
+  };
+
+  writeText(0, "RIFF");
+  view.setUint32(4, bytes.length - 8, true);
+  writeText(8, "WAVEfmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeText(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  return bytes;
+}
 
 export class Html5AudioAdapter implements AudioPlayerAdapter {
   private primaryAudio: HTMLAudioElement | null = null;
@@ -143,11 +178,12 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   private _startRecoveryEpisode(requestId: number): void {
     if (this.recoveryEpisode?.requestId === requestId && this.episodeDeadlineTimer !== null) return;
     this._clearRecoveryEpisode();
-    const episode = { requestId, deadlineAt: Date.now() + 20_000, retriesUsed: 0 };
+    const duration = isAppleWebKit() ? WEBKIT_RECOVERY_DEADLINE_MS : RECOVERY_DEADLINE_MS;
+    const episode = { requestId, deadlineAt: Date.now() + duration, retriesUsed: 0 };
     this.recoveryEpisode = episode;
     this.episodeDeadlineTimer = setTimeout(() => {
       this._finishRecoveryEpisode(requestId);
-    }, 20_000);
+    }, duration);
   }
 
   private _clearEpisodeAfterProgress(requestId: number): void {
@@ -297,6 +333,43 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     if (this.currentState !== "PLAYING") this._emitState("PLAYING");
   }
 
+  private _handleFirstProgressTimeout(
+    videoId: string,
+    requestId: number,
+    attempt: ActivePlaybackAttempt,
+    audio: HTMLAudioElement,
+    resumePosition: number,
+  ): void {
+    this.firstProgressTimer = null;
+    if (!this._isCurrentAttempt(requestId, attempt.id)) return;
+
+    this._recordMediaProgress(audio);
+    if (!this._isCurrentAttempt(requestId, attempt.id) || attempt.hasProgress) return;
+
+    // WebKit can signal that media is ready before its playback clock advances.
+    // Keep that viable source attached for one more buffer window.
+    if (
+      isAppleWebKit() &&
+      attempt.ready &&
+      audio.readyState >= 3 &&
+      !attempt.readyProgressGraceUsed
+    ) {
+      attempt.readyProgressGraceUsed = true;
+      this.firstProgressTimer = setTimeout(() => {
+        this._handleFirstProgressTimeout(videoId, requestId, attempt, audio, resumePosition);
+      }, WEBKIT_READY_PROGRESS_GRACE_MS);
+      return;
+    }
+
+    this._reportAttemptFailure(videoId, attempt, "first_progress_timeout");
+    const currentPosition = attempt.hasProgress
+      ? attempt.lastProgressTime
+      : Number.isFinite(audio.currentTime)
+        ? audio.currentTime
+        : resumePosition;
+    void this._attemptPlayCandidate(videoId, requestId, attempt.candidateIndex + 1, currentPosition);
+  }
+
   private _beginPlaybackAttempt(
     videoId: string,
     requestId: number,
@@ -316,25 +389,15 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       generation: candidate?.generation,
       url,
       ready: audio.readyState >= 3,
+      readyProgressGraceUsed: false,
       hasProgress: false,
       waiting: false,
       lastProgressTime: resumePosition,
     };
     this.activeAttempt = attempt;
     this.firstProgressTimer = setTimeout(() => {
-      this.firstProgressTimer = null;
-      if (!this._isCurrentAttempt(requestId, attempt.id)) return;
-      this._recordMediaProgress(audio);
-      if (!this._isCurrentAttempt(requestId, attempt.id) || attempt.hasProgress) return;
-
-      this._reportAttemptFailure(videoId, attempt, "first_progress_timeout");
-      const currentPosition = attempt.hasProgress
-        ? attempt.lastProgressTime
-        : Number.isFinite(audio.currentTime)
-          ? audio.currentTime
-          : resumePosition;
-      this._attemptPlayCandidate(videoId, requestId, candidateIndex + 1, currentPosition);
-    }, 5000);
+      this._handleFirstProgressTimeout(videoId, requestId, attempt, audio, resumePosition);
+    }, isAppleWebKit() ? WEBKIT_FIRST_PROGRESS_TIMEOUT_MS : FIRST_PROGRESS_TIMEOUT_MS);
     return attempt;
   }
 
@@ -373,34 +436,26 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     );
   }
 
-  /**
-   * Synchronously primes both primary and secondary audio elements on user touch/click.
-   * This permanently unlocks WebKit autoplay restrictions on iOS Safari across
-   * all subsequent asynchronous stream resolution fetches and background transitions.
-   */
+  /** Plays valid silent PCM from the user gesture before asynchronous stream resolution. */
   primeAudio(): void {
     if (this.hasUserInteracted) return;
     this.hasUserInteracted = true;
     this.isPriming = true;
-    const silentSrc =
-      "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
-
     try {
+      const silentWav = createSilentWavBytes();
       [this.primaryAudio, this.secondaryAudio].forEach((audio) => {
         if (!audio) return;
-        if (!audio.src || audio.src.startsWith("data:")) {
+        if (!audio.src || audio.src.startsWith("blob:")) {
+          // CSP permits blob: media sources but blocks data: media sources.
+          const silentSrc = URL.createObjectURL(new Blob([silentWav.buffer as ArrayBuffer], { type: "audio/wav" }));
           audio.src = silentSrc;
           const p = audio.play();
-          if (p !== undefined) {
-            p.then(() => {
-              // Only pause if source is still the silent priming data URI
-              if (audio.src.startsWith("data:")) {
-                audio.pause();
-              }
-            }).catch(() => {
-              /* ignore priming abort */
-            });
-          }
+          const releaseSilentSource = () => {
+            if (audio.src === silentSrc) audio.pause();
+            URL.revokeObjectURL(silentSrc);
+          };
+          if (p === undefined) releaseSilentSource();
+          else p.then(releaseSilentSource, () => URL.revokeObjectURL(silentSrc));
         }
       });
     } finally {
