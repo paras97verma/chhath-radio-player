@@ -470,8 +470,6 @@ export default function RadioPlayer({
   /** Lifted state — controlled by PageClient so it can hide side elements when playlist is open */
   showPlaylist?: boolean;
   onPlaylistToggle?: () => void;
-  /** Optional legacy SSR prop */
-  initialSongs?: Song[];
 }) {
   const storeHasTunedIn = useRadioStore((s) => s.hasTunedIn);
   const hasTunedIn = hasTunedInProp ?? storeHasTunedIn;

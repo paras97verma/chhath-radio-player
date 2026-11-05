@@ -36,7 +36,6 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRadioStore } from "@/lib/radio-store";
-import { Song } from "@/lib/api";
 import RadioPlayer from "@/components/radio/RadioPlayer";
 import TuneInSplash from "@/components/radio/TuneInSplash";
 import ListenerCount from "@/components/radio/ListenerCount";
@@ -84,11 +83,7 @@ function IconHeart() {
 
 // ─── PageClient ───────────────────────────────────────────────────────────────
 
-interface PageClientProps {
-  initialSongs?: Song[];
-}
-
-export default function PageClient({ initialSongs }: PageClientProps) {
+export default function PageClient() {
   const currentSong = useRadioStore((s) => s.currentSong());
   const hasTunedIn = useRadioStore((s) => s.hasTunedIn || s.playState === "PLAYING" || s.playState === "BUFFERING");
   const setHasTunedIn = useRadioStore((s) => s.setHasTunedIn);
@@ -211,7 +206,6 @@ export default function PageClient({ initialSongs }: PageClientProps) {
               hasTunedIn={hasTunedIn}
               showPlaylist={showPlaylist}
               onPlaylistToggle={handlePlaylistToggle}
-              initialSongs={initialSongs}
             />
 
             {/* Desktop only: Reaction FAB — right of pill */}

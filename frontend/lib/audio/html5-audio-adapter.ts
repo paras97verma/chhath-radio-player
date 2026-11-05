@@ -416,17 +416,12 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     this._applyVolume(this.primaryAudio);
     this._applyVolume(this.secondaryAudio);
 
-    // Warm up initial song metadata in cache if provided (without assigning unprimed src on mobile)
+    // Warm initial metadata in the background; player readiness must not wait on an upstream resolver.
     const videoId = typeof initial === "string" ? initial : initial?.youtube_video_id;
     if (videoId) {
-      try {
-        const stream = await fetchInvidiousStream(videoId, this.primaryAudio);
-        if (stream.duration) {
-          this.streamDuration = stream.duration;
-        }
-      } catch (err) {
+      void fetchInvidiousStream(videoId, this.primaryAudio).catch((err) => {
         console.warn("[Html5AudioAdapter] Could not pre-warm initial song stream:", err);
-      }
+      });
     }
   }
 
