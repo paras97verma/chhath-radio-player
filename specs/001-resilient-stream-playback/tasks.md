@@ -146,6 +146,10 @@ Tasks grouped by independently testable user story. Tests included because the f
 - [x] T046 [US1] Emit PLAYING only after active media time advances, process active-source errors during gesture priming, and make the WebKit media mock track `currentSrc` in frontend/lib/audio/html5-audio-adapter.ts and frontend/__tests__/e2e/radio.spec.ts
 - [ ] T047 [US1] Measure random-track selection-to-first-progress, resolver latency, media TTFB, and underruns on slow-network profiles before setting a moderate startup-bitrate target or adding segmented ABR in specs/001-resilient-stream-playback/quickstart.md and specs/001-resilient-stream-playback/plan.md
 
+## Phase 11: Managed Redis provider migration
+
+- [x] T048 Migrate Redis runtime and deployment setup fully to Layerbase, verify Redis TLS certificates and hostnames, preflight the configured Layerbase Redis endpoint before deploying the backend, and update provider setup documentation. The existing Layerbase database is provisioned separately; do not provision a new database on every application deployment.
+
 ## Dependencies and parallelism
 
 T001-T003 precede T004-T006. US1 and US2 share foundational contract. US3 depends on US1 source state machine. US4 depends on explicit store recovery states. Release follows all stories.

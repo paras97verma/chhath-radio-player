@@ -7,7 +7,7 @@
 #
 # What this script does:
 #   1. Checks prerequisites (git, docker, curl, gh CLI)
-#   2. Guides you through creating accounts on Supabase, Upstash, Render, Vercel
+#   2. Guides you through creating accounts on Supabase, Layerbase, Render, Vercel
 #   3. Collects all required credentials interactively (with inline help)
 #   4. Writes backend/.env and frontend/.env.local for local dev
 #   5. Sets GitHub Actions secrets via gh CLI (or prints manual instructions)
@@ -63,7 +63,7 @@ prompt() {
     fi
   fi
 
-  eval "$var_name='$value'"
+  printf -v "$var_name" '%s' "$value"
 }
 
 prompt_yn() {
@@ -93,7 +93,7 @@ print_banner() {
   divider
   echo ""
   echo -e "  This script will guide you through deploying Chhath Radio to:"
-  echo -e "  ${BOLD}Render${NC} (backend) + ${BOLD}Vercel${NC} (frontend) + ${BOLD}Supabase${NC} (DB) + ${BOLD}Upstash${NC} (Redis)"
+  echo -e "  ${BOLD}Render${NC} (backend) + ${BOLD}Vercel${NC} (frontend) + ${BOLD}Supabase${NC} (DB) + ${BOLD}Layerbase${NC} (Redis)"
   echo ""
   echo -e "  ${DIM}All services are free tier — zero cost.${NC}"
   echo -e "  ${DIM}Re-run this script anytime to update credentials or re-deploy.${NC}"
@@ -205,34 +205,29 @@ collect_supabase() {
 }
 
 # =============================================================================
-# SECTION 3: Upstash (Redis)
+# SECTION 3: Layerbase Redis
 # =============================================================================
-collect_upstash() {
-  step "SECTION 3: Upstash (Redis)"
+collect_layerbase() {
+  step "SECTION 3: Layerbase Redis"
 
   echo ""
-  echo -e "  Upstash provides a free Redis instance (10k commands/day)."
-  echo -e "  ${DIM}Note: The app falls back to in-memory automatically if the limit is hit.${NC}"
   echo ""
   box_start "How to get your REDIS_URL"
-  box_line "1. Go to ${CYAN}https://upstash.com${NC} and sign in"
-  box_line "2. Create Database → Redis → choose region: ap-south-1 (Mumbai)"
-  box_line "3. Go to: Database → Details → scroll to ${BOLD}Connect${NC}"
-  box_line "4. Copy the ${BOLD}UPSTASH_REDIS_URL${NC} value"
-  box_line "   It looks like:"
-  box_line "   rediss://default:abc123@global-...upstash.io:6379"
+  box_line "1. Open your existing Redis database at ${CYAN}https://layerbase.com/cloud${NC}"
+  box_line "2. Open ${BOLD}Connect${NC} and copy its TLS connection string"
+  box_line "3. Use the ${BOLD}rediss://...:6379${NC} URL; it contains your Redis password"
   box_end
   echo ""
-  link "Open Upstash: https://console.upstash.com"
+  link "Layerbase Redis connection guide: https://layerbase.com/docs/cloud/connecting/redis"
   echo ""
 
   while true; do
-    prompt REDIS_URL "Paste your Upstash REDIS_URL"
-    if [[ "$REDIS_URL" == redis://* ]] || [[ "$REDIS_URL" == rediss://* ]]; then
-      success "REDIS_URL looks valid"
+    prompt REDIS_URL "Paste your Layerbase Redis TLS URL"
+    if [[ "$REDIS_URL" == rediss://* && "$REDIS_URL" == *".cloud.layerbase.dev:6379"* ]]; then
+      success "REDIS_URL uses TLS and a Layerbase endpoint"
       break
     else
-      warn "URL should start with redis:// or rediss:// — please try again"
+      warn "Use the Layerbase rediss:// connection string on port 6379"
     fi
   done
 }
@@ -468,7 +463,7 @@ set_github_secrets() {
     echo -e "  ${DIM}VERCEL_ORG_ID${NC}              = $VERCEL_ORG_ID"
     echo -e "  ${DIM}VERCEL_PROJECT_ID${NC}          = $VERCEL_PROJECT_ID"
     echo -e "  ${DIM}DATABASE_URL${NC}               = (your Supabase URL)"
-    echo -e "  ${DIM}REDIS_URL${NC}                  = (your Upstash URL)"
+    echo -e "  ${DIM}REDIS_URL${NC}                  = (your Layerbase TLS URL)"
     echo -e "  ${DIM}SECRET_KEY${NC}                 = (your secret key)"
     echo -e "  ${DIM}ADMIN_EMAIL${NC}                = $ADMIN_EMAIL"
     echo -e "  ${DIM}ADMIN_PASSWORD${NC}             = (your admin password)"
@@ -497,27 +492,45 @@ set_render_env_vars() {
 
   info "Updating env vars on Render service $RENDER_SERVICE_ID..."
 
-  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+  local payload
+  payload=$(
+    DATABASE_URL="$DATABASE_URL" \
+    REDIS_URL="$REDIS_URL" \
+    SECRET_KEY="$SECRET_KEY" \
+    ADMIN_EMAIL="$ADMIN_EMAIL" \
+    ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+    python3 - <<'PY'
+import json
+import os
+
+values = [
+    ("DATABASE_URL", os.environ["DATABASE_URL"]),
+    ("REDIS_URL", os.environ["REDIS_URL"]),
+    ("SECRET_KEY", os.environ["SECRET_KEY"]),
+    ("ADMIN_EMAIL", os.environ["ADMIN_EMAIL"]),
+    ("ADMIN_PASSWORD", os.environ["ADMIN_PASSWORD"]),
+    ("ALGORITHM", "HS256"),
+    ("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"),
+    ("WEB_CONCURRENCY", "1"),
+    ("LOG_LEVEL", "info"),
+]
+print(json.dumps([{"key": key, "value": value} for key, value in values]))
+PY
+  )
+
+  local HTTP_CODE
+  HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
     -X PUT \
     "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars" \
     -H "Authorization: Bearer $RENDER_API_KEY" \
     -H "Content-Type: application/json" \
-    -d "[
-      {\"key\":\"DATABASE_URL\",\"value\":\"$DATABASE_URL\"},
-      {\"key\":\"REDIS_URL\",\"value\":\"$REDIS_URL\"},
-      {\"key\":\"SECRET_KEY\",\"value\":\"$SECRET_KEY\"},
-      {\"key\":\"ADMIN_EMAIL\",\"value\":\"$ADMIN_EMAIL\"},
-      {\"key\":\"ADMIN_PASSWORD\",\"value\":\"$ADMIN_PASSWORD\"},
-      {\"key\":\"ALGORITHM\",\"value\":\"HS256\"},
-      {\"key\":\"ACCESS_TOKEN_EXPIRE_MINUTES\",\"value\":\"1440\"},
-      {\"key\":\"WEB_CONCURRENCY\",\"value\":\"1\"},
-      {\"key\":\"LOG_LEVEL\",\"value\":\"info\"}
-    ]")
+    -d "$payload")
 
   if [ "$HTTP_CODE" = "200" ]; then
     success "Render env vars updated (HTTP $HTTP_CODE)"
   else
-    warn "Render env vars update returned HTTP $HTTP_CODE — check Render dashboard"
+    error "Render env vars update returned HTTP $HTTP_CODE — refusing to continue with stale configuration"
+    return 1
   fi
 }
 
@@ -655,7 +668,7 @@ main() {
   print_banner
   check_prerequisites
   collect_supabase
-  collect_upstash
+  collect_layerbase
   collect_secrets
   collect_render
   collect_vercel

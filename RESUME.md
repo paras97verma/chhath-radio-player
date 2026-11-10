@@ -136,6 +136,8 @@ Last checked: 2026-11-05
 
 **Last validation:** T001 `15 passed`; T002 `16 passed`; `git diff --check` passed. Frontend dependencies and an isolated Python environment are now available; check them when each task needs them.
 
+**T048 complete (2026-11-10):** changed `backend/app/core/redis.py`, `backend/.env.example`, `.github/workflows/backend.yml`, `.github/workflows/db-seed-admin.yml`, `.github/workflows/db-seed-songs.yml`, `scripts/deploy-setup.sh`, `DEPLOY.md`, `GITHUB_ACTIONS_SETUP.md`, `README.md`, and `docker-compose.yml`. Runtime TLS verifies certificate chains and hostnames. Before deployment, GitHub Actions validates and PINGs the provisioned Layerbase Redis URL, safely updates Render env vars, and fails on deploy/health errors; the app remains hosted on Render. Setup scripts and docs use Layerbase and explain that `LAYERBASE_API_KEY` is not needed. Removed a hard-coded Calendarific key from the setup guide. `python3 -m py_compile backend/app/core/redis.py`, `python3 -m py_compile /tmp/layerbase-preflight-check.py`, `bash -n scripts/deploy-setup.sh`, Ruby YAML parsing for the changed workflows, jq/JSON payload validation, `git diff --check`, and the repository provider-reference scan passed. Test suites and live Layerbase connectivity were not run; the deployment workflow performs the live PING. **Exact next action:** stage and review only this task's changes, commit the branch, push it to `origin`, and open a PR targeting `main`.
+
 ## New-session prompt
 
 Copy/paste this into a new Codex chat after opening this repository:

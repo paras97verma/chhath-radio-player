@@ -10,7 +10,7 @@
 #
 # Required GitHub Secrets:
 #   DATABASE_URL — Supabase PostgreSQL connection string
-#   REDIS_URL    — Upstash Redis URL (cache invalidated after seed)
+#   REDIS_URL    — Layerbase Redis TLS URL (cache invalidated after seed)
 #   SECRET_KEY   — JWT secret
 # =============================================================================
 

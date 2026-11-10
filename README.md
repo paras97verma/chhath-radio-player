@@ -261,7 +261,7 @@ See [SCALE_PLAN.md](SCALE_PLAN.md) for the full scale-to-millions architecture p
 
 - [ ] Set all env vars (`SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`)
 - [ ] Use managed PostgreSQL (RDS, Supabase, Neon)
-- [ ] Use managed Redis (ElastiCache, Upstash)
+- [ ] Use managed Redis (Layerbase or another TLS-enabled provider)
 - [ ] Deploy frontend to Vercel (zero-config, global CDN)
 - [ ] Run backend with Gunicorn: `gunicorn -c backend/gunicorn.conf.py app.main:app`
 - [ ] Set `WEB_CONCURRENCY` to `2 × CPU + 1`

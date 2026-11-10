@@ -10,7 +10,7 @@
 #
 # Required GitHub Secrets:
 #   DATABASE_URL   — Supabase PostgreSQL connection string
-#   REDIS_URL      — Upstash Redis URL
+#   REDIS_URL      — Layerbase Redis TLS URL
 #   SECRET_KEY     — JWT secret
 #   ADMIN_EMAIL    — Default fallback admin email
 #   ADMIN_PASSWORD — Default fallback admin password

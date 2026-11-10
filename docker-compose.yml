@@ -10,7 +10,7 @@
 #
 # Services:
 #   db       — PostgreSQL 16 (mirrors Supabase schema)
-#   redis    — Redis 7 (mirrors Upstash)
+#   redis    — local Redis 7 for production-parity development
 #   backend  — FastAPI via Gunicorn + Uvicorn (production image)
 #   frontend — Next.js standalone (production image)
 #

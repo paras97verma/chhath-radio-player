@@ -13,7 +13,7 @@ This guide covers everything needed to deploy Chhath Radio to production and run
 | Backend (FastAPI) | [Render](https://render.com) Web Service | Free (750 hrs/mo) |
 | Frontend (Next.js) | [Vercel](https://vercel.com) | Free |
 | Database (PostgreSQL) | [Supabase](https://supabase.com) | Free (500MB) |
-| Cache (Redis) | [Upstash](https://upstash.com) | Free (10k cmd/day) |
+| Cache (Redis) | [Layerbase](https://layerbase.com/cloud) | Managed Redis over TLS |
 | CI/CD | GitHub Actions | Free |
 
 ---
@@ -29,7 +29,7 @@ chmod +x scripts/deploy-setup.sh
 
 The script will:
 1. Check prerequisites (git, docker, curl, gh CLI)
-2. Guide you to create accounts on Supabase, Upstash, Render, Vercel
+2. Guide you to create accounts on Supabase, Layerbase, Render, Vercel
 3. Collect all credentials interactively (with inline instructions)
 4. Write `backend/.env` and `frontend/.env.local` for local dev
 5. Set all GitHub Actions secrets automatically (via `gh` CLI)
@@ -133,7 +133,8 @@ Triggers on push to `main` when `backend/**` changes.
 push to main (backend/**)
   └── test (pytest + real PostgreSQL + Redis)
         └── [pass] deploy to Render
-              ├── Update Render env vars via API
+              ├── Verify the provisioned Layerbase Redis endpoint with TLS + PING
+              ├── Update Render env vars via API with the Layerbase REDIS_URL
               ├── Trigger Render deploy hook
               └── Poll /api/health until healthy
 ```
@@ -167,7 +168,7 @@ All secrets are set automatically by `scripts/deploy-setup.sh`. To set them manu
 | Secret | Description | Where to get it |
 |---|---|---|
 | `DATABASE_URL` | Supabase PostgreSQL URI | Supabase → Settings → Database → Connection Pooling |
-| `REDIS_URL` | Upstash Redis URL | Upstash → Database → Details |
+| `REDIS_URL` | Layerbase Redis TLS URL | Layerbase → Redis database → Connect |
 | `SECRET_KEY` | JWT signing secret (min 32 chars) | `openssl rand -hex 32` |
 | `ADMIN_EMAIL` | Admin account email | Your choice |
 | `ADMIN_PASSWORD` | Admin account password | Your choice |
@@ -199,6 +200,8 @@ Key variables:
 | `ADMIN_PASSWORD` | Admin account password |
 | `CORS_ORIGINS` | Allowed CORS origins (use `*` for local dev) |
 | `WEB_CONCURRENCY` | Gunicorn workers (1 for Render free tier) |
+
+The backend stays on Render. The Redis database is provisioned separately on Layerbase; the backend deployment workflow only validates the existing `REDIS_URL` and configures Render to use it. `LAYERBASE_API_KEY` is a management API credential and is not needed by the Redis client or this workflow.
 
 ### Frontend (`frontend/.env.local`)
 
