@@ -113,6 +113,61 @@ describe("TestLoadQueue", () => {
       }
     }
   });
+
+  it("keeps lock-screen Play idempotent while buffering and reports playback only after confirmation", async () => {
+    const previousDescriptor = Object.getOwnPropertyDescriptor(navigator, "mediaSession");
+    const handlers = new Map<string, ((details?: unknown) => unknown) | null>();
+    const mediaSession = {
+      setActionHandler: (action: string, handler: ((details?: unknown) => unknown) | null) => {
+        handlers.set(action, handler);
+      },
+      metadata: null,
+      playbackState: "none",
+      setPositionState: vi.fn(),
+    };
+    Object.defineProperty(navigator, "mediaSession", {
+      configurable: true,
+      value: mediaSession,
+    });
+
+    let finishLoad!: () => void;
+    const loadPromise = new Promise<void>((resolve) => {
+      finishLoad = resolve;
+    });
+    try {
+      const adapter = new MockYouTubePlayerAdapter();
+      const songs = makeSongs(2);
+      vi.spyOn(adapter, "getState")
+        .mockReturnValueOnce("UNSTARTED")
+        .mockReturnValue("BUFFERING");
+      const loadVideo = vi.spyOn(adapter, "loadVideo").mockReturnValue(loadPromise);
+      const seekTo = vi.spyOn(adapter, "seekTo");
+      await getStore().loadQueue(songs, adapter);
+
+      const firstPlay = handlers.get("play")?.({});
+      expect(mediaSession.playbackState).toBe("paused");
+      await handlers.get("play")?.({});
+      expect(loadVideo).toHaveBeenCalledOnce();
+
+      await getStore().handleAdapterStateChange("PLAYING", getStore().radioSessionId);
+      expect(mediaSession.playbackState).toBe("playing");
+
+      handlers.get("seekto")?.({ seekTime: 42 });
+      expect(seekTo).toHaveBeenCalledWith(42);
+
+      await handlers.get("pause")?.({});
+      expect(mediaSession.playbackState).toBe("paused");
+
+      finishLoad();
+      await firstPlay;
+    } finally {
+      if (previousDescriptor) {
+        Object.defineProperty(navigator, "mediaSession", previousDescriptor);
+      } else {
+        Reflect.deleteProperty(navigator, "mediaSession");
+      }
+    }
+  });
 });
 
 // ─── TestCurrentSong ──────────────────────────────────────────────────────────
@@ -372,6 +427,45 @@ describe("TestHandleAdapterStateChange", () => {
 
     expect(getStore().currentIndex).toBe(1);
     expect(loadVideoSpy).toHaveBeenCalledWith(songs[1].youtube_video_id);
+  });
+
+  it("resets the lock-screen position on auto-advance and stays paused until PLAYING", async () => {
+    const previousDescriptor = Object.getOwnPropertyDescriptor(navigator, "mediaSession");
+    const mediaSession = {
+      setActionHandler: vi.fn(),
+      setPositionState: vi.fn(),
+      metadata: null,
+      playbackState: "none",
+    };
+    Object.defineProperty(navigator, "mediaSession", {
+      configurable: true,
+      value: mediaSession,
+    });
+
+    try {
+      const { adapter, sessionId } = await setupStore(2);
+      useRadioStore.setState({ duration: 180, currentTime: 180 });
+      vi.spyOn(adapter, "getDuration").mockReturnValue(180);
+      vi.spyOn(adapter, "loadVideo").mockResolvedValue();
+
+      await getStore().handleAdapterStateChange("ENDED", sessionId);
+
+      expect(mediaSession.playbackState).toBe("paused");
+      expect(mediaSession.setPositionState).toHaveBeenLastCalledWith({
+        duration: 180,
+        playbackRate: 1,
+        position: 0,
+      });
+
+      await getStore().handleAdapterStateChange("PLAYING", sessionId);
+      expect(mediaSession.playbackState).toBe("playing");
+    } finally {
+      if (previousDescriptor) {
+        Object.defineProperty(navigator, "mediaSession", previousDescriptor);
+      } else {
+        Reflect.deleteProperty(navigator, "mediaSession");
+      }
+    }
   });
 
   it("ENDED at last song → wraps to index 0 and continues loop", async () => {

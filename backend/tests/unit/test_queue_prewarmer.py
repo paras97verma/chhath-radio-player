@@ -244,6 +244,53 @@ class TestQueuePrewarmer:
         redis.zrem.assert_called_once_with("chhath:queue:reconciler_retry", "vid_due")
         redis.hdel.assert_called_once_with("chhath:queue:reconciler_retry_attempts", "vid_due")
 
+    def test_due_stream_refresh_failure_is_retried_with_bounded_backoff(self, monkeypatch):
+        now = 1_700_000_000.0
+        redis = MagicMock()
+        redis.zrangebyscore.return_value = [b"vid_due"]
+        redis.zscore.return_value = None
+        redis.hget.return_value = b"0"
+        db = MagicMock()
+        song_service = MagicMock()
+        song_service.get_by_video_id.return_value = MagicMock(enabled=True)
+        monkeypatch.setattr(prewarmer_module, "_get_redis", lambda: redis)
+        monkeypatch.setattr(prewarmer_module, "SessionLocal", lambda: db)
+        monkeypatch.setattr(prewarmer_module, "SongService", song_service)
+        monkeypatch.setattr(prewarmer_module.time, "time", lambda: now)
+        monkeypatch.setattr(
+            QueuePrewarmer,
+            "warm_song",
+            classmethod(lambda _cls, _video_id, force=False: False),
+        )
+
+        assert QueuePrewarmer.process_due_refresh_queue(max_items=1) == 1
+
+        redis.hset.assert_called_once_with("chhath:stream:refresh_retry_attempts", "vid_due", 1)
+        redis.zadd.assert_called_once_with(
+            prewarmer_module.STREAM_REFRESH_DUE_KEY,
+            {"vid_due": now + prewarmer_module.REFRESH_RETRY_BACKOFF_SECONDS[0]},
+        )
+        db.close.assert_called_once()
+
+    def test_due_stream_refresh_removes_disabled_tracks(self, monkeypatch):
+        redis = MagicMock()
+        redis.zrangebyscore.return_value = ["vid_disabled"]
+        db = MagicMock()
+        song_service = MagicMock()
+        song_service.get_by_video_id.return_value = MagicMock(enabled=False)
+        warm_song = MagicMock()
+        monkeypatch.setattr(prewarmer_module, "_get_redis", lambda: redis)
+        monkeypatch.setattr(prewarmer_module, "SessionLocal", lambda: db)
+        monkeypatch.setattr(prewarmer_module, "SongService", song_service)
+        monkeypatch.setattr(QueuePrewarmer, "warm_song", warm_song)
+
+        assert QueuePrewarmer.process_due_refresh_queue(max_items=1) == 0
+
+        warm_song.assert_not_called()
+        redis.zrem.assert_called_once_with(prewarmer_module.STREAM_REFRESH_DUE_KEY, "vid_disabled")
+        redis.hdel.assert_called_once_with("chhath:stream:refresh_retry_attempts", "vid_disabled")
+        db.close.assert_called_once()
+
     @pytest.mark.asyncio
     async def test_warm_pass_offloads_serially_and_uses_origin_rate_limit(self, monkeypatch):
         main_thread = threading.current_thread()
@@ -394,6 +441,7 @@ class TestQueuePrewarmer:
         redis.eval.return_value = 1
         now = [1000.0]
         cycle_times = []
+        due_refresh_batches = []
         main_sleeps = 0
         real_sleep = asyncio.sleep
 
@@ -423,12 +471,19 @@ class TestQueuePrewarmer:
             "process_priority_queue",
             classmethod(lambda _cls, max_items=10: 0),
         )
+        monkeypatch.setattr(
+            QueuePrewarmer,
+            "process_due_refresh_queue",
+            classmethod(lambda _cls, max_items=10: due_refresh_batches.append(max_items) or 0),
+        )
         monkeypatch.setattr(QueuePrewarmer, "run_prewarmer_cycle", classmethod(cycle))
         prewarmer_module._is_running = True
 
         await asyncio.wait_for(prewarmer_module._reconciler_loop(), timeout=1)
 
         assert cycle_times == [1000.0, 1600.0]
+        assert len(due_refresh_batches) >= 2
+        assert set(due_refresh_batches) == {10}
 
     @pytest.mark.asyncio
     async def test_cycle_accounts_for_every_enabled_catalog_song(self, monkeypatch):

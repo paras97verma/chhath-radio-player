@@ -788,7 +788,38 @@ class TestStreamCacheService:
         assert cache_key in mock_redis.values
         assert mock_redis.ttls[cache_key] == 5400
         assert fence["generation"] == "1"
+        due_at = mock_redis.sorted_sets[cache_module.STREAM_REFRESH_DUE_KEY]["ZceCoo2p9Tw"]
+        earliest_refresh = min(source["refresh_at"] for source in resolved_payload["sources"])
+        assert due_at == pytest.approx(earliest_refresh - cache_module.REFRESH_LEAD_SECONDS)
         assert f"{STREAM_LOCK_PREFIX}ZceCoo2p9Tw" not in mock_redis.values
+
+    @patch("app.services.stream_cache_service._get_redis")
+    @patch.object(StreamCacheService, "_extract_upstream", return_value=None)
+    def test_failed_refresh_serves_still_valid_candidate_and_schedules_retry(
+        self, _mock_extract, mock_get_redis
+    ):
+        video_id = "keepvalid_1"
+        now = time.time()
+        redis = FakeCacheRedis()
+        record = make_stream_record(video_id, now)
+        record.update({"generation": 7, "fence_token": "current-token"})
+        cache_key = f"{STREAM_CACHE_PREFIX}{video_id}"
+        fence_key = f"{cache_module.STREAM_FENCE_PREFIX}{video_id}"
+        redis.values[cache_key] = json.dumps(record)
+        redis.ttls[cache_key] = 5400
+        redis.hashes[fence_key] = {"generation": "7", "fence_token": "current-token"}
+        mock_get_redis.return_value = redis
+
+        result = StreamCacheService.get_stream(video_id, priority="normal", force_fresh=True)
+
+        assert result is not None
+        assert result["cached"] is True
+        assert result["cache_tier"] == "L2_STALE_WHILE_REFRESH"
+        assert result["url"] == record["sources"][0]["url"]
+        assert redis.zscore(cache_module.STREAM_REFRESH_DUE_KEY, video_id) == pytest.approx(
+            now + 60,
+            abs=1,
+        )
 
     @patch("app.services.stream_cache_service._get_redis")
     @patch.object(StreamCacheService, "_extract_upstream")
@@ -1558,6 +1589,7 @@ class TestStreamCacheService:
         mock_get_redis.return_value = mock_redis
         for video_id in ("vid1", "vid2"):
             mock_redis.values[f"{STREAM_CACHE_PREFIX}{video_id}"] = "record"
+            mock_redis.zadd(cache_module.STREAM_REFRESH_DUE_KEY, {video_id: 100.0})
         mock_redis.values[STREAM_METRICS_KEY] = "metrics"
 
         count = StreamCacheService.flush_stream_cache()
@@ -1565,6 +1597,7 @@ class TestStreamCacheService:
         assert f"{STREAM_CACHE_PREFIX}vid1" not in mock_redis.values
         assert f"{STREAM_CACHE_PREFIX}vid2" not in mock_redis.values
         assert STREAM_METRICS_KEY not in mock_redis.values
+        assert cache_module.STREAM_REFRESH_DUE_KEY not in mock_redis.sorted_sets
         assert all(
             key in mock_redis.hashes
             for key in (
@@ -1580,6 +1613,7 @@ class TestStreamCacheService:
         mock_redis.values[STREAM_METRICS_KEY] = "metrics"
         for video_id in ("vid12345", "vid67890", "vidABCDE"):
             mock_redis.values[f"{STREAM_CACHE_PREFIX}{video_id}"] = "record"
+            mock_redis.zadd(cache_module.STREAM_REFRESH_DUE_KEY, {video_id: 100.0})
 
         # Test comma and newline separated inputs
         count = StreamCacheService.flush_stream_cache("vid12345, vid67890\nvidABCDE")
@@ -1588,6 +1622,7 @@ class TestStreamCacheService:
         for video_id in ("vid12345", "vid67890", "vidABCDE"):
             assert f"{STREAM_CACHE_PREFIX}{video_id}" not in mock_redis.values
             assert mock_redis.hashes[f"{cache_module.STREAM_FENCE_PREFIX}{video_id}"]["generation"] == "1"
+            assert mock_redis.zscore(cache_module.STREAM_REFRESH_DUE_KEY, video_id) is None
 
     @patch("app.services.stream_cache_service.urllib.request.urlopen")
     @patch("app.services.stream_cache_service._get_redis")

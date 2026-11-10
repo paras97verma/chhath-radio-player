@@ -47,6 +47,9 @@ type PlaybackCandidate = {
 type PreparedPlaybackSource = {
   videoId: string;
   stream: AudioStreamInfo;
+  candidates: PlaybackCandidate[];
+  audio: HTMLAudioElement | null;
+  ready: boolean;
 };
 
 type RecoveryEpisode = {
@@ -94,13 +97,10 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
   private currentState: PlayerState = "UNSTARTED";
   private stateListeners: Set<(state: PlayerState) => void> = new Set();
   private progressListeners: Set<(currentTime: number, duration: number) => void> = new Set();
-  private preparedStream: PreparedPlaybackSource | null = null;
+  private preparedSource: PreparedPlaybackSource | null = null;
   private initialWarmupPromise: Promise<AudioStreamInfo> | null = null;
   private initialWarmupVideoId: string | null = null;
   private initialWarmupController: AbortController | null = null;
-  private preloadedSongId: string | null = null;
-  /** True only after the secondary element has fired canplay or progress (not just src assignment). */
-  private preloadedSongReady = false;
   private preloadCleanupFns: Array<() => void> = [];
   private isDestroyed = false;
   private isMuted = false;
@@ -140,15 +140,52 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     this.preloadCleanupFns = [];
   }
 
-  private _discardPreloadedSource(): void {
+  private _discardPreparedSource(source = this.preparedSource): void {
+    if (!source || this.preparedSource !== source) return;
     this._clearPreloadReadinessListeners();
-    this.preparedStream = null;
-    this.preloadedSongId = null;
-    this.preloadedSongReady = false;
-    if (this.secondaryAudio?.src) {
-      this.secondaryAudio.removeAttribute("src");
-      this.secondaryAudio.load();
+    this.preparedSource = null;
+    const audio = source?.audio;
+    if (audio && audio !== this.primaryAudio && audio.src) {
+      audio.removeAttribute("src");
+      audio.load();
     }
+  }
+
+  private _prepareSource(videoId: string, stream: AudioStreamInfo): PreparedPlaybackSource {
+    this._discardPreparedSource();
+    const audio = this.secondaryAudio;
+    const candidates = this._buildCandidates(stream);
+    const prepared: PreparedPlaybackSource = {
+      videoId,
+      stream,
+      candidates,
+      audio,
+      ready: false,
+    };
+    this.preparedSource = prepared;
+
+    const candidate = candidates.find(
+      (item) => audio && item.mimeType && isMimeTypeSupportedByAudioElement(audio, item.mimeType),
+    );
+    if (!audio || !candidate) return prepared;
+
+    const markReady = () => {
+      if (
+        this.preparedSource === prepared &&
+        (audio.currentSrc || audio.src) === candidate.url
+      ) {
+        prepared.ready = true;
+        this._clearPreloadReadinessListeners();
+      }
+    };
+    const removeCanPlay = () => audio.removeEventListener("canplay", markReady);
+    const removeProgress = () => audio.removeEventListener("progress", markReady);
+    audio.addEventListener("canplay", markReady);
+    audio.addEventListener("progress", markReady);
+    this.preloadCleanupFns = [removeCanPlay, removeProgress];
+    audio.preload = "auto";
+    audio.src = candidate.url;
+    return prepared;
   }
 
   constructor(primary?: HTMLAudioElement, secondary?: HTMLAudioElement) {
@@ -512,10 +549,9 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
           if (
             this.isDestroyed ||
             this.latestRequestedVideoId !== null ||
-            this.preparedStream !== null
+            this.preparedSource !== null
           ) return;
-          this.preparedStream = { videoId, stream };
-          this.preloadedSongId = videoId;
+          this._prepareSource(videoId, stream);
         })
         .catch((err) => {
           if (controller.signal.aborted) return;
@@ -701,10 +737,14 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       ? this.initialWarmupPromise
       : null;
     this.latestRequestedVideoId = videoId;
-    const preparedStream = this.preparedStream?.videoId === videoId
-      ? this.preparedStream.stream
-      : null;
-    if (preparedStream) this.preparedStream = null;
+    const prepared = this.preparedSource?.videoId === videoId ? this.preparedSource : null;
+    const preparedStream = prepared?.stream ?? null;
+    const currentCandidates = prepared ? this._buildCandidates(prepared.stream) : [];
+    const currentlyValidUrls = new Set(currentCandidates.map((candidate) => candidate.url));
+    const preparedCandidates = prepared
+      ? prepared.candidates.filter((candidate) => currentlyValidUrls.has(candidate.url))
+      : [];
+    if (this.preparedSource && !prepared) this._discardPreparedSource();
 
     if (this.initialWarmupVideoId && this.initialWarmupVideoId !== videoId) {
       this.initialWarmupController?.abort("Initial stream warmup no longer selected");
@@ -747,16 +787,15 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
     // Check if the secondary audio element is ready (actual media readiness confirmed) for this song
     if (
-      this.preloadedSongId === videoId &&
-      this.preloadedSongReady &&
-      this.secondaryAudio &&
-      this.secondaryAudio.src &&
-      preparedStream
+      prepared?.ready &&
+      prepared.audio === this.secondaryAudio &&
+      this.secondaryAudio?.src &&
+      preparedCandidates[0]?.url === this.secondaryAudio.src
     ) {
-      const candidates = this._buildCandidates(preparedStream);
+      const candidates = preparedCandidates;
       const candidate = candidates[0];
       if (!candidate) {
-        this._discardPreloadedSource();
+        this._discardPreparedSource(prepared);
       } else {
         this.hasEndedEmitted = false;
         // Instant seamless handoff! Swap primary and secondary
@@ -765,12 +804,11 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
         this.primaryAudio = newPrimary;
         this.secondaryAudio = oldPrimary;
+        this.preparedSource = null;
         this._clearPreloadReadinessListeners();
-        this.preloadedSongId = null;
-        this.preloadedSongReady = false;
         this.currentVideoId = videoId;
-        this.currentProxyUrl = preparedStream.proxy_url || null;
-        this.streamDuration = preparedStream.duration ?? extractDurationFromUrl(candidate.url) ?? null;
+        this.currentProxyUrl = preparedStream?.proxy_url || null;
+        this.streamDuration = preparedStream?.duration ?? extractDurationFromUrl(candidate.url) ?? null;
         this.hasUserInteracted = true;
 
         // Rebind events for the active primary
@@ -823,8 +861,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       }
     }
 
-    // If preload was ignored, discard its pending source and continue through the normal path.
-    if (this.preloadedSongId === videoId) this._discardPreloadedSource();
+    // If preload was ignored or its URL expired, use fresh metadata through the normal path.
+    if (prepared) this._discardPreparedSource(prepared);
 
     // Standard resolution path
     this._emitState("BUFFERING");
@@ -1003,7 +1041,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
   async preloadNextSong(song: Song): Promise<void> {
     if (!song?.youtube_video_id || !this.secondaryAudio) return;
-    if (this.preloadedSongId === song.youtube_video_id) return; // already preloaded
+    if (this.preparedSource?.videoId === song.youtube_video_id) return; // already prepared
     if (this.currentState === "BUFFERING") return; // do not compete during active track load
 
     if (this.preloadAbortController) {
@@ -1015,7 +1053,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       this.preloadAbortController = null;
       this.preloadingSongId = null;
     }
-    this._discardPreloadedSource();
+    this._discardPreparedSource();
     const controller = new AbortController();
     this.preloadAbortController = controller;
     this.preloadingSongId = song.youtube_video_id;
@@ -1028,37 +1066,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
         this.latestRequestedVideoId === song.youtube_video_id
       ) return;
 
-      const candidate = this._buildCandidates(stream)[0];
-      if (!candidate) return;
-
-      this.preparedStream = { videoId: song.youtube_video_id, stream };
-      this.preloadedSongReady = false;
-      this.preloadedSongId = song.youtube_video_id;
-
-      const secondary = this.secondaryAudio;
-      if (secondary) {
-        const source = stream.sources?.find(
-          (sourceCandidate) => "mode" in sourceCandidate && sourceCandidate.url === candidate.url,
-        );
-        if (!source || !("mode" in source) || !isMimeTypeSupportedByAudioElement(secondary, source.mime_type)) return;
-
-        const videoId = song.youtube_video_id;
-        // Mark ready after the browser confirms actual media data is available.
-        const markReady = () => {
-          if (this.preloadedSongId === videoId && !this.preloadedSongReady) {
-            this.preloadedSongReady = true;
-            this._clearPreloadReadinessListeners();
-          }
-        };
-        const removeCanPlay = () => secondary.removeEventListener("canplay", markReady);
-        const removeProgress = () => secondary.removeEventListener("progress", markReady);
-        // Attach before src assignment so synchronous readiness events cannot be missed.
-        secondary.addEventListener("canplay", markReady);
-        secondary.addEventListener("progress", markReady);
-        this.preloadCleanupFns = [removeCanPlay, removeProgress];
-        secondary.src = candidate.url;
-        secondary.preload = "auto";
-      }
+      if (this._buildCandidates(stream).length === 0) return;
+      this._prepareSource(song.youtube_video_id, stream);
     } catch {
       // Safely swallow all preload errors/aborts so no unhandled rejections reach the console/overlay
     } finally {
@@ -1172,10 +1181,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     this.initialWarmupController = null;
     this.initialWarmupPromise = null;
     this.initialWarmupVideoId = null;
-    this._clearPreloadReadinessListeners();
-    this.preparedStream = null;
-    this.preloadedSongId = null;
-    this.preloadedSongReady = false;
+    this._discardPreparedSource();
     this.cleanupFns.forEach((fn) => fn());
     this.cleanupFns = [];
     this.stateListeners.clear();
