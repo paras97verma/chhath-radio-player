@@ -148,13 +148,17 @@ Tasks grouped by independently testable user story. Tests included because the f
 
 ## Phase 11: Managed Redis provider migration
 
-- [ ] T048 Migrate Redis runtime and deployment setup fully to Layerbase, verify TLS and the cache-required Redis command set, prove a real stream-cache record can be written to and read from the existing Layerbase database, preflight the endpoint before backend deploys, update provider setup documentation, and preserve unowned Render environment variables during deploys. The existing Layerbase database is provisioned separately; do not provision a new database on every application deployment.
+- [x] T048 Migrate Redis runtime and deployment setup fully to Layerbase, verify TLS and the cache-required Redis command set, prove a real stream-cache record can be written to and read from the existing Layerbase database, preflight the endpoint before backend deploys, update provider setup documentation, and preserve unowned Render environment variables during deploys. The existing Layerbase database is provisioned separately; do not provision a new database on every application deployment.
 
 ## Phase 12: Cold-cache resolver resilience
 
 **Purpose**: Keep one video's upstream failure from suppressing every other catalog resolution, while still cooling down an origin after repeated systemic failures.
 
-- [ ] T049 [US2] Separate per-video extraction failures from origin health, apply a bounded origin cooldown only after repeated systemic failures, and verify that one failed video does not prevent later catalog tracks from resolving in `backend/app/services/stream_cache_service.py` and `backend/tests/unit/test_stream_cache_service.py`.
+- [x] T049 [US2] Separate per-video extraction failures from origin health, apply a bounded origin cooldown only after repeated systemic failures, and verify that one failed video does not prevent later catalog tracks from resolving in `backend/app/services/stream_cache_service.py` and `backend/tests/unit/test_stream_cache_service.py`.
+
+## Phase 13: Full-catalog cache coverage
+
+- [ ] T050 [US2] Audit every enabled catalog song against Layerbase records; rotate bounded resolver attempts across all configured healthy Invidious origins so retries are not pinned to the first two; preserve retries for unresolved IDs and report aggregate per-mode coverage without exposing stream URLs or credentials.
 
 ## Dependencies and parallelism
 

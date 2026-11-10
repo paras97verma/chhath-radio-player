@@ -38,9 +38,11 @@ def clean_caches():
     """Clear in-memory L1 cache before each test."""
     _l1_cache.clear()
     _l1_cache_ts.clear()
+    cache_module._origin_rotation_cursor = 0
     yield
     _l1_cache.clear()
     _l1_cache_ts.clear()
+    cache_module._origin_rotation_cursor = 0
 
 
 @dataclass(frozen=True)
@@ -1180,6 +1182,122 @@ class TestStreamCacheService:
 
         assert len(transport.requests) == 2
         assert clock.time() - now <= 5.0
+
+    def test_repeated_resolution_rotates_across_registry_without_exceeding_origin_limit(self, monkeypatch):
+        now = 1_700_000_000.0
+        origins = [f"https://invidious-{letter}.test" for letter in "abcd"]
+        registry = tuple(
+            cache_module.InvidiousInstance(
+                name=f"origin {letter}",
+                origin=origin,
+                requests_per_second=1000,
+                max_concurrency=1,
+            )
+            for letter, origin in zip("abcd", origins)
+        )
+        video_ids = ("first-origin-pair", "second-origin-pair")
+        metadata_urls = {
+            video_id: [
+                f"{origin}/api/v1/videos/{video_id}?fields=title,adaptiveFormats,formatStreams"
+                for origin in origins
+            ]
+            for video_id in video_ids
+        }
+        valid_body = json.dumps({
+            "title": "Recovered from a later configured origin",
+            "adaptiveFormats": [{
+                "itag": 140,
+                "type": 'audio/mp4; codecs="mp4a.40.2"',
+                "url": f"https://media.test/audio?expire={int(now + 7200)}",
+                "bitrate": 128000,
+            }],
+        }).encode()
+        replies = {
+            metadata_urls[video_ids[0]][0]: FakeOriginReply(status=404),
+            metadata_urls[video_ids[0]][1]: FakeOriginReply(status=404),
+            metadata_urls[video_ids[1]][2]: FakeOriginReply(status=404),
+            metadata_urls[video_ids[1]][3]: FakeOriginReply(body=valid_body),
+        }
+        clock = FakeResolverClock(now)
+        transport = FakeResolverTransport(
+            clock,
+            replies,
+            {origin: {"requests_per_second": 1000, "max_concurrency": 1} for origin in origins},
+        )
+        monkeypatch.setattr(cache_module, "INVIDIOUS_REGISTRY", registry)
+        monkeypatch.setattr(cache_module, "_origin_rotation_cursor", 0)
+        monkeypatch.setattr(cache_module, "_origin_limiters", {})
+        monkeypatch.setattr(cache_module.time, "time", clock.time)
+        monkeypatch.setattr(cache_module.time, "monotonic", clock.monotonic)
+        monkeypatch.setattr(cache_module.urllib.request, "urlopen", transport.urlopen)
+        monkeypatch.setattr(cache_module, "_get_redis", lambda: None)
+
+        assert StreamCacheService._extract_upstream(video_ids[0]) is None
+        recovered = StreamCacheService._extract_upstream(video_ids[1])
+
+        assert recovered is not None
+        assert [request["url"] for request in transport.requests] == [
+            metadata_urls[video_ids[0]][0],
+            metadata_urls[video_ids[0]][1],
+            metadata_urls[video_ids[1]][2],
+            metadata_urls[video_ids[1]][3],
+        ]
+        assert len({request["origin"] for request in transport.requests[:2]}) == 2
+        assert len({request["origin"] for request in transport.requests[2:]}) == 2
+
+    def test_cooldown_skips_allow_later_origins_to_fill_the_two_origin_budget(self, monkeypatch):
+        now = 1_700_000_000.0
+        origins = [f"https://invidious-{letter}.test" for letter in "abc"]
+        registry = tuple(
+            cache_module.InvidiousInstance(
+                name=f"origin {letter}",
+                origin=origin,
+                requests_per_second=1000,
+                max_concurrency=1,
+            )
+            for letter, origin in zip("abc", origins)
+        )
+        video_id = "skip-cooled-origin"
+        metadata_urls = [
+            f"{origin}/api/v1/videos/{video_id}?fields=title,adaptiveFormats,formatStreams"
+            for origin in origins
+        ]
+        valid_body = json.dumps({
+            "title": "Recovered after cooldown skip",
+            "adaptiveFormats": [{
+                "itag": 140,
+                "type": 'audio/mp4; codecs="mp4a.40.2"',
+                "url": f"https://media.test/audio?expire={int(now + 7200)}",
+                "bitrate": 128000,
+            }],
+        }).encode()
+        clock = FakeResolverClock(now)
+        transport = FakeResolverTransport(
+            clock,
+            {
+                metadata_urls[1]: FakeOriginReply(status=404),
+                metadata_urls[2]: FakeOriginReply(body=valid_body),
+            },
+            {origin: {"requests_per_second": 1000, "max_concurrency": 1} for origin in origins},
+        )
+        redis = FakeOriginHealthRedis()
+        redis.hset(
+            f"{cache_module.HEALTH_PREFIX}{registry[0].name}",
+            "cooldown_until",
+            now + cache_module.COOLDOWN_SECONDS,
+        )
+        monkeypatch.setattr(cache_module, "INVIDIOUS_REGISTRY", registry)
+        monkeypatch.setattr(cache_module, "_origin_rotation_cursor", 0)
+        monkeypatch.setattr(cache_module, "_origin_limiters", {})
+        monkeypatch.setattr(cache_module.time, "time", clock.time)
+        monkeypatch.setattr(cache_module.time, "monotonic", clock.monotonic)
+        monkeypatch.setattr(cache_module.urllib.request, "urlopen", transport.urlopen)
+        monkeypatch.setattr(cache_module, "_get_redis", lambda: redis)
+
+        recovered = StreamCacheService._extract_upstream(video_id)
+
+        assert recovered is not None
+        assert [request["url"] for request in transport.requests] == metadata_urls[1:]
 
     def test_one_video_upstream_failure_does_not_cool_origin_for_next_song(self, monkeypatch):
         now = 1_700_000_000.0
