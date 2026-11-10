@@ -72,6 +72,15 @@ jobs:
           REDIS_URL: ${{ secrets.REDIS_URL }}
         run: python scripts/check-layerbase-redis.py
 
+      - name: Inspect production cache status and Render logs
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: python scripts/diagnose-layerbase-runtime.py
+
   # ── Job 1: Run all backend tests ──────────────────────────────────────────
   test:
     name: pytest
