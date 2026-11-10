@@ -104,7 +104,7 @@ export const PlayerStatus = memo(function PlayerStatus({
 
 type PlayerControlsProps = {
   isReady: boolean;
-  currentIndex: number;
+  hasSongs: boolean;
   isPlaying: boolean;
   isBuffering: boolean;
   keyFlash: PlayerControlFlash;
@@ -139,7 +139,7 @@ const IconPause = () => (
 
 const PlayerControls = memo(function PlayerControls({
   isReady,
-  currentIndex,
+  hasSongs,
   isPlaying,
   isBuffering,
   keyFlash,
@@ -152,14 +152,14 @@ const PlayerControls = memo(function PlayerControls({
       <button
         type="button"
         onClick={onPrevious}
-        disabled={!isReady || currentIndex <= 0}
+        disabled={!isReady || !hasSongs}
         aria-label="Previous song"
         className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-full transition-all disabled:cursor-not-allowed hover:scale-110 active:scale-95"
         style={{
           color: keyFlash === "prev" || keyFlash === "seekBack" ? "#ffa726" : "rgba(255,255,255,0.5)",
           background: keyFlash === "prev" || keyFlash === "seekBack" ? "rgba(255, 138, 80, 0.25)" : "transparent",
           boxShadow: keyFlash === "prev" || keyFlash === "seekBack" ? "0 0 16px rgba(255, 138, 80, 0.45)" : "none",
-          opacity: !isReady && !keyFlash ? 0.2 : 1,
+          opacity: (!isReady || !hasSongs) && !keyFlash ? 0.2 : 1,
         }}
       >
         <IconPrev />
@@ -195,7 +195,7 @@ const PlayerControls = memo(function PlayerControls({
       <button
         type="button"
         onClick={onNext}
-        disabled={!isReady}
+        disabled={!isReady || !hasSongs}
         aria-label="Next song"
         className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed hover:scale-110 active:scale-95"
         style={{
