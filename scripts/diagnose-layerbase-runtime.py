@@ -168,10 +168,12 @@ def inspect_layerbase_cache() -> None:
             "orphan_catalog_stream_keys": 0,
         }
         catalog_ids = set(video_ids)
+        missing_ids = []
         for index, video_id in enumerate(video_ids):
             raw_record, raw_fence, ttl = values[index * 3:index * 3 + 3]
             if raw_record is None:
                 summary["missing_or_invalid"] += 1
+                missing_ids.append(video_id)
                 continue
 
             summary["cache_keys_present"] += 1
@@ -180,11 +182,13 @@ def inspect_layerbase_cache() -> None:
             except (TypeError, ValueError):
                 summary["malformed_records"] += 1
                 summary["missing_or_invalid"] += 1
+                missing_ids.append(video_id)
                 continue
 
             if not isinstance(record, dict):
                 summary["malformed_records"] += 1
                 summary["missing_or_invalid"] += 1
+                missing_ids.append(video_id)
                 continue
 
             try:
@@ -207,6 +211,7 @@ def inspect_layerbase_cache() -> None:
             if not current_record:
                 summary["fence_mismatches"] += 1
                 summary["missing_or_invalid"] += 1
+                missing_ids.append(video_id)
                 continue
 
             summary["fenced_current_records"] += 1
@@ -225,6 +230,7 @@ def inspect_layerbase_cache() -> None:
 
             if not by_mode:
                 summary["missing_or_invalid"] += 1
+                missing_ids.append(video_id)
             elif all(by_mode.get(mode) is True for mode in ("direct", "proxy")):
                 summary["fully_warm_direct_and_proxy"] += 1
             else:
@@ -241,6 +247,39 @@ def inspect_layerbase_cache() -> None:
                 break
 
         print(f"{cache_label}_catalog_cache=" + json.dumps(summary, separators=(",", ":")))
+        warm_requested = os.environ.get("WARM_MISSING", "").strip().lower() in {"true", "1", "yes"}
+        if warm_requested and cache_label != "layerbase":
+            print("redis_missing_song_warm_triggers=skipped (local Redis audit only)")
+        elif warm_requested:
+            accepted = 0
+            failed = 0
+            for video_id in missing_ids:
+                warm_url = f"{api_base}/api/stream/cache/flush?{urllib.parse.urlencode({'v': video_id})}"
+                request = urllib.request.Request(
+                    warm_url,
+                    headers={**headers, "Content-Type": "application/json"},
+                    method="POST",
+                )
+                try:
+                    with urllib.request.urlopen(request, timeout=20) as response:
+                        payload = json.load(response)
+                        if (
+                            response.status == 200
+                            and isinstance(payload, dict)
+                            and payload.get("prewarmer_triggered") is True
+                        ):
+                            accepted += 1
+                        else:
+                            failed += 1
+                except Exception:
+                    failed += 1
+            print(
+                f"{cache_label}_missing_song_warm_triggers="
+                + json.dumps(
+                    {"requested": len(missing_ids), "accepted": accepted, "failed": failed},
+                    separators=(",", ":"),
+                )
+            )
     except Exception as exc:
         print(f"{cache_label}_catalog_cache_audit_error={type(exc).__name__}")
     finally:

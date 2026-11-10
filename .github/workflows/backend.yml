@@ -46,6 +46,11 @@ on:
         description: 'Reason for manual trigger'
         required: false
         default: 'Manual deploy'
+      warm_missing:
+        description: 'Rewarm only enabled catalog songs missing a valid Layerbase cache record'
+        required: false
+        type: boolean
+        default: false
 
 env:
   PYTHON_VERSION: '3.12'
@@ -84,6 +89,7 @@ jobs:
           REDIS_URL: ${{ secrets.REDIS_URL }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          WARM_MISSING: ${{ inputs.warm_missing }}
         run: python scripts/diagnose-layerbase-runtime.py
 
   # ── Job 1: Run all backend tests ──────────────────────────────────────────
