@@ -215,7 +215,8 @@ collect_layerbase() {
   box_start "How to get your REDIS_URL"
   box_line "1. Open your existing Redis database at ${CYAN}https://layerbase.com/cloud${NC}"
   box_line "2. Open ${BOLD}Connect${NC} and copy its TLS connection string"
-  box_line "3. Use the ${BOLD}rediss://...:6379${NC} URL; it contains your Redis password"
+  box_line "3. Use the ${BOLD}rediss://...${NC} URL; port 6379 is the default"
+  box_line "4. The URL contains your Redis password; keep it private"
   box_end
   echo ""
   link "Layerbase Redis connection guide: https://layerbase.com/docs/cloud/connecting/redis"
@@ -223,11 +224,31 @@ collect_layerbase() {
 
   while true; do
     prompt REDIS_URL "Paste your Layerbase Redis TLS URL"
-    if [[ "$REDIS_URL" == rediss://* && "$REDIS_URL" == *".cloud.layerbase.dev:6379"* ]]; then
+    if printf '%s' "$REDIS_URL" | python3 -c '
+import sys
+from urllib.parse import urlsplit
+
+try:
+    parsed = urlsplit(sys.stdin.read().strip())
+    port = parsed.port
+except ValueError:
+    raise SystemExit(1)
+
+host = parsed.hostname or ""
+valid_port = port is None or port == 6379
+if not (
+    parsed.scheme == "rediss"
+    and host.endswith(".cloud.layerbase.dev")
+    and valid_port
+    and parsed.username
+    and parsed.password
+):
+    raise SystemExit(1)
+'; then
       success "REDIS_URL uses TLS and a Layerbase endpoint"
       break
     else
-      warn "Use the Layerbase rediss:// connection string on port 6379"
+      warn "Use the Layerbase rediss:// connection string; port 6379 may be omitted"
     fi
   done
 }

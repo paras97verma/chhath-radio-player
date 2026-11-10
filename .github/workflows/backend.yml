@@ -1,11 +1,13 @@
 # =============================================================================
 # Chhath Radio — Backend CI/CD
 #
-# Triggers on push to main (backend/** changes) or any PR touching backend.
+# Backend changes on main run the test/deploy pipeline. Same-repository PRs run
+# a Layerbase Redis liveness check only; they never deploy.
 # Pipeline:
-#   1. Run pytest with real PostgreSQL + Redis services
-#   2. Verify Layerbase Redis, then update Render env vars + trigger deploy
-#   3. Poll backend health endpoint until healthy
+#   1. Run pytest with real PostgreSQL + Redis services on main
+#   2. Verify Layerbase Redis on PRs and before each production deploy
+#   3. On main, update Render env vars + trigger deploy
+#   4. Poll backend health endpoint until healthy
 #
 # Required GitHub Secrets (set via scripts/deploy-setup.sh):
 #   RENDER_API_KEY          — Render account API key
@@ -27,6 +29,13 @@ on:
     paths:
       - 'backend/**'
       - '.github/workflows/backend.yml'
+      - 'scripts/check-layerbase-redis.py'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend.yml'
+      - 'scripts/check-layerbase-redis.py'
   workflow_dispatch:
     inputs:
       reason:
@@ -41,10 +50,32 @@ permissions:
   contents: read
 
 jobs:
+  verify-layerbase:
+    name: Verify Layerbase Redis
+    if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Redis client
+        run: pip install --disable-pip-version-check --no-input redis==5.0.4
+
+      - name: Ping Layerbase Redis
+        env:
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+        run: python scripts/check-layerbase-redis.py
+
   # ── Job 1: Run all backend tests ──────────────────────────────────────────
   test:
     name: pytest
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     services:
@@ -109,6 +140,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
@@ -120,51 +154,7 @@ jobs:
       - name: Validate Layerbase Redis connection
         env:
           REDIS_URL: ${{ secrets.REDIS_URL }}
-        run: |
-          python - <<'PY'
-          import os
-          from urllib.parse import urlsplit
-
-          import redis
-
-          url = os.environ.get("REDIS_URL", "").strip()
-          try:
-              parsed = urlsplit(url)
-              host = parsed.hostname or ""
-              port = parsed.port
-          except ValueError:
-              raise SystemExit("REDIS_URL is malformed; check the Layerbase connection string.")
-
-          if (
-              parsed.scheme != "rediss"
-              or not host.endswith(".cloud.layerbase.dev")
-              or port != 6379
-              or not parsed.username
-              or not parsed.password
-          ):
-              raise SystemExit(
-                  "REDIS_URL must be a credentialed rediss:// Layerbase host on port 6379."
-              )
-
-          client = redis.Redis.from_url(
-              url,
-              decode_responses=True,
-              socket_connect_timeout=5,
-              socket_timeout=5,
-              ssl_cert_reqs="required",
-              ssl_check_hostname=True,
-          )
-          try:
-              client.ping()
-          except Exception as exc:
-              raise SystemExit(
-                  f"Layerbase Redis PING failed for {host} ({type(exc).__name__})."
-              ) from None
-          finally:
-              client.close()
-
-          print(f"Layerbase Redis PING succeeded for {host}.")
-          PY
+        run: python scripts/check-layerbase-redis.py
 
       - name: Update env vars on Render
         env:
