@@ -85,6 +85,22 @@ def inspect_render_logs() -> None:
         print(f"render_service_lookup_http={service_code}")
         return
 
+    env_code, env_data = request_json(
+        f"https://api.render.com/v1/services/{urllib.parse.quote(service_id, safe='')}/env-vars?limit=100",
+        headers,
+    )
+    if env_code == 200 and isinstance(env_data, list):
+        env_keys = [
+            item.get("envVar", item).get("key")
+            for item in env_data
+            if isinstance(item, dict) and isinstance(item.get("envVar", item), dict)
+        ]
+        related_keys = sorted(key for key in env_keys if isinstance(key, str) and key.startswith("INVIDIOUS_"))
+        print("render_invidious_env_keys=" + json.dumps(related_keys, separators=(",", ":")))
+        print("render_invidious_instances_override_present=" + str("INVIDIOUS_INSTANCES" in env_keys).lower())
+    else:
+        print(f"render_env_vars_http={env_code}")
+
     now = datetime.now(timezone.utc)
     params = urllib.parse.urlencode(
         [
