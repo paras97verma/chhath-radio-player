@@ -189,17 +189,10 @@ function ProgressBar({
 
   const handleSeekStart = () => { isDraggingRef.current = true; };
 
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = Number(e.target.value) / 1000;
-    setProgress(val);
-    setCurrentTime(val * duration);
-  };
-
-  const handleSeekEnd = (e: React.MouseEvent<HTMLInputElement> | React.TouchEvent<HTMLInputElement>) => {
+  const commitSeek = (value: number) => {
+    if (!isDraggingRef.current || !adapter || duration <= 0) return;
     isDraggingRef.current = false;
-    const val = Number((e.target as HTMLInputElement).value) / 1000;
-    const seekTime = val * duration;
-    if (!adapter) return;
+    const seekTime = (Math.max(0, Math.min(1000, value)) / 1000) * duration;
     seekFreezeUntilRef.current = Date.now() + 600;
     seekTo(seekTime);
     if (!isPlaying) {
@@ -207,12 +200,27 @@ function ProgressBar({
     }
   };
 
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = Number(e.currentTarget.value);
+    const val = Math.max(0, Math.min(1000, value)) / 1000;
+    setProgress(val);
+    setCurrentTime(val * duration);
+    // Fallback for browsers that update a range without pointer/touch events.
+    if (!isDraggingRef.current && duration > 0) {
+      isDraggingRef.current = true;
+      commitSeek(value);
+    }
+  };
+
+  const handleSeekKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(e.key)) {
+      isDraggingRef.current = true;
+    }
+  };
+
   const handleSeekKeyUp = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(e.key)) return;
-    isDraggingRef.current = false;
-    seekFreezeUntilRef.current = Date.now() + 600;
-    seekTo((Number(e.currentTarget.value) / 1000) * duration);
-    if (!isPlaying) setTimeout(() => { adapter?.pause(); }, 150);
+    commitSeek(Number(e.currentTarget.value));
   };
 
   return (
@@ -253,12 +261,16 @@ function ProgressBar({
           max={1000}
           value={Math.round(progress * 1000)}
           onChange={handleSeek}
+          onPointerDown={handleSeekStart}
+          onPointerUp={(e) => commitSeek(Number(e.currentTarget.value))}
+          onPointerCancel={(e) => commitSeek(Number(e.currentTarget.value))}
           onMouseDown={handleSeekStart}
+          onMouseUp={(e) => commitSeek(Number(e.currentTarget.value))}
           onTouchStart={handleSeekStart}
-          onMouseUp={handleSeekEnd}
-          onTouchEnd={handleSeekEnd}
+          onTouchEnd={(e) => commitSeek(Number(e.currentTarget.value))}
+          onKeyDown={handleSeekKeyDown}
           onKeyUp={handleSeekKeyUp}
-          className="absolute inset-0 w-full opacity-0 cursor-pointer h-full"
+          className="absolute inset-0 w-full opacity-0 cursor-pointer h-full touch-none"
           aria-label="Seek"
           aria-valuetext={`${fmt(currentTime)} of ${fmt(duration)}`}
         />
@@ -714,7 +726,7 @@ export default function RadioPlayer({
             <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
               <PlayerControls
                 isReady={isReady}
-                currentIndex={currentIndex}
+                hasSongs={queue.length > 0}
                 isPlaying={isPlaying}
                 isBuffering={isBuffering}
                 keyFlash={keyFlash}

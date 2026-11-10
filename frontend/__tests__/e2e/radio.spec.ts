@@ -139,11 +139,11 @@ async function mockPlaybackEnvironment(page: Page): Promise<void> {
         if (testWindow.__radioFirstProgressAt === undefined) {
           testWindow.__radioFirstProgressAt = performance.now();
         }
-        Object.defineProperty(audio, "currentTime", { configurable: true, value: 0.25 });
+        Object.defineProperty(audio, "currentTime", { configurable: true, writable: true, value: 0.25 });
         audio.dispatchEvent(new Event("playing"));
         audio.dispatchEvent(new Event("timeupdate"));
         window.setTimeout(() => {
-          Object.defineProperty(audio, "currentTime", { configurable: true, value: 0.5 });
+          Object.defineProperty(audio, "currentTime", { configurable: true, writable: true, value: 0.5 });
           audio.dispatchEvent(new Event("timeupdate"));
         }, 350);
       }, delay);
@@ -209,6 +209,53 @@ test.describe("Chhath Radio — Public Page", () => {
     await startFromSplash(page);
     await expect(page.getByRole("region", { name: "Radio player" })).toBeVisible();
     await expect(page.getByRole("status").first()).toBeVisible();
+  });
+});
+
+test.describe("Chhath Radio — Mobile player controls", () => {
+  test.use({ viewport: { width: 320, height: 820 }, isMobile: true, hasTouch: true });
+
+  test("seeking and transport controls remain visible and usable", async ({ page }) => {
+    test.setTimeout(30_000);
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await openRadio(page);
+    await startFromSplash(page);
+
+    const player = page.getByRole("region", { name: "Radio player" });
+    await expect(player.getByRole("status")).toContainText("On air", { timeout: 5_000 });
+
+    const previous = player.getByRole("button", { name: "Previous song" });
+    const next = player.getByRole("button", { name: "Next song" });
+    const seek = player.getByRole("slider", { name: "Seek" });
+    await expect(previous).toBeVisible();
+    await expect(previous).toBeEnabled();
+    await expect(next).toBeVisible();
+    await expect(next).toBeEnabled();
+    await expect(seek).toBeVisible();
+
+    await previous.click();
+    await expect(player.getByText("Second E2E Song", { exact: true })).toBeVisible();
+    await next.click();
+    await expect(player.getByText("First E2E Song", { exact: true })).toBeVisible();
+
+    await seek.dispatchEvent("pointerdown", { pointerType: "touch", isPrimary: true });
+    await seek.evaluate((element) => {
+      const input = element as HTMLInputElement;
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(input, "500");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await seek.dispatchEvent("pointerup", { pointerType: "touch", isPrimary: true });
+    await expect(seek).toHaveAttribute("aria-valuetext", "1:30 of 3:00");
+
+    await player.getByRole("button", { name: "Pause", exact: true }).click();
+    const playButton = player.getByRole("button", { name: "Play", exact: true });
+    await expect(playButton).toBeEnabled();
+    await playButton.click();
+    await expect(player.getByRole("button", { name: "Pause", exact: true })).toBeEnabled();
+    expect(pageErrors).toEqual([]);
   });
 });
 

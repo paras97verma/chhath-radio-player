@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import RadioPlayer from "@/components/radio/RadioPlayer";
 import { useRadioStore } from "@/lib/radio-store";
@@ -140,6 +140,44 @@ describe("RadioPlayer recovery and accessible state", () => {
 
     expect(screen.getByRole("button", { name: "Retry song" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Skip this song and play the next song" })).toBeDisabled();
+  });
+
+  it("keeps previous and next song controls available at the start of a multi-song queue", async () => {
+    const user = userEvent.setup();
+    render(<RadioPlayer hasTunedIn />);
+
+    const previous = screen.getByRole("button", { name: "Previous song" });
+    const next = screen.getByRole("button", { name: "Next song" });
+    expect(previous).toBeEnabled();
+    expect(next).toBeEnabled();
+
+    await user.click(previous);
+    await waitFor(() => expect(adapter.currentVideoId).toBe(songs[1].youtube_video_id));
+  });
+
+  it("seeks from the progress bar when a touch pointer is released", () => {
+    render(<RadioPlayer hasTunedIn />);
+    const seek = screen.getByRole("slider", { name: "Seek" });
+
+    fireEvent.pointerDown(seek, { pointerType: "touch" });
+    fireEvent.change(seek, { target: { value: "500" } });
+    fireEvent.pointerUp(seek, { pointerType: "touch" });
+
+    expect(adapter.currentTime).toBe(90);
+    expect(useRadioStore.getState().currentTime).toBe(90);
+  });
+
+  it("plays and pauses from the visible player control", async () => {
+    const user = userEvent.setup();
+    render(<RadioPlayer hasTunedIn />);
+
+    await user.click(screen.getByRole("button", { name: "Play" }));
+    await waitFor(() => expect(adapter.currentVideoId).toBe(songs[0].youtube_video_id));
+    expect(screen.getByRole("button", { name: "Pause" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(useRadioStore.getState().playState).toBe("PAUSED"));
+    expect(screen.getByRole("button", { name: "Play" })).toBeEnabled();
   });
 
   it("keeps player motion constrained when reduced motion is requested", () => {
