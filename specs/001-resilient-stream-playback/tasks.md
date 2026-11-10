@@ -158,7 +158,7 @@ Tasks grouped by independently testable user story. Tests included because the f
 
 ## Phase 13: Full-catalog cache coverage
 
-- [ ] T050 [US2] Audit every enabled catalog song against Layerbase records; rotate bounded resolver attempts across all configured healthy Invidious origins so retries are not pinned to the first two; preserve retries for unresolved IDs and report aggregate per-mode coverage without exposing stream URLs or credentials.
+- [x] T050 [US2] Audit every enabled catalog song against Layerbase records; rotate bounded resolver attempts across all configured healthy Invidious origins so retries are not pinned to the first two; preserve retries for unresolved IDs and report aggregate per-mode coverage without exposing stream URLs or credentials.
 
 ## Dependencies and parallelism
 
