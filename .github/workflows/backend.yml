@@ -4,7 +4,7 @@
 # Triggers on push to main (backend/** changes) or any PR touching backend.
 # Pipeline:
 #   1. Run pytest with real PostgreSQL + Redis services
-#   2. On pass + main branch: update Render env vars + trigger deploy
+#   2. Verify Layerbase Redis, then update Render env vars + trigger deploy
 #   3. Poll backend health endpoint until healthy
 #
 # Required GitHub Secrets (set via scripts/deploy-setup.sh):
@@ -13,7 +13,7 @@
 #   RENDER_DEPLOY_HOOK_URL  — Render deploy hook URL
 #   NEXT_PUBLIC_API_URL     — Backend public URL (used for health check)
 #   DATABASE_URL            — Supabase PostgreSQL connection string
-#   REDIS_URL               — Upstash Redis URL
+#   REDIS_URL               — Layerbase Redis TLS URL (preflighted before deploy)
 #   SECRET_KEY              — JWT signing secret (min 32 chars)
 #   ADMIN_EMAIL             — First admin account email
 #   ADMIN_PASSWORD          — First admin account password
@@ -36,6 +36,9 @@ on:
 
 env:
   PYTHON_VERSION: '3.12'
+
+permissions:
+  contents: read
 
 jobs:
   # ── Job 1: Run all backend tests ──────────────────────────────────────────
@@ -98,7 +101,7 @@ jobs:
         working-directory: backend
         run: pytest -x -q --tb=short
 
-  # ── Job 2: Deploy to Render (main branch only, after tests pass) ──────────
+  # ── Job 2: Deploy backend to Render with the provisioned Layerbase Redis ──
   deploy:
     name: Deploy to Render
     needs: test
@@ -106,38 +109,127 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Update env vars on Render
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Redis client
+        run: pip install --disable-pip-version-check --no-input redis==5.0.4
+
+      - name: Validate Layerbase Redis connection
+        env:
+          REDIS_URL: ${{ secrets.REDIS_URL }}
         run: |
-          echo "Updating environment variables on Render service ${{ secrets.RENDER_SERVICE_ID }}..."
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X PUT \
-            "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/env-vars" \
-            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-            -H "Content-Type: application/json" \
-            -d '[
-              {"key":"DATABASE_URL","value":"${{ secrets.DATABASE_URL }}"},
-              {"key":"REDIS_URL","value":"${{ secrets.REDIS_URL }}"},
-              {"key":"SECRET_KEY","value":"${{ secrets.SECRET_KEY }}"},
-              {"key":"ADMIN_EMAIL","value":"${{ secrets.ADMIN_EMAIL }}"},
-              {"key":"ADMIN_PASSWORD","value":"${{ secrets.ADMIN_PASSWORD }}"},
+          python - <<'PY'
+          import os
+          from urllib.parse import urlsplit
+
+          import redis
+
+          url = os.environ.get("REDIS_URL", "").strip()
+          try:
+              parsed = urlsplit(url)
+              host = parsed.hostname or ""
+              port = parsed.port
+          except ValueError:
+              raise SystemExit("REDIS_URL is malformed; check the Layerbase connection string.")
+
+          if (
+              parsed.scheme != "rediss"
+              or not host.endswith(".cloud.layerbase.dev")
+              or port != 6379
+              or not parsed.username
+              or not parsed.password
+          ):
+              raise SystemExit(
+                  "REDIS_URL must be a credentialed rediss:// Layerbase host on port 6379."
+              )
+
+          client = redis.Redis.from_url(
+              url,
+              decode_responses=True,
+              socket_connect_timeout=5,
+              socket_timeout=5,
+              ssl_cert_reqs="required",
+              ssl_check_hostname=True,
+          )
+          try:
+              client.ping()
+          except Exception as exc:
+              raise SystemExit(
+                  f"Layerbase Redis PING failed for {host} ({type(exc).__name__})."
+              ) from None
+          finally:
+              client.close()
+
+          print(f"Layerbase Redis PING succeeded for {host}.")
+          PY
+
+      - name: Update env vars on Render
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          CALENDARIFIC_API_KEY: ${{ secrets.CALENDARIFIC_API_KEY }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+        run: |
+          set -euo pipefail
+          : "${RENDER_API_KEY:?Missing RENDER_API_KEY}"
+          : "${RENDER_SERVICE_ID:?Missing RENDER_SERVICE_ID}"
+          : "${DATABASE_URL:?Missing DATABASE_URL}"
+          : "${REDIS_URL:?Missing REDIS_URL}"
+          : "${SECRET_KEY:?Missing SECRET_KEY}"
+          : "${ADMIN_EMAIL:?Missing ADMIN_EMAIL}"
+          : "${ADMIN_PASSWORD:?Missing ADMIN_PASSWORD}"
+          echo "Updating environment variables on Render service ${RENDER_SERVICE_ID}..."
+          payload=$(jq -n \
+            --arg database_url "$DATABASE_URL" \
+            --arg redis_url "$REDIS_URL" \
+            --arg secret_key "$SECRET_KEY" \
+            --arg admin_email "$ADMIN_EMAIL" \
+            --arg admin_password "$ADMIN_PASSWORD" \
+            --arg calendarific_api_key "$CALENDARIFIC_API_KEY" \
+            --arg cors_origins "$CORS_ORIGINS" \
+            '[
+              {"key":"DATABASE_URL","value":$database_url},
+              {"key":"REDIS_URL","value":$redis_url},
+              {"key":"SECRET_KEY","value":$secret_key},
+              {"key":"ADMIN_EMAIL","value":$admin_email},
+              {"key":"ADMIN_PASSWORD","value":$admin_password},
               {"key":"ALGORITHM","value":"HS256"},
               {"key":"ACCESS_TOKEN_EXPIRE_MINUTES","value":"1440"},
               {"key":"WEB_CONCURRENCY","value":"1"},
               {"key":"LOG_LEVEL","value":"info"},
-              {"key":"CALENDARIFIC_API_KEY","value":"${{ secrets.CALENDARIFIC_API_KEY }}"},
-              {"key":"CORS_ORIGINS","value":"${{ secrets.CORS_ORIGINS }}"}
+              {"key":"CALENDARIFIC_API_KEY","value":$calendarific_api_key},
+              {"key":"CORS_ORIGINS","value":$cors_origins}
             ]')
+          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -X PUT \
+            "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
           echo "Render env-vars update: HTTP $HTTP_CODE"
           if [ "$HTTP_CODE" != "200" ]; then
-            echo "WARNING: Render env-vars update returned HTTP $HTTP_CODE (may still deploy with existing vars)"
+            echo "ERROR: Render env-vars update returned HTTP $HTTP_CODE; refusing to deploy with stale configuration."
+            exit 1
           fi
 
       - name: Trigger Render deploy
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |
+          set -euo pipefail
+          : "${RENDER_DEPLOY_HOOK_URL:?Missing RENDER_DEPLOY_HOOK_URL}"
           echo "Triggering Render deploy..."
-          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
-            -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
-          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --connect-timeout 10 --max-time 30 \
+            -X POST "$RENDER_DEPLOY_HOOK_URL" || true)
           echo "Render deploy hook: HTTP $HTTP_STATUS"
           if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "201" ]; then
             echo "ERROR: Render deploy hook returned HTTP $HTTP_STATUS"
@@ -146,8 +238,9 @@ jobs:
           echo "✓ Render deploy triggered"
 
       - name: Wait for backend health check
+        env:
+          HEALTH_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}/api/health
         run: |
-          HEALTH_URL="${{ secrets.NEXT_PUBLIC_API_URL }}/api/health"
           echo "Polling $HEALTH_URL (Render may take 2-5 min on first deploy)..."
           MAX_ATTEMPTS=20
           ATTEMPT=0
@@ -161,5 +254,5 @@ jobs:
             fi
             sleep 30
           done
-          echo "WARNING: Health check timed out — deploy may still be in progress on Render"
-          exit 0
+          echo "ERROR: Backend health check timed out after $MAX_ATTEMPTS attempts."
+          exit 1

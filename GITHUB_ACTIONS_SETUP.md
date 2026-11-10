@@ -74,16 +74,15 @@ to find them.
    ```
 6. Replace `[YOUR-PASSWORD]` with your actual database password
 
-### 1b. Upstash (REDIS_URL)
+### 1b. Layerbase Redis (REDIS_URL)
 
-1. Go to https://console.upstash.com → sign in → open your database
-2. Click **Details** tab
-3. Scroll to **Connect** section
-4. Copy the **UPSTASH_REDIS_URL** value
-5. It looks like:
+1. Go to https://layerbase.com/cloud and open the existing Redis database
+2. Open **Connect** and copy its TLS connection string
+3. It should use `rediss://` and port `6379`, for example:
    ```
-   rediss://default:abc123@global-xyz.upstash.io:6379
+   rediss://default:password@your-database.cloud.layerbase.dev:6379
    ```
+4. Treat the full URL as a password; it contains the Redis credential.
 
 ### 1c. Secret key (SECRET_KEY)
 
@@ -161,17 +160,19 @@ Add ALL of these secrets (name must match exactly):
 | Secret Name | Value | Where from |
 |---|---|---|
 | `DATABASE_URL` | `postgresql://postgres.xxx:pass@...supabase.com:6543/postgres` | Supabase → Settings → Database → Connection Pooling |
-| `REDIS_URL` | `rediss://default:xxx@global-xxx.upstash.io:6379` | Upstash → Database → Details → Connect |
+| `REDIS_URL` | `rediss://default:xxx@your-database.cloud.layerbase.dev:6379` | Layerbase → Redis database → Connect |
 | `SECRET_KEY` | 64-char hex string | `openssl rand -hex 32` |
 | `ADMIN_EMAIL` | your-admin@email.com | Your choice |
 | `ADMIN_PASSWORD` | your-strong-password | Your choice (min 12 chars) |
-| `CALENDARIFIC_API_KEY` | `p3QeCCICWhjf2SZ3WbiMUKLyQs5coaYa` | https://calendarific.com/account |
+| `CALENDARIFIC_API_KEY` | Your Calendarific API key | https://calendarific.com/account |
 | `CORS_ORIGINS` | `https://chhathradio.vercel.app,https://chhathradio.com` | Your frontend URLs (comma-separated) |
 | `RENDER_API_KEY` | `rnd_xxx...` | Render → Account Settings → API Keys |
 | `RENDER_SERVICE_ID` | `srv-xxx...` | Render dashboard URL |
 | `RENDER_DEPLOY_HOOK_URL` | `https://api.render.com/deploy/srv-xxx?key=yyy` | Render → Service → Settings → Deploy Hook |
 | `NEXT_PUBLIC_API_URL` | `https://chhath-radio-api.onrender.com` | Your Render service URL |
 | `NEXT_PUBLIC_SITE_URL` | `https://chhathradio.vercel.app` | Your Vercel project URL |
+
+`LAYERBASE_API_KEY` is not required for this deployment workflow. It is a Layerbase management API key; the app and workflow use the provisioned database's `REDIS_URL` instead.
 | `VERCEL_TOKEN` | `xxx...` | Vercel → Account → Tokens |
 | `VERCEL_ORG_ID` | `team_AuhpknoTCLb6DXlcGwyHnDQ` | Decoded from `frontend/.env.local` VERCEL_OIDC_TOKEN |
 | `VERCEL_PROJECT_ID` | `prj_FYjmWULkhHQY6IX6hgvB7IVNqCmU` | Decoded from `frontend/.env.local` VERCEL_OIDC_TOKEN |
@@ -194,11 +195,11 @@ The GitHub Actions pipeline updates Render env vars on every deploy, but for the
 | Key | Value | Notes |
 |---|---|---|
 | `DATABASE_URL` | Your Supabase URL | From Supabase → Settings → Database → Connection Pooling |
-| `REDIS_URL` | Your Upstash URL | From Upstash → Database → Details → Connect |
+| `REDIS_URL` | Your Layerbase TLS URL | From Layerbase → Redis database → Connect |
 | `SECRET_KEY` | Your generated secret key | `openssl rand -hex 32` |
 | `ADMIN_EMAIL` | Your admin email | Used to create the admin account |
 | `ADMIN_PASSWORD` | Your admin password | Min 12 chars |
-| `CALENDARIFIC_API_KEY` | `p3QeCCICWhjf2SZ3WbiMUKLyQs5coaYa` | For Chhath Puja dates API |
+| `CALENDARIFIC_API_KEY` | Your Calendarific API key | For Chhath Puja dates API |
 | `CORS_ORIGINS` | `https://chhathradio.vercel.app,https://chhathradio.com` | Comma-separated list of your frontend URLs |
 | `ALGORITHM` | `HS256` | JWT algorithm — do not change |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `1440` | 24 hours |
