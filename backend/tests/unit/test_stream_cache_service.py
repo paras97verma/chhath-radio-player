@@ -383,6 +383,88 @@ class FakeResolverTransport:
         return _FakeHTTPResponse(reply, request_url, lambda: self._finish(origin))
 
 
+class FakeOriginHealthRedis:
+    """Small Redis fake for resolver health and distributed-origin tests."""
+
+    def __init__(self):
+        self.hashes = {}
+        self.expirations = {}
+
+    def hget(self, key, field):
+        return self.hashes.get(key, {}).get(field)
+
+    def hset(self, key, field=None, value=None, mapping=None):
+        target = self.hashes.setdefault(key, {})
+        items = mapping if mapping is not None else {field: value}
+        added = 0
+        for item_key, item_value in items.items():
+            added += item_key not in target
+            target[item_key] = str(item_value)
+        return added
+
+    def hdel(self, key, *fields):
+        target = self.hashes.setdefault(key, {})
+        removed = 0
+        for field in fields:
+            removed += field in target
+            target.pop(field, None)
+        return removed
+
+    def hincrby(self, key, field, amount):
+        target = self.hashes.setdefault(key, {})
+        target[field] = str(int(target.get(field, 0)) + int(amount))
+        return int(target[field])
+
+    def expire(self, key, seconds):
+        self.expirations[key] = seconds
+        return True
+
+    def delete(self, *keys):
+        for key in keys:
+            self.hashes.pop(key, None)
+            self.expirations.pop(key, None)
+        return len(keys)
+
+    def pipeline(self):
+        return FakeOriginHealthPipeline(self)
+
+    def eval(self, script, _numkeys, *args):
+        if script == cache_module.ORIGIN_LIMIT_ACQUIRE_LUA:
+            return [1, 0]
+        if script == cache_module.ORIGIN_LIMIT_RELEASE_LUA:
+            return 1
+        raise AssertionError("Unexpected Redis script in resolver test")
+
+
+class FakeOriginHealthPipeline:
+    def __init__(self, redis):
+        self.redis = redis
+        self.commands = []
+
+    def hincrby(self, *args):
+        self.commands.append((self.redis.hincrby, args))
+        return self
+
+    def hset(self, *args, **kwargs):
+        self.commands.append((self.redis.hset, args, kwargs))
+        return self
+
+    def hdel(self, *args):
+        self.commands.append((self.redis.hdel, args))
+        return self
+
+    def expire(self, *args):
+        self.commands.append((self.redis.expire, args))
+        return self
+
+    def execute(self):
+        results = []
+        for command in self.commands:
+            method, args, *kwargs = command
+            results.append(method(*args, **(kwargs[0] if kwargs else {})))
+        return results
+
+
 def make_source_candidate(
     mode, now, *, expires_at=None, resolved_at=None, refresh_at=None,
     video_id="fixture-video", url=None,
@@ -1098,6 +1180,73 @@ class TestStreamCacheService:
 
         assert len(transport.requests) == 2
         assert clock.time() - now <= 5.0
+
+    def test_one_video_upstream_failure_does_not_cool_origin_for_next_song(self, monkeypatch):
+        now = 1_700_000_000.0
+        origin = "https://origin-health.test"
+        instance = cache_module.InvidiousInstance(
+            name="origin-health.test",
+            origin=origin,
+            requests_per_second=1000,
+            max_concurrency=1,
+        )
+        failed_id = "video-with-companion-timeout"
+        working_id = "next-catalog-song"
+        failed_url = f"{origin}/api/v1/videos/{failed_id}?fields=title,adaptiveFormats,formatStreams"
+        working_url = f"{origin}/api/v1/videos/{working_id}?fields=title,adaptiveFormats,formatStreams"
+        working_body = json.dumps({
+            "title": "Working catalog song",
+            "adaptiveFormats": [{
+                "itag": 140,
+                "type": 'audio/mp4; codecs="mp4a.40.2"',
+                "url": f"https://media.test/audio?expire={int(now + 7200)}",
+                "bitrate": 128000,
+            }],
+        }).encode()
+        clock = FakeResolverClock(now)
+        transport = FakeResolverTransport(
+            clock,
+            {
+                failed_url: FakeOriginReply(status=503),
+                working_url: FakeOriginReply(body=working_body),
+            },
+            {origin: {"requests_per_second": 1000, "max_concurrency": 1}},
+        )
+        redis = FakeOriginHealthRedis()
+        monkeypatch.setattr(cache_module, "INVIDIOUS_REGISTRY", (instance,))
+        monkeypatch.setattr(cache_module, "_origin_limiters", {})
+        monkeypatch.setattr(cache_module.time, "time", clock.time)
+        monkeypatch.setattr(cache_module.time, "monotonic", clock.monotonic)
+        monkeypatch.setattr(cache_module.urllib.request, "urlopen", transport.urlopen)
+        monkeypatch.setattr(cache_module, "_get_redis", lambda: redis)
+
+        assert StreamCacheService._extract_upstream(failed_id) is None
+        recovered = StreamCacheService._extract_upstream(working_id)
+
+        assert recovered is not None
+        assert [request["url"] for request in transport.requests] == [failed_url, working_url]
+        assert redis.hget(f"{cache_module.HEALTH_PREFIX}{instance.name}", "cooldown_until") is None
+
+    def test_origin_cooldown_requires_repeated_systemic_failures_and_success_clears_it(self):
+        name = "repeated-failure-origin.test"
+        health_key = f"{cache_module.HEALTH_PREFIX}{name}"
+        failure_key = f"{cache_module.ORIGIN_FAILURE_PREFIX}{name}"
+        redis = FakeOriginHealthRedis()
+
+        for _ in range(cache_module.ORIGIN_FAILURE_THRESHOLD - 1):
+            StreamCacheService._record_failure(name, redis, origin_level_failure=True)
+
+        assert redis.hget(health_key, "cooldown_until") is None
+
+        StreamCacheService._record_failure(name, redis, origin_level_failure=True)
+
+        assert float(redis.hget(health_key, "cooldown_until")) > time.time()
+        assert redis.expirations[failure_key] == cache_module.ORIGIN_FAILURE_WINDOW_SECONDS
+
+        StreamCacheService._record_success(name, 12, redis)
+
+        assert redis.hget(health_key, "cooldown_until") is None
+        assert failure_key not in redis.hashes
 
     def test_origin_limiter_enforces_configured_rate_and_concurrency(self):
         instance = cache_module.InvidiousInstance(
