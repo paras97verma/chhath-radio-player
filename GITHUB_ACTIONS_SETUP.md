@@ -35,7 +35,7 @@ to automatically deploy your backend (Render), frontend (Vercel), and database
 Push to main (backend/** files changed)
   └── GitHub Actions: backend.yml
         1. Runs pytest (with real Postgres + Redis in CI)
-        2. Updates env vars on Render via API
+        2. Updates managed env vars on Render individually, preserving other service settings
         3. Triggers Render deploy hook → Render builds & deploys Docker image
         4. Polls /api/health until backend is live
 
@@ -205,6 +205,12 @@ The GitHub Actions pipeline updates Render env vars on every deploy, but for the
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `1440` | 24 hours |
 | `WEB_CONCURRENCY` | `1` | 1 for Render free tier (512MB RAM) |
 | `LOG_LEVEL` | `info` | `debug` for troubleshooting |
+
+Render deploys update only the managed keys above. Other service variables are
+preserved. To supply a private Invidious API origin, set `INVIDIOUS_INSTANCES`
+directly on Render or as an optional GitHub Actions secret; multiple HTTPS
+origins can be comma-separated. Optional rate settings are
+`INVIDIOUS_REQUESTS_PER_SECOND` and `INVIDIOUS_MAX_CONCURRENCY`.
 
 > **CORS**: Add every domain your frontend is served from. If you add a custom domain
 > later, update `CORS_ORIGINS` and redeploy the backend.

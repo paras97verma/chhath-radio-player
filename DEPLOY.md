@@ -134,7 +134,7 @@ push to main (backend/**)
   └── test (pytest + real PostgreSQL + Redis)
         └── [pass] deploy to Render
               ├── Verify the provisioned Layerbase Redis endpoint with TLS + PING
-              ├── Update Render env vars via API with the Layerbase REDIS_URL
+              ├── Update managed Render env vars individually, preserving service-specific settings
               ├── Trigger Render deploy hook
               └── Poll /api/health until healthy
 ```
@@ -202,6 +202,8 @@ Key variables:
 | `WEB_CONCURRENCY` | Gunicorn workers (1 for Render free tier) |
 
 The backend stays on Render. The Redis database is provisioned separately on Layerbase; the backend deployment workflow only validates the existing `REDIS_URL` and configures Render to use it. `LAYERBASE_API_KEY` is a management API credential and is not needed by the Redis client or this workflow.
+
+Render deployment updates use the per-variable API endpoint, so service-specific values such as `INVIDIOUS_INSTANCES` remain in place. Optional GitHub secrets named `INVIDIOUS_INSTANCES`, `INVIDIOUS_REQUESTS_PER_SECOND`, and `INVIDIOUS_MAX_CONCURRENCY` can override those values during deploy; if unset, the workflow leaves the Render-side values untouched.
 
 ### Frontend (`frontend/.env.local`)
 

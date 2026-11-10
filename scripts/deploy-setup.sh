@@ -511,46 +511,24 @@ set_render_env_vars() {
     return
   fi
 
-  info "Updating env vars on Render service $RENDER_SERVICE_ID..."
+  info "Updating managed env vars on Render service $RENDER_SERVICE_ID..."
 
-  local payload
-  payload=$(
+  if RENDER_API_KEY="$RENDER_API_KEY" \
+    RENDER_SERVICE_ID="$RENDER_SERVICE_ID" \
     DATABASE_URL="$DATABASE_URL" \
     REDIS_URL="$REDIS_URL" \
     SECRET_KEY="$SECRET_KEY" \
     ADMIN_EMAIL="$ADMIN_EMAIL" \
     ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-    python3 - <<'PY'
-import json
-import os
-
-values = [
-    ("DATABASE_URL", os.environ["DATABASE_URL"]),
-    ("REDIS_URL", os.environ["REDIS_URL"]),
-    ("SECRET_KEY", os.environ["SECRET_KEY"]),
-    ("ADMIN_EMAIL", os.environ["ADMIN_EMAIL"]),
-    ("ADMIN_PASSWORD", os.environ["ADMIN_PASSWORD"]),
-    ("ALGORITHM", "HS256"),
-    ("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"),
-    ("WEB_CONCURRENCY", "1"),
-    ("LOG_LEVEL", "info"),
-]
-print(json.dumps([{"key": key, "value": value} for key, value in values]))
-PY
-  )
-
-  local HTTP_CODE
-  HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
-    -X PUT \
-    "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars" \
-    -H "Authorization: Bearer $RENDER_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "$payload")
-
-  if [ "$HTTP_CODE" = "200" ]; then
-    success "Render env vars updated (HTTP $HTTP_CODE)"
+    CALENDARIFIC_API_KEY="${CALENDARIFIC_API_KEY:-}" \
+    CORS_ORIGINS="${CORS_ORIGINS:-}" \
+    INVIDIOUS_INSTANCES="${INVIDIOUS_INSTANCES:-}" \
+    INVIDIOUS_REQUESTS_PER_SECOND="${INVIDIOUS_REQUESTS_PER_SECOND:-}" \
+    INVIDIOUS_MAX_CONCURRENCY="${INVIDIOUS_MAX_CONCURRENCY:-}" \
+    python3 "$SCRIPT_DIR/update-render-env.py"; then
+    success "Managed Render env vars updated; other service variables were preserved"
   else
-    error "Render env vars update returned HTTP $HTTP_CODE — refusing to continue with stale configuration"
+    error "Render env update failed — refusing to continue with stale configuration"
     return 1
   fi
 }

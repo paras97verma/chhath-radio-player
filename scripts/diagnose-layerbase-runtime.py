@@ -63,6 +63,107 @@ def inspect_catalog_status() -> None:
         print("production_catalog_counters=" + json.dumps(numeric_summary(data), separators=(",", ":")))
 
 
+def inspect_layerbase_cache() -> None:
+    api_base = os.environ.get("NEXT_PUBLIC_API_URL", "").strip().rstrip("/")
+    redis_url = os.environ.get("REDIS_URL", "").strip()
+    if not api_base or not redis_url:
+        print("layerbase_stream_cache_probe=skipped (API URL or Redis URL unavailable)")
+        return
+
+    headers = {"Accept": "application/json", "User-Agent": "chhath-radio-runtime-diagnostic"}
+    songs_code, songs_data = request_json(f"{api_base}/api/songs", headers)
+    songs = songs_data if isinstance(songs_data, list) else songs_data.get("songs", []) if isinstance(songs_data, dict) else []
+    song = next(
+        (
+            item for item in songs
+            if isinstance(item, dict) and item.get("enabled") and item.get("youtube_video_id")
+        ),
+        None,
+    )
+    if songs_code != 200 or song is None:
+        print(f"layerbase_stream_cache_probe=skipped (songs HTTP {songs_code} or no enabled video)")
+        return
+
+    import redis
+
+    video_id = str(song["youtube_video_id"])
+    key = f"chhath:stream:{video_id}"
+    client = redis.Redis.from_url(
+        redis_url,
+        decode_responses=True,
+        socket_connect_timeout=15,
+        socket_timeout=15,
+        ssl_cert_reqs="required",
+        ssl_check_hostname=True,
+    )
+    try:
+        raw_record = client.get(key)
+        stream_status = None
+        if raw_record is None:
+            stream_url = f"{api_base}/api/stream?v={urllib.parse.quote(video_id, safe='')}"
+            stream_status, _stream_data = request_json(stream_url, headers)
+            print(f"production_sample_stream_http={stream_status}")
+            raw_record = client.get(key)
+
+        if raw_record is None:
+            print("layerbase_stream_cache_record_present=false")
+            return
+
+        try:
+            record = json.loads(raw_record)
+        except (TypeError, ValueError):
+            print("layerbase_stream_cache_record_present=true valid_record=false")
+            return
+
+        if not isinstance(record, dict):
+            print("layerbase_stream_cache_record_present=true valid_record=false")
+            return
+
+        sources = record.get("sources")
+        sources = sources if isinstance(sources, list) else []
+        source_modes = sorted({
+            source.get("mode")
+            for source in sources
+            if isinstance(source, dict) and source.get("mode") in {"direct", "proxy"}
+        })
+        try:
+            generation = int(record.get("generation", 0))
+        except (TypeError, ValueError):
+            generation = 0
+        ttl = client.ttl(key)
+        valid_record = (
+            record.get("schema_version") == 1
+            and generation > 0
+            and ttl > 0
+            and len(source_modes) > 0
+            and all(
+                isinstance(source, dict)
+                and source.get("provider") == "invidious"
+                and source.get("mode") in {"direct", "proxy"}
+                and isinstance(source.get("url"), str)
+                for source in sources
+            )
+        )
+        print(
+            "layerbase_stream_cache_record="
+            + json.dumps(
+                {
+                    "present": True,
+                    "valid": valid_record,
+                    "schema_version": record.get("schema_version"),
+                    "generation": generation,
+                    "source_modes": source_modes,
+                    "ttl_seconds": ttl,
+                },
+                separators=(",", ":"),
+            )
+        )
+    except Exception as exc:
+        print(f"layerbase_stream_cache_probe_error={type(exc).__name__}")
+    finally:
+        client.close()
+
+
 def inspect_render_logs() -> None:
     api_key = os.environ.get("RENDER_API_KEY", "")
     service_id = os.environ.get("RENDER_SERVICE_ID", "")
@@ -136,4 +237,5 @@ def inspect_render_logs() -> None:
 
 if __name__ == "__main__":
     inspect_catalog_status()
+    inspect_layerbase_cache()
     inspect_render_logs()

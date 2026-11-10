@@ -30,12 +30,16 @@ on:
       - 'backend/**'
       - '.github/workflows/backend.yml'
       - 'scripts/check-layerbase-redis.py'
+      - 'scripts/diagnose-layerbase-runtime.py'
+      - 'scripts/update-render-env.py'
   pull_request:
     branches: [main]
     paths:
       - 'backend/**'
       - '.github/workflows/backend.yml'
       - 'scripts/check-layerbase-redis.py'
+      - 'scripts/diagnose-layerbase-runtime.py'
+      - 'scripts/update-render-env.py'
   workflow_dispatch:
     inputs:
       reason:
@@ -77,6 +81,7 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: python scripts/diagnose-layerbase-runtime.py
@@ -176,48 +181,10 @@ jobs:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           CALENDARIFIC_API_KEY: ${{ secrets.CALENDARIFIC_API_KEY }}
           CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
-        run: |
-          set -euo pipefail
-          : "${RENDER_API_KEY:?Missing RENDER_API_KEY}"
-          : "${RENDER_SERVICE_ID:?Missing RENDER_SERVICE_ID}"
-          : "${DATABASE_URL:?Missing DATABASE_URL}"
-          : "${REDIS_URL:?Missing REDIS_URL}"
-          : "${SECRET_KEY:?Missing SECRET_KEY}"
-          : "${ADMIN_EMAIL:?Missing ADMIN_EMAIL}"
-          : "${ADMIN_PASSWORD:?Missing ADMIN_PASSWORD}"
-          echo "Updating environment variables on Render service ${RENDER_SERVICE_ID}..."
-          payload=$(jq -n \
-            --arg database_url "$DATABASE_URL" \
-            --arg redis_url "$REDIS_URL" \
-            --arg secret_key "$SECRET_KEY" \
-            --arg admin_email "$ADMIN_EMAIL" \
-            --arg admin_password "$ADMIN_PASSWORD" \
-            --arg calendarific_api_key "$CALENDARIFIC_API_KEY" \
-            --arg cors_origins "$CORS_ORIGINS" \
-            '[
-              {"key":"DATABASE_URL","value":$database_url},
-              {"key":"REDIS_URL","value":$redis_url},
-              {"key":"SECRET_KEY","value":$secret_key},
-              {"key":"ADMIN_EMAIL","value":$admin_email},
-              {"key":"ADMIN_PASSWORD","value":$admin_password},
-              {"key":"ALGORITHM","value":"HS256"},
-              {"key":"ACCESS_TOKEN_EXPIRE_MINUTES","value":"1440"},
-              {"key":"WEB_CONCURRENCY","value":"1"},
-              {"key":"LOG_LEVEL","value":"info"},
-              {"key":"CALENDARIFIC_API_KEY","value":$calendarific_api_key},
-              {"key":"CORS_ORIGINS","value":$cors_origins}
-            ]')
-          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
-            -X PUT \
-            "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars" \
-            -H "Authorization: Bearer ${RENDER_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "$payload")
-          echo "Render env-vars update: HTTP $HTTP_CODE"
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "ERROR: Render env-vars update returned HTTP $HTTP_CODE; refusing to deploy with stale configuration."
-            exit 1
-          fi
+          INVIDIOUS_INSTANCES: ${{ secrets.INVIDIOUS_INSTANCES }}
+          INVIDIOUS_REQUESTS_PER_SECOND: ${{ secrets.INVIDIOUS_REQUESTS_PER_SECOND }}
+          INVIDIOUS_MAX_CONCURRENCY: ${{ secrets.INVIDIOUS_MAX_CONCURRENCY }}
+        run: python scripts/update-render-env.py
 
       - name: Trigger Render deploy
         env:
