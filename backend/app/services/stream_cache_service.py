@@ -190,6 +190,27 @@ def _load_invidious_registry() -> tuple[InvidiousInstance, ...]:
 
 
 INVIDIOUS_REGISTRY = _load_invidious_registry()
+_origin_rotation_lock = Lock()
+_origin_rotation_cursor = 0
+
+
+def _rotated_invidious_instances() -> tuple[InvidiousInstance, ...]:
+    """Return a thread-safe round-robin view so retries cover every configured origin."""
+    global _origin_rotation_cursor
+    registry = INVIDIOUS_REGISTRY
+    if not registry:
+        return ()
+
+    with _origin_rotation_lock:
+        start = _origin_rotation_cursor % len(registry)
+        _origin_rotation_cursor = (
+            start + min(MAX_ORIGINS_PER_RESOLUTION, len(registry))
+        ) % len(registry)
+
+    return tuple(
+        registry[(start + offset) % len(registry)]
+        for offset in range(len(registry))
+    )
 
 
 class _OriginRequestLimiter:
@@ -1267,7 +1288,10 @@ class StreamCacheService:
         )
         fields = "title,adaptiveFormats,formatStreams"
 
-        for instance in INVIDIOUS_REGISTRY[:MAX_ORIGINS_PER_RESOLUTION]:
+        attempted_origins = 0
+        for instance in _rotated_invidious_instances():
+            if attempted_origins >= MAX_ORIGINS_PER_RESOLUTION:
+                break
             if time.monotonic() >= deadline:
                 break
 
@@ -1280,6 +1304,9 @@ class StreamCacheService:
                 except Exception:
                     pass
 
+            # Cooled origins are skipped without using this resolution's bounded
+            # request allowance; keep walking so a healthy later mirror can fill it.
+            attempted_origins += 1
             endpoint = (
                 f"{instance.origin}/api/v1/videos/"
                 f"{urllib.parse.quote(video_id, safe='')}?fields={fields}"

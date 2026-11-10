@@ -1,6 +1,7 @@
 """Read production cache readiness and recent Render logs without exposing secrets."""
 
 import json
+import math
 import os
 import re
 import urllib.error
@@ -63,103 +64,224 @@ def inspect_catalog_status() -> None:
         print("production_catalog_counters=" + json.dumps(numeric_summary(data), separators=(",", ":")))
 
 
+def _usable_source(source: Any, mode: str, now: float) -> tuple[bool, bool]:
+    """Return (currently serveable, outside the proactive refresh window)."""
+    if not isinstance(source, dict):
+        return False, False
+    if source.get("mode") != mode or source.get("provider") != "invidious":
+        return False, False
+    if source.get("validation_state") != "validated":
+        return False, False
+
+    url = source.get("url")
+    mime_type = str(source.get("mime_type") or source.get("mimeType") or "")
+    try:
+        url_parts = urllib.parse.urlsplit(url if isinstance(url, str) else "")
+        url_host = url_parts.hostname
+        itag = int(source.get("itag"))
+        refresh_at = float(source.get("refresh_at"))
+        expires_at = source.get("expires_at")
+        expires_at = None if expires_at is None else float(expires_at)
+    except (TypeError, ValueError):
+        return False, False
+
+    valid = (
+        url_parts.scheme == "https"
+        and bool(url_host)
+        and not url_parts.username
+        and not url_parts.password
+        and itag > 0
+        and mime_type.split(";", 1)[0].strip().lower() in {"audio/mp4", "audio/webm"}
+        and math.isfinite(refresh_at)
+        and refresh_at > now
+        and (expires_at is None or (math.isfinite(expires_at) and expires_at > now))
+    )
+    return valid, valid and refresh_at > now + 900
+
+
 def inspect_layerbase_cache() -> None:
     api_base = os.environ.get("NEXT_PUBLIC_API_URL", "").strip().rstrip("/")
     redis_url = os.environ.get("REDIS_URL", "").strip()
     if not api_base or not redis_url:
         print("layerbase_stream_cache_probe=skipped (API URL or Redis URL unavailable)")
         return
+    cache_label = "layerbase" if urllib.parse.urlsplit(redis_url).scheme == "rediss" else "redis"
 
     headers = {"Accept": "application/json", "User-Agent": "chhath-radio-runtime-diagnostic"}
     songs_code, songs_data = request_json(f"{api_base}/api/songs", headers)
     songs = songs_data if isinstance(songs_data, list) else songs_data.get("songs", []) if isinstance(songs_data, dict) else []
-    song = next(
-        (
-            item for item in songs
-            if isinstance(item, dict) and item.get("enabled") and item.get("youtube_video_id")
-        ),
-        None,
-    )
-    if songs_code != 200 or song is None:
-        print(f"layerbase_stream_cache_probe=skipped (songs HTTP {songs_code} or no enabled video)")
+    if songs_code != 200 or not isinstance(songs, list):
+        print(f"layerbase_catalog_cache_audit=skipped (songs HTTP {songs_code})")
+        return
+
+    enabled_songs = [
+        item for item in songs
+        if isinstance(item, dict) and item.get("enabled", True)
+    ]
+    enabled_ids = [str(item.get("youtube_video_id", "")).strip() for item in enabled_songs]
+    valid_ids = [video_id for video_id in enabled_ids if re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id)]
+    video_ids = list(dict.fromkeys(valid_ids))
+    if not video_ids:
+        print(f"{cache_label}_catalog_cache=" + json.dumps({
+            "enabled_catalog_entries": len(enabled_songs),
+            "catalog_entries_without_valid_video_id": len(enabled_songs),
+            "unique_video_ids": 0,
+            "missing_or_invalid": 0,
+        }, separators=(",", ":")))
         return
 
     import redis
 
-    video_id = str(song["youtube_video_id"])
-    key = f"chhath:stream:{video_id}"
-    client = redis.Redis.from_url(
-        redis_url,
-        decode_responses=True,
-        socket_connect_timeout=15,
-        socket_timeout=15,
-        ssl_cert_reqs="required",
-        ssl_check_hostname=True,
-    )
+    redis_options = {
+        "decode_responses": True,
+        "socket_connect_timeout": 15,
+        "socket_timeout": 15,
+    }
+    if urllib.parse.urlsplit(redis_url).scheme == "rediss":
+        redis_options.update(ssl_cert_reqs="required", ssl_check_hostname=True)
+    client = redis.Redis.from_url(redis_url, **redis_options)
     try:
-        raw_record = client.get(key)
-        stream_status = None
-        if raw_record is None:
-            stream_url = f"{api_base}/api/stream?v={urllib.parse.quote(video_id, safe='')}"
-            stream_status, _stream_data = request_json(stream_url, headers)
-            print(f"production_sample_stream_http={stream_status}")
-            raw_record = client.get(key)
+        pipe = client.pipeline(transaction=False)
+        for video_id in video_ids:
+            pipe.get(f"chhath:stream:{video_id}")
+            pipe.hgetall(f"chhath:stream:fence:{video_id}")
+            pipe.ttl(f"chhath:stream:{video_id}")
+        values = pipe.execute()
 
-        if raw_record is None:
-            print("layerbase_stream_cache_record_present=false")
-            return
+        now = datetime.now(timezone.utc).timestamp()
+        summary = {
+            "enabled_catalog_entries": len(enabled_songs),
+            "catalog_entries_without_valid_video_id": len(enabled_songs) - len(valid_ids),
+            "unique_video_ids": len(video_ids),
+            "duplicate_video_ids": len(valid_ids) - len(video_ids),
+            "cache_keys_present": 0,
+            "fenced_current_records": 0,
+            "direct_servable": 0,
+            "proxy_servable": 0,
+            "direct_fresh": 0,
+            "proxy_fresh": 0,
+            "fully_warm_direct_and_proxy": 0,
+            "partial_or_due": 0,
+            "missing_or_invalid": 0,
+            "malformed_records": 0,
+            "fence_mismatches": 0,
+            "orphan_catalog_stream_keys": 0,
+        }
+        catalog_ids = set(video_ids)
+        missing_ids = []
+        for index, video_id in enumerate(video_ids):
+            raw_record, raw_fence, ttl = values[index * 3:index * 3 + 3]
+            if raw_record is None:
+                summary["missing_or_invalid"] += 1
+                missing_ids.append(video_id)
+                continue
 
-        try:
-            record = json.loads(raw_record)
-        except (TypeError, ValueError):
-            print("layerbase_stream_cache_record_present=true valid_record=false")
-            return
+            summary["cache_keys_present"] += 1
+            try:
+                record = json.loads(raw_record)
+            except (TypeError, ValueError):
+                summary["malformed_records"] += 1
+                summary["missing_or_invalid"] += 1
+                missing_ids.append(video_id)
+                continue
 
-        if not isinstance(record, dict):
-            print("layerbase_stream_cache_record_present=true valid_record=false")
-            return
+            if not isinstance(record, dict):
+                summary["malformed_records"] += 1
+                summary["missing_or_invalid"] += 1
+                missing_ids.append(video_id)
+                continue
 
-        sources = record.get("sources")
-        sources = sources if isinstance(sources, list) else []
-        source_modes = sorted({
-            source.get("mode")
-            for source in sources
-            if isinstance(source, dict) and source.get("mode") in {"direct", "proxy"}
-        })
-        try:
-            generation = int(record.get("generation", 0))
-        except (TypeError, ValueError):
-            generation = 0
-        ttl = client.ttl(key)
-        valid_record = (
-            record.get("schema_version") == 1
-            and generation > 0
-            and ttl > 0
-            and len(source_modes) > 0
-            and all(
-                isinstance(source, dict)
-                and source.get("provider") == "invidious"
-                and source.get("mode") in {"direct", "proxy"}
-                and isinstance(source.get("url"), str)
-                for source in sources
+            try:
+                generation = int(record.get("generation", 0))
+                fence_generation = int(raw_fence.get("generation", 0))
+            except (TypeError, ValueError, AttributeError):
+                generation = fence_generation = 0
+            fence_token = str(raw_fence.get("fence_token", "")) if isinstance(raw_fence, dict) else ""
+            current_record = (
+                record.get("schema_version") == 1
+                and record.get("video_id") == video_id
+                and generation > 0
+                and generation == fence_generation
+                and isinstance(record.get("fence_token"), str)
+                and bool(fence_token)
+                and record.get("fence_token") == fence_token
+                and isinstance(ttl, int)
+                and ttl > 0
             )
-        )
-        print(
-            "layerbase_stream_cache_record="
-            + json.dumps(
-                {
-                    "present": True,
-                    "valid": valid_record,
-                    "schema_version": record.get("schema_version"),
-                    "generation": generation,
-                    "source_modes": source_modes,
-                    "ttl_seconds": ttl,
-                },
-                separators=(",", ":"),
+            if not current_record:
+                summary["fence_mismatches"] += 1
+                summary["missing_or_invalid"] += 1
+                missing_ids.append(video_id)
+                continue
+
+            summary["fenced_current_records"] += 1
+            sources = record.get("sources")
+            sources = sources if isinstance(sources, list) else []
+            by_mode = {}
+            for mode in ("direct", "proxy"):
+                for source in sources:
+                    usable, fresh = _usable_source(source, mode, now)
+                    if usable:
+                        by_mode[mode] = fresh
+                        summary[f"{mode}_servable"] += 1
+                        if fresh:
+                            summary[f"{mode}_fresh"] += 1
+                        break
+
+            if not by_mode:
+                summary["missing_or_invalid"] += 1
+                missing_ids.append(video_id)
+            elif all(by_mode.get(mode) is True for mode in ("direct", "proxy")):
+                summary["fully_warm_direct_and_proxy"] += 1
+            else:
+                summary["partial_or_due"] += 1
+
+        cursor = 0
+        while True:
+            cursor, keys = client.scan(cursor=cursor, match="chhath:stream:*", count=200)
+            for key in keys:
+                suffix = key.removeprefix("chhath:stream:")
+                if re.fullmatch(r"[A-Za-z0-9_-]{11}", suffix) and suffix not in catalog_ids:
+                    summary["orphan_catalog_stream_keys"] += 1
+            if cursor == 0:
+                break
+
+        print(f"{cache_label}_catalog_cache=" + json.dumps(summary, separators=(",", ":")))
+        warm_requested = os.environ.get("WARM_MISSING", "").strip().lower() in {"true", "1", "yes"}
+        if warm_requested and cache_label != "layerbase":
+            print("redis_missing_song_warm_triggers=skipped (local Redis audit only)")
+        elif warm_requested:
+            accepted = 0
+            failed = 0
+            for video_id in missing_ids:
+                warm_url = f"{api_base}/api/stream/cache/flush?{urllib.parse.urlencode({'v': video_id})}"
+                request = urllib.request.Request(
+                    warm_url,
+                    headers={**headers, "Content-Type": "application/json"},
+                    method="POST",
+                )
+                try:
+                    with urllib.request.urlopen(request, timeout=20) as response:
+                        payload = json.load(response)
+                        if (
+                            response.status == 200
+                            and isinstance(payload, dict)
+                            and payload.get("prewarmer_triggered") is True
+                        ):
+                            accepted += 1
+                        else:
+                            failed += 1
+                except Exception:
+                    failed += 1
+            print(
+                f"{cache_label}_missing_song_warm_triggers="
+                + json.dumps(
+                    {"requested": len(missing_ids), "accepted": accepted, "failed": failed},
+                    separators=(",", ":"),
+                )
             )
-        )
     except Exception as exc:
-        print(f"layerbase_stream_cache_probe_error={type(exc).__name__}")
+        print(f"{cache_label}_catalog_cache_audit_error={type(exc).__name__}")
     finally:
         client.close()
 
