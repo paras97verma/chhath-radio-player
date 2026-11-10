@@ -148,7 +148,7 @@ Tasks grouped by independently testable user story. Tests included because the f
 
 ## Phase 11: Managed Redis provider migration
 
-- [x] T048 Migrate Redis runtime and deployment setup fully to Layerbase, verify Redis TLS certificates and hostnames, preflight the configured Layerbase Redis endpoint before deploying the backend, and update provider setup documentation. The existing Layerbase database is provisioned separately; do not provision a new database on every application deployment.
+- [ ] T048 Migrate Redis runtime and deployment setup fully to Layerbase, verify Redis TLS certificates and hostnames, preflight the configured Layerbase Redis endpoint before deploying the backend, and update provider setup documentation. The existing Layerbase database is provisioned separately; do not provision a new database on every application deployment.
 
 ## Dependencies and parallelism
 

@@ -78,9 +78,9 @@ to find them.
 
 1. Go to https://layerbase.com/cloud and open the existing Redis database
 2. Open **Connect** and copy its TLS connection string
-3. It should use `rediss://` and port `6379`, for example:
+3. It should use `rediss://`. Port `6379` can be included or omitted (Redis defaults to it):
    ```
-   rediss://default:password@your-database.cloud.layerbase.dev:6379
+   rediss://default:password@your-database.cloud.layerbase.dev
    ```
 4. Treat the full URL as a password; it contains the Redis credential.
 
@@ -160,7 +160,7 @@ Add ALL of these secrets (name must match exactly):
 | Secret Name | Value | Where from |
 |---|---|---|
 | `DATABASE_URL` | `postgresql://postgres.xxx:pass@...supabase.com:6543/postgres` | Supabase → Settings → Database → Connection Pooling |
-| `REDIS_URL` | `rediss://default:xxx@your-database.cloud.layerbase.dev:6379` | Layerbase → Redis database → Connect |
+| `REDIS_URL` | `rediss://default:xxx@your-database.cloud.layerbase.dev` | Layerbase → Redis database → Connect |
 | `SECRET_KEY` | 64-char hex string | `openssl rand -hex 32` |
 | `ADMIN_EMAIL` | your-admin@email.com | Your choice |
 | `ADMIN_PASSWORD` | your-strong-password | Your choice (min 12 chars) |

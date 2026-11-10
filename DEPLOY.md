@@ -127,7 +127,7 @@ Go to **GitHub → Actions → Database Operations → Run workflow** and select
 
 ### Backend pipeline (`.github/workflows/backend.yml`)
 
-Triggers on push to `main` when `backend/**` changes.
+Triggers on backend changes to `main` and pull requests targeting `main`. Pull requests only run the Layerbase Redis liveness check; only `main` can deploy.
 
 ```
 push to main (backend/**)
