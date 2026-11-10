@@ -135,6 +135,65 @@ describe("Html5AudioAdapter", () => {
     expect(secondaryAudio.getAttribute("playsinline")).toBe("true");
   });
 
+  it("prepares the initial real source off-screen and consumes it on selection", async () => {
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    const videoId = "initial12345";
+    const directUrl = `https://media.example.test/${videoId}.m4a`;
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(canonicalStream(videoId, directUrl, 180));
+
+    primaryAudio = document.createElement("audio");
+    secondaryAudio = document.createElement("audio");
+    vi.spyOn(primaryAudio, "canPlayType").mockReturnValue("probably");
+    vi.spyOn(secondaryAudio, "canPlayType").mockReturnValue("probably");
+    primaryAudio.pause = vi.fn();
+    primaryAudio.load = vi.fn();
+    secondaryAudio.pause = vi.fn();
+    secondaryAudio.load = vi.fn();
+    adapter = new Html5AudioAdapter(primaryAudio, secondaryAudio);
+    await adapter.initialize(null, videoId);
+    await vi.waitFor(() => expect(secondaryAudio.src).toBe(directUrl));
+    expect(secondaryAudio.preload).toBe("auto");
+
+    secondaryAudio.dispatchEvent(new Event("canplay"));
+    const preparedPlay = vi.fn().mockResolvedValue(undefined);
+    const emptyPrimaryPlay = vi.fn().mockResolvedValue(undefined);
+    secondaryAudio.play = preparedPlay;
+    primaryAudio.play = emptyPrimaryPlay;
+
+    await adapter.loadVideo(videoId);
+
+    expect(preparedPlay).toHaveBeenCalledOnce();
+    expect(emptyPrimaryPlay).not.toHaveBeenCalled();
+    expect(adapter.isSongLoaded(videoId)).toBe(true);
+    adapter.destroy();
+  });
+
+  it("does not wait for the initial stream metadata warmup", async () => {
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    const videoId = "warmup12345";
+    const warmup = deferredPromise<AudioStreamInfo>();
+    vi.mocked(fetchInvidiousStream).mockClear();
+    vi.mocked(fetchInvidiousStream).mockReturnValue(warmup.promise);
+
+    primaryAudio = document.createElement("audio");
+    secondaryAudio = document.createElement("audio");
+    vi.spyOn(primaryAudio, "canPlayType").mockReturnValue("probably");
+    vi.spyOn(secondaryAudio, "canPlayType").mockReturnValue("probably");
+    primaryAudio.pause = vi.fn();
+    primaryAudio.load = vi.fn();
+    secondaryAudio.pause = vi.fn();
+    secondaryAudio.load = vi.fn();
+    adapter = new Html5AudioAdapter(primaryAudio, secondaryAudio);
+
+    await adapter.initialize(null, videoId);
+    expect(fetchInvidiousStream).toHaveBeenCalledOnce();
+    expect(secondaryAudio.src).toBe("");
+
+    warmup.resolve(canonicalStream(videoId, `https://media.example.test/${videoId}.m4a`, 180));
+    await vi.waitFor(() => expect(secondaryAudio.src).toContain(videoId));
+    adapter.destroy();
+  });
+
   it("updates volume and mute settings across both audio elements", () => {
     adapter.setVolume(50);
     expect(primaryAudio.volume).toBe(0.5);

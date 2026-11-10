@@ -125,6 +125,66 @@ describe("MediaSession Module", () => {
     }
   });
 
+  it("keeps Android previous/next controls and routes transport and scrubber actions", async () => {
+    const originalUA = navigator.userAgent;
+    const fakeMediaSession = {
+      setActionHandler: vi.fn(),
+      metadata: null,
+      playbackState: "none",
+    };
+    const onPlay = vi.fn();
+    const onPause = vi.fn();
+    const onNext = vi.fn();
+    const onPrev = vi.fn();
+    const onSeekTo = vi.fn();
+    try {
+      Object.defineProperty(navigator, "userAgent", {
+        value: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Mobile",
+        configurable: true,
+      });
+      Object.defineProperty(navigator, "mediaSession", {
+        value: fakeMediaSession,
+        configurable: true,
+        writable: true,
+      });
+
+      registerMediaSessionHandlers({
+        onPlay,
+        onPause,
+        onNext,
+        onPrev,
+        onSeekTo,
+        onSeekBackward: vi.fn(),
+        onSeekForward: vi.fn(),
+      });
+
+      const action = (name: string) =>
+        fakeMediaSession.setActionHandler.mock.calls.find(([registered]) => registered === name)?.[1];
+
+      expect(action("previoustrack")).toEqual(expect.any(Function));
+      expect(action("nexttrack")).toEqual(expect.any(Function));
+      expect(action("seekto")).toEqual(expect.any(Function));
+      expect(action("seekbackward")).toBeNull();
+      expect(action("seekforward")).toBeNull();
+
+      await action("play")?.({});
+      await action("pause")?.({});
+      await action("previoustrack")?.({});
+      await action("nexttrack")?.({});
+      action("seekto")?.({ seekTime: 42 });
+      expect(onPlay).toHaveBeenCalledOnce();
+      expect(onPause).toHaveBeenCalledOnce();
+      expect(onPrev).toHaveBeenCalledOnce();
+      expect(onNext).toHaveBeenCalledOnce();
+      expect(onSeekTo).toHaveBeenCalledWith(42);
+    } finally {
+      Object.defineProperty(navigator, "userAgent", {
+        value: originalUA,
+        configurable: true,
+      });
+    }
+  });
+
   it("can update metadata with a valid song and null", () => {
     expect(() => updateMediaSessionMetadata(dummySong, true)).not.toThrow();
     expect(() => updateMediaSessionMetadata(null, false)).not.toThrow();

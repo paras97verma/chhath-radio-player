@@ -41,6 +41,16 @@ function primeAudioForUserGesture(adapter: AudioPlayerAdapter | null): void {
   }
 }
 
+function resetMediaSessionPositionForTrackChange(
+  adapter: AudioPlayerAdapter | null,
+  fallbackDuration: number,
+): void {
+  const duration = adapter?.getDuration?.() || fallbackDuration;
+  if (Number.isFinite(duration) && duration > 0) {
+    updateMediaSessionPositionState(0, duration, 0);
+  }
+}
+
 export function loadOfferingsFromStorage(): Record<string, number> {
   if (typeof window === "undefined") return {};
   try {
@@ -616,16 +626,18 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   },
 
   nextSong: async () => {
-    const { queue, currentIndex, adapter, isShuffleEnabled } = get();
+    const { queue, currentIndex, adapter, isShuffleEnabled, duration } = get();
     if (!adapter || queue.length === 0) return;
 
     primeAudioForUserGesture(adapter);
     const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
 
     set({ currentIndex: nextIndex, playState: "BUFFERING", userIntent: "playing", error: null });
+    resetMediaSessionPositionForTrackChange(adapter, duration);
     updateMediaSessionMetadata(queue[nextIndex], false);
     try {
       await adapter.loadVideo(queue[nextIndex].youtube_video_id);
+      reassertMediaSessionHandlers();
     } catch {
       set({ playState: "ERROR", userIntent: "idle", error: "Could not load next track" });
       onPlaybackStateChange(false);
@@ -649,9 +661,11 @@ export const useRadioStore = create<RadioState>((set, get) => ({
 
     const prevIndex = currentIndex > 0 ? currentIndex - 1 : queue.length - 1;
     set({ currentIndex: prevIndex, playState: "BUFFERING", userIntent: "playing", error: null });
+    resetMediaSessionPositionForTrackChange(adapter, duration);
     updateMediaSessionMetadata(queue[prevIndex], false);
     try {
       await adapter.loadVideo(queue[prevIndex].youtube_video_id);
+      reassertMediaSessionHandlers();
     } catch {
       set({ playState: "ERROR", userIntent: "idle", error: "Could not load previous track" });
       onPlaybackStateChange(false);
@@ -660,7 +674,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   },
 
   playSongAtIndex: async (index: number) => {
-    const { queue, adapter } = get();
+    const { queue, adapter, duration } = get();
     if (!adapter || index < 0 || index >= queue.length) return;
     const targetSong = queue[index];
     primeAudioForUserGesture(adapter);
@@ -671,9 +685,11 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       error: null,
       consecutiveErrors: 0,
     });
+    resetMediaSessionPositionForTrackChange(adapter, duration);
     updateMediaSessionMetadata(targetSong, false);
     try {
       await adapter.loadVideo(targetSong.youtube_video_id);
+      reassertMediaSessionHandlers();
     } catch (err: any) {
       if (err?.name !== "AbortError") {
         set({ playState: "ERROR", userIntent: "idle", error: "Could not play track" });
@@ -693,7 +709,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     } else {
       const newQueue = [song, ...queue];
       set({ queue: newQueue });
-      const { adapter } = get();
+      const { adapter, duration } = get();
       if (!adapter) return;
       primeAudioForUserGesture(adapter);
       set({
@@ -703,9 +719,11 @@ export const useRadioStore = create<RadioState>((set, get) => ({
         error: null,
         consecutiveErrors: 0,
       });
+      resetMediaSessionPositionForTrackChange(adapter, duration);
       updateMediaSessionMetadata(song, false);
       try {
         await adapter.loadVideo(song.youtube_video_id);
+        reassertMediaSessionHandlers();
       } catch (err: any) {
         if (err?.name !== "AbortError") {
           set({ playState: "ERROR", userIntent: "idle", error: "Could not play track" });
@@ -766,9 +784,11 @@ export const useRadioStore = create<RadioState>((set, get) => ({
           const { isShuffleEnabled } = get();
           const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
           set({ currentIndex: nextIndex, playState: "BUFFERING", userIntent: "playing", error: null });
+          resetMediaSessionPositionForTrackChange(adapter, get().duration);
           updateMediaSessionMetadata(queue[nextIndex], false);
           try {
             await adapter?.loadVideo(queue[nextIndex].youtube_video_id);
+            reassertMediaSessionHandlers();
           } catch {
             set({ playState: "ERROR", error: "Could not play next track" });
           }

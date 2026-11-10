@@ -113,12 +113,12 @@ Tasks grouped by independently testable user story. Tests included because the f
 
 ### US1 — Start and continue selected song reliably (P1)
 
-- [ ] T038 [US1] Remove the unused server queue fetch and make first-song metadata warming non-blocking in frontend/app/page.tsx, frontend/components/radio/PageClient.tsx, frontend/components/radio/RadioPlayer.tsx, frontend/components/radio/GlobalRadioProvider.tsx, and frontend/lib/audio/html5-audio-adapter.ts
-- [ ] T039 [US1] Scope pause, waiting, stalled, ended, and progress events to the active request/source; recover only after five seconds without media-time progress in frontend/lib/audio/html5-audio-adapter.ts
+- [x] T038 [US1] Remove the unused server queue fetch and make first-song metadata warming non-blocking in frontend/app/page.tsx, frontend/components/radio/PageClient.tsx, frontend/components/radio/RadioPlayer.tsx, frontend/components/radio/GlobalRadioProvider.tsx, and frontend/lib/audio/html5-audio-adapter.ts
+- [x] T039 [US1] Scope pause, waiting, stalled, ended, and progress events to the active request/source; recover only after five seconds without media-time progress in frontend/lib/audio/html5-audio-adapter.ts
 
 ### US3 — Consistent desktop/mobile behavior (P1)
 
-- [ ] T040 [US3] Keep one adapter-owned prepared candidate set for the initial/up-next song, revalidate and consume it on selection, and call the real media element's play() from the user gesture in frontend/lib/audio/html5-audio-adapter.ts
+- [x] T040 [US3] Keep one adapter-owned prepared candidate set for the initial/up-next song, revalidate and consume it on selection, and call the real media element's play() from the user gesture in frontend/lib/audio/html5-audio-adapter.ts
 
 ## Phase 9: Follow-up for durable freshness and lock-screen consistency
 
@@ -128,14 +128,14 @@ Tasks grouped by independently testable user story. Tests included because the f
 
 ### US2 — Keep all catalog metadata fresh (P1)
 
-- [ ] T041 [US2] Require both current direct and proxy candidates outside the 900-second refresh window for full warmth, and report full/partial/degraded readiness in backend/app/services/queue_prewarmer.py and backend/app/services/stream_cache_service.py
-- [ ] T042 [US2] Add a per-video Redis refresh due schedule at the earliest `refresh_at - 900s`, persist schedule updates on cache commits, retain still-valid candidates after failed refresh, and remove due entries during cache invalidation/flush in backend/app/services/stream_cache_service.py
-- [ ] T043 [US2] Process due refreshes continuously with bounded backoff, seed missing schedule entries during startup/full catalog reconciliation, retry failures, skip disabled/deleted songs, and let the shared origin limiter pace requests instead of sleeping on cache hits in backend/app/services/queue_prewarmer.py
-- [ ] T044 [US2] Remove the page-lifetime one-shot all-queue prewarm; keep shared backend catalog warming responsible for freshness in frontend/lib/radio-store.ts
+- [x] T041 [US2] Require both current direct and proxy candidates outside the 900-second refresh window for full warmth, and report full/partial/degraded readiness in backend/app/services/queue_prewarmer.py and backend/app/services/stream_cache_service.py
+- [x] T042 [US2] Add a per-video Redis refresh due schedule at the earliest `refresh_at - 900s`, persist schedule updates on cache commits, retain still-valid candidates after failed refresh, and remove due entries during cache invalidation/flush in backend/app/services/stream_cache_service.py
+- [x] T043 [US2] Process due refreshes continuously with bounded backoff, seed missing schedule entries during startup/full catalog reconciliation, retry failures, skip disabled/deleted songs, and let the shared origin limiter pace requests instead of sleeping on cache hits in backend/app/services/queue_prewarmer.py
+- [x] T044 [US2] Remove the page-lifetime one-shot all-queue prewarm; keep shared backend catalog warming responsible for freshness in frontend/lib/radio-store.ts
 
 ### US3 — Keep lock-screen playback actions stable (P1)
 
-- [ ] T045 [US3] Make Media Session Play idempotent while the selected song is PLAYING or BUFFERING, and keep lock-screen metadata paused until the adapter confirms PLAYING in frontend/lib/radio-store.ts
+- [x] T045 [US3] Make Media Session Play idempotent while the selected song is PLAYING or BUFFERING, and keep lock-screen metadata paused until the adapter confirms PLAYING in frontend/lib/radio-store.ts
 
 ## Phase 10: Follow-up for first-progress truth and bitrate policy
 

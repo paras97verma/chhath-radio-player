@@ -2,7 +2,7 @@
  * Media Session API Service
  *
  * Integrates the web player with the OS media notification and lock screen controls:
- * - Android: Persistent notification card with play/pause/prev/next & album art.
+ * - Android: Persistent notification card with play/pause/prev/next, scrubber & album art.
  * - iOS: Control Center & Lock Screen media player widget.
  * - Windows: System Media Transport Controls (SMTC) overlay & media keys.
  * - macOS: Now Playing menu bar & Touch Bar widget.
@@ -32,18 +32,21 @@ function isIosDevice(): boolean {
   return /iPad|iPhone|iPod/.test(ua) || (ua.includes("Mac") && typeof document !== "undefined" && "ontouchend" in document);
 }
 
+function isMobileDevice(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || isIosDevice();
+}
+
 /**
  * Re-assert OS media action handlers (Lock screen, Control Center, Bluetooth controls).
- * On Android: Configures play, pause, prev, next, stop, seekto, seekbackward, seekforward.
- * On iOS: WebKit lock screen UI limits bottom buttons to 3 slots; preserving seekbackward=null
- * keeps Previous Track (⏮) and Next Track (⏭) buttons intact while seeking is handled via
- * the lock screen scrubber progress bar (seekto).
+ * Mobile exposes play, pause, prev, next, stop, and seekto. Relative-seek actions compete
+ * with track buttons in mobile system UIs, so scrubbing uses the position bar instead.
  */
 export function reassertMediaSessionHandlers(): void {
   if (!isMediaSessionSupported() || !registeredCallbacks) return;
 
   const ms = navigator.mediaSession;
-  const isIos = isIosDevice();
+  const isMobile = isMobileDevice();
 
   const safeSetHandler = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
     try {
@@ -89,9 +92,9 @@ export function reassertMediaSessionHandlers(): void {
     }
   });
 
-  if (isIos) {
-    // Explicitly disable seek backward / forward buttons on iOS lock screen so iOS WebKit
-    // forces track navigation buttons (⏮ / ⏭) instead of ±10s/15s relative skip buttons.
+  if (isMobile) {
+    // Keep mobile transport controls consistent: use the scrubber for seeking and reserve
+    // the transport slots for Previous/Next instead of relative-seek buttons.
     safeSetHandler("seekbackward", null);
     safeSetHandler("seekforward", null);
   } else {
