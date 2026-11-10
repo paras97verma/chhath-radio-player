@@ -19,6 +19,7 @@ import logging
 import math
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -121,6 +122,9 @@ LOCK_EXPIRE_SECONDS = 8          # Max lock hold time to prevent deadlocks
 LOCK_RENEW_INTERVAL_SECONDS = 2.0
 L1_CACHE_MAX_ENTRIES = 512
 COOLDOWN_SECONDS = 600           # 10 minutes cooldown for failed upstream instances
+ORIGIN_FAILURE_PREFIX = "chhath:invidious:failure:"
+ORIGIN_FAILURE_WINDOW_SECONDS = 60
+ORIGIN_FAILURE_THRESHOLD = 5
 STREAM_RESOLUTION_TIMEOUT_SECONDS = 5.0
 MAX_ORIGINS_PER_RESOLUTION = 2
 DEFAULT_INVIDIOUS_REQUESTS_PER_SECOND = 2.0
@@ -1293,7 +1297,13 @@ class StreamCacheService:
                         raise TimeoutError("Invidious resolution deadline exceeded")
                     with urllib.request.urlopen(request, timeout=timeout) as response:
                         if response.status != 200:
-                            cls._record_failure(instance.name, redis_client)
+                            cls._record_failure(
+                                instance.name,
+                                redis_client,
+                                origin_level_failure=(
+                                    response.status in {401, 403, 429} or response.status >= 500
+                                ),
+                            )
                             continue
                         data = json.loads(response.read().decode("utf-8"))
 
@@ -1403,26 +1413,72 @@ class StreamCacheService:
                     continue
                 cls._record_success(instance.name, latency_ms, redis_client)
                 return validated_response
+            except urllib.error.HTTPError as exc:
+                logger.info(
+                    "[StreamCache] Invidious origin %s returned HTTP %d for video %s.",
+                    instance.name,
+                    exc.code,
+                    video_id,
+                )
+                exc.close()
+                cls._record_failure(
+                    instance.name,
+                    redis_client,
+                    origin_level_failure=(exc.code in {401, 403, 429} or exc.code >= 500),
+                )
+                if time.monotonic() >= deadline:
+                    break
             except Exception as exc:
-                logger.info("[StreamCache] Invidious origin %s failed for %s: %s", instance.name, video_id, exc)
-                cls._record_failure(instance.name, redis_client)
+                logger.info(
+                    "[StreamCache] Invidious origin %s failed resolving video %s (%s).",
+                    instance.name,
+                    video_id,
+                    type(exc).__name__,
+                )
+                origin_level_failure = isinstance(
+                    exc,
+                    (TimeoutError, urllib.error.URLError, ConnectionError, OSError),
+                ) and not (
+                    isinstance(exc, TimeoutError)
+                    and "budget exhausted" in str(exc).lower()
+                )
+                cls._record_failure(
+                    instance.name,
+                    redis_client,
+                    origin_level_failure=origin_level_failure,
+                )
                 if time.monotonic() >= deadline:
                     break
 
         return None
 
     @classmethod
-    def _record_failure(cls, name: str, redis_client: Optional[Any]) -> None:
-        """Records failure and sets a 10-minute cooldown in Redis."""
+    def _record_failure(
+        cls,
+        name: str,
+        redis_client: Optional[Any],
+        *,
+        origin_level_failure: bool = False,
+    ) -> None:
+        """Record video failure; cool the origin only after repeated systemic failures."""
         if not redis_client:
             return
         try:
             health_key = f"{HEALTH_PREFIX}{name}"
+            failure_key = f"{ORIGIN_FAILURE_PREFIX}{name}"
             pipe = redis_client.pipeline()
             pipe.hincrby(health_key, "fail_count", 1)
-            pipe.hset(health_key, "cooldown_until", str(time.time() + COOLDOWN_SECONDS))
             pipe.expire(health_key, 86400)
-            pipe.execute()
+            if origin_level_failure:
+                pipe.hincrby(failure_key, "count", 1)
+                pipe.expire(failure_key, ORIGIN_FAILURE_WINDOW_SECONDS)
+            results = pipe.execute()
+            if origin_level_failure and int(results[2]) >= ORIGIN_FAILURE_THRESHOLD:
+                redis_client.hset(
+                    health_key,
+                    "cooldown_until",
+                    str(time.time() + COOLDOWN_SECONDS),
+                )
         except Exception:
             pass
 
@@ -1438,6 +1494,7 @@ class StreamCacheService:
             pipe.hdel(health_key, "cooldown_until")
             pipe.expire(health_key, 86400)
             pipe.execute()
+            redis_client.delete(f"{ORIGIN_FAILURE_PREFIX}{name}")
         except Exception:
             pass
 
