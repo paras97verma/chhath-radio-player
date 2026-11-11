@@ -127,7 +127,7 @@ export interface AudioPlayerAdapter {
   onStateChange(callback: (state: PlayerState) => void): () => void;
   /** Subscribe to playback progress/timeupdate events */
   onProgress?(callback: (currentTime: number, duration: number) => void): () => void;
-  /** Pre-buffer the upcoming song into the secondary audio element */
+  /** Prepare the upcoming song while preserving platform-specific media-element ownership */
   preloadNextSong(song: Song): Promise<void>;
   /** Destroy the player and release audio resources */
   destroy(): void;

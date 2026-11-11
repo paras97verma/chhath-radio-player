@@ -168,6 +168,56 @@ describe("Html5AudioAdapter", () => {
     adapter.destroy();
   });
 
+  it("keeps one active audio element across iOS track changes", async () => {
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    const userAgentDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "userAgent");
+    Object.defineProperty(window.navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1",
+    });
+    vi.mocked(fetchInvidiousStream).mockImplementation(async (videoId) =>
+      canonicalStream(videoId, `https://audio.example.com/${videoId}.m4a`, 180),
+    );
+    primaryAudio.play = vi.fn().mockResolvedValue(undefined);
+    primaryAudio.pause = vi.fn();
+    secondaryAudio.play = vi.fn().mockResolvedValue(undefined);
+
+    try {
+      await adapter.loadVideo("ios_current_track");
+      emitMediaEvent(primaryAudio, "timeupdate", {
+        currentTime: 0.25,
+        duration: 180,
+        paused: false,
+        ended: false,
+      });
+
+      await adapter.preloadNextSong({
+        id: "ios_next_track",
+        youtube_video_id: "ios_next_track",
+        title: "Next Song",
+        artist: "Singer",
+        youtube_url: null,
+        category: null,
+        enabled: true,
+        sort_order: 1,
+      });
+      expect(secondaryAudio.src).toBe("");
+
+      await adapter.loadVideo("ios_next_track");
+
+      expect(primaryAudio.src).toBe("https://audio.example.com/ios_next_track.m4a");
+      expect(primaryAudio.play).toHaveBeenCalledTimes(2);
+      expect(primaryAudio.pause).not.toHaveBeenCalled();
+      expect(secondaryAudio.play).not.toHaveBeenCalled();
+    } finally {
+      if (userAgentDescriptor) {
+        Object.defineProperty(window.navigator, "userAgent", userAgentDescriptor);
+      } else {
+        Reflect.deleteProperty(window.navigator, "userAgent");
+      }
+    }
+  });
+
   it("does not wait for the initial stream metadata warmup", async () => {
     const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
     const videoId = "warmup12345";
@@ -488,6 +538,70 @@ describe("Html5AudioAdapter", () => {
       await adapter.loadVideo("ios_handoff");
 
       expect(primaryAudio.pause).toHaveBeenCalledOnce();
+      expect(mediaSession.playbackState).toBe("playing");
+    } finally {
+      if (previousDescriptor) Object.defineProperty(navigator, "mediaSession", previousDescriptor);
+      else Reflect.deleteProperty(navigator, "mediaSession");
+    }
+  });
+
+  it("repairs a delayed paused lock-screen state when the promoted track advances", async () => {
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    const previousDescriptor = Object.getOwnPropertyDescriptor(navigator, "mediaSession");
+    const mediaSession = {
+      playbackState: "playing",
+      setActionHandler: vi.fn(),
+    };
+    Object.defineProperty(navigator, "mediaSession", {
+      configurable: true,
+      value: mediaSession,
+    });
+    primaryAudio.pause = vi.fn(() => {
+      // Model WebKit publishing the outgoing element's paused state after the
+      // new source is already active, which a synchronous handoff test misses.
+      setTimeout(() => {
+        mediaSession.playbackState = "paused";
+      }, 0);
+    });
+    primaryAudio.load = vi.fn();
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
+      canonicalStream("ios_delayed_handoff", "https://audio.example.com/ios_delayed_handoff.m4a", 180),
+    );
+    primaryAudio.play = vi.fn().mockResolvedValue(undefined);
+    secondaryAudio.play = vi.fn().mockResolvedValue(undefined);
+
+    try {
+      await adapter.preloadNextSong({
+        id: "ios-delayed-handoff-song",
+        youtube_video_id: "ios_delayed_handoff",
+        title: "iOS Delayed Handoff",
+        artist: "Singer",
+        youtube_url: null,
+        category: null,
+        enabled: true,
+        sort_order: 1,
+      });
+      secondaryAudio.dispatchEvent(new Event("canplay"));
+
+      await adapter.loadVideo("ios_delayed_handoff");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(mediaSession.playbackState).toBe("paused");
+
+      emitMediaEvent(secondaryAudio, "timeupdate", {
+        currentTime: 0,
+        duration: 180,
+        paused: false,
+        ended: false,
+      });
+      expect(mediaSession.playbackState).toBe("paused");
+
+      emitMediaEvent(secondaryAudio, "timeupdate", {
+        currentTime: 0.25,
+        duration: 180,
+        paused: false,
+        ended: false,
+      });
+
       expect(mediaSession.playbackState).toBe("playing");
     } finally {
       if (previousDescriptor) Object.defineProperty(navigator, "mediaSession", previousDescriptor);
