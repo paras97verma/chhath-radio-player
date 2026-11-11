@@ -658,10 +658,20 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     };
 
     const onTimeUpdate = () => {
-      if (this.hasUserInteracted && !this._getCurrentMediaAttempt(audio)) return;
+      const attempt = this._getCurrentMediaAttempt(audio);
+      if (this.hasUserInteracted && !attempt) return;
       const dur = this.getDuration() || audio.duration;
       const cur = audio.currentTime;
+      const previousProgressTime = attempt?.lastProgressTime;
       this._recordMediaProgress(audio);
+      // WebKit may publish a late paused state for the outgoing element during
+      // a prepared handoff. Advancing time on the active element is authoritative.
+      const advanced = previousProgressTime !== undefined
+        && attempt?.hasProgress
+        && attempt.lastProgressTime > previousProgressTime + 0.01;
+      if (advanced && !audio.paused && !audio.ended) {
+        setMediaSessionPlaybackState("playing");
+      }
       if (Number.isFinite(dur) && dur > 0 && Number.isFinite(cur)) {
         this._emitProgress(cur, dur);
         updateMediaSessionPositionState(cur, dur, audio.playbackRate || 1);

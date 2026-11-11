@@ -495,6 +495,70 @@ describe("Html5AudioAdapter", () => {
     }
   });
 
+  it("repairs a delayed paused lock-screen state when the promoted track advances", async () => {
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    const previousDescriptor = Object.getOwnPropertyDescriptor(navigator, "mediaSession");
+    const mediaSession = {
+      playbackState: "playing",
+      setActionHandler: vi.fn(),
+    };
+    Object.defineProperty(navigator, "mediaSession", {
+      configurable: true,
+      value: mediaSession,
+    });
+    primaryAudio.pause = vi.fn(() => {
+      // Model WebKit publishing the outgoing element's paused state after the
+      // new source is already active, which a synchronous handoff test misses.
+      setTimeout(() => {
+        mediaSession.playbackState = "paused";
+      }, 0);
+    });
+    primaryAudio.load = vi.fn();
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
+      canonicalStream("ios_delayed_handoff", "https://audio.example.com/ios_delayed_handoff.m4a", 180),
+    );
+    primaryAudio.play = vi.fn().mockResolvedValue(undefined);
+    secondaryAudio.play = vi.fn().mockResolvedValue(undefined);
+
+    try {
+      await adapter.preloadNextSong({
+        id: "ios-delayed-handoff-song",
+        youtube_video_id: "ios_delayed_handoff",
+        title: "iOS Delayed Handoff",
+        artist: "Singer",
+        youtube_url: null,
+        category: null,
+        enabled: true,
+        sort_order: 1,
+      });
+      secondaryAudio.dispatchEvent(new Event("canplay"));
+
+      await adapter.loadVideo("ios_delayed_handoff");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(mediaSession.playbackState).toBe("paused");
+
+      emitMediaEvent(secondaryAudio, "timeupdate", {
+        currentTime: 0,
+        duration: 180,
+        paused: false,
+        ended: false,
+      });
+      expect(mediaSession.playbackState).toBe("paused");
+
+      emitMediaEvent(secondaryAudio, "timeupdate", {
+        currentTime: 0.25,
+        duration: 180,
+        paused: false,
+        ended: false,
+      });
+
+      expect(mediaSession.playbackState).toBe("playing");
+    } finally {
+      if (previousDescriptor) Object.defineProperty(navigator, "mediaSession", previousDescriptor);
+      else Reflect.deleteProperty(navigator, "mediaSession");
+    }
+  });
+
   it("sets the lock-screen state to playing after the active source starts", async () => {
     const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
     const previousDescriptor = Object.getOwnPropertyDescriptor(navigator, "mediaSession");
