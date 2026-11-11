@@ -156,7 +156,8 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
 
   private _prepareSource(videoId: string, stream: AudioStreamInfo): PreparedPlaybackSource {
     this._discardPreparedSource();
-    const audio = this.secondaryAudio;
+    const keepActiveMediaElement = isAppleWebKit();
+    const audio = keepActiveMediaElement ? this.primaryAudio : this.secondaryAudio;
     const candidates = this._buildCandidates(stream);
     const prepared: PreparedPlaybackSource = {
       videoId,
@@ -170,7 +171,10 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     const candidate = candidates.find(
       (item) => audio && item.mimeType && isMimeTypeSupportedByAudioElement(audio, item.mimeType),
     );
-    if (!audio || !candidate) return prepared;
+    // On Apple WebKit, keep the media element registered with Now Playing stable across
+    // tracks. Resolve and retain next-track metadata, but do not attach it to the
+    // secondary element; WebKit can keep reporting that outgoing element as paused.
+    if (!audio || !candidate || keepActiveMediaElement) return prepared;
 
     const markReady = () => {
       if (

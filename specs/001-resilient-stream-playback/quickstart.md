@@ -44,6 +44,14 @@ The full Playwright suite ran on 2026-11-05 in Chromium and WebKit with a local 
 
 The opt-in fixture timing command `PLAYBACK_PERF=1 CI=1 NEXT_PUBLIC_API_URL=http://127.0.0.1:8000 ./node_modules/.bin/playwright test __tests__/e2e/radio.spec.ts --grep 'controlled fixture startup timings' --project=chromium --project=webkit --workers=1 --retries=0 --reporter=line` passed (`2 passed`, 50.6s), with 20 samples per engine. Selected-title-visible→synthetic first progress was Chromium p50 46.5ms/p95 54.6ms and WebKit p50 53.0ms/p95 70.0ms. Intercepted resolver HTTP was Chromium p50 3.6ms/p95 7.4ms and WebKit p50 11.0ms/p95 23.0ms. The audio progress and metadata response were synthetic; these are not live-stream, media-byte, or production Redis measurements. See the release evidence in `plan.md`.
 
+### Resumed validation record (2026-11-11)
+
+- Backend focused cache/worker suite: `/tmp/chhath-radio-player-layerbase-cache-venv/bin/python -m pytest tests/unit/test_stream_cache_service.py tests/unit/test_queue_prewarmer.py -q --tb=short` → 64 passed. Warnings: three dependency deprecations and the existing unawaited `_reconciler_loop` coroutine warning.
+- Frontend quickstart units: `npm run test:unit -- __tests__/unit/html5-audio-adapter.test.ts __tests__/unit/radio-store.test.ts __tests__/unit/stream-selector.test.ts __tests__/unit/piped-client.test.ts` → 97 passed.
+- Radio browser scenarios in Chromium and WebKit → 9 passed and 1 opt-in performance test skipped per engine. The run used deterministic mocked queue, resolver, and `HTMLMediaElement` behavior; it is not live media TTFB/underrun or native lock-screen evidence.
+- After the T051 iOS WebKit handoff correction, the same radio scenarios passed in Chromium and WebKit (`18 passed`, `2 opt-in performance tests skipped` total). The regression models an iPhone Safari user agent and verifies the next track reuses the active audio element; desktop WebKit E2E still does not validate a native iOS lock screen.
+- Manual shell runs remain **Not run** as listed in the browser matrix. No iOS simulator or usable mirrored iPhone screen was available; macOS Chrome and Zen were not installed. These automated engine runs do not substitute for the six named shell runs, so T036 remains open.
+
 ## Resolver and expiry
 
 1. Known, near, past, malformed, and absent signed expiry; verify 600s margin and 1800s unknown-expiry max.
