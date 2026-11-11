@@ -164,7 +164,7 @@ Tasks grouped by independently testable user story. Tests included because the f
 
 **Purpose**: Keep native playback controls responsive and synchronized through pause/resume and track transitions, and provide correctly described artwork on mobile.
 
-- [x] T051 [US3] Dispatch Media Session actions without waiting for playback I/O; preserve active playback state and action handlers through track changes and pause/resume; use valid same-origin album artwork for the rotating vinyl and lock-screen metadata, with regression coverage in `frontend/lib/media-session.ts`, `frontend/lib/radio-store.ts`, `frontend/components/radio/RadioPlayer.tsx`, and their unit/browser tests.
+- [x] T051 [US3] Dispatch Media Session actions without waiting for playback I/O; preserve active playback state and action handlers through track changes and pause/resume, including re-publishing the playing state after iOS media-element handoff; use valid same-origin album artwork for the rotating vinyl and lock-screen metadata, with regression coverage in `frontend/lib/media-session.ts`, `frontend/lib/radio-store.ts`, `frontend/components/radio/RadioPlayer.tsx`, and their unit/browser tests.
 
 ## Dependencies and parallelism
 
