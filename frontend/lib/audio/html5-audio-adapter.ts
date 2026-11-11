@@ -580,6 +580,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
       if (this.isPriming) return;
       const attempt = this._getCurrentMediaAttempt(audio);
       if (this.hasUserInteracted && !attempt) return;
+      if (attempt) setMediaSessionPlaybackState("playing");
       this._recordMediaProgress(audio);
       const dur = this.getDuration() || audio.duration;
       if (Number.isFinite(dur) && dur > 0) {

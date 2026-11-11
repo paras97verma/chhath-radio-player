@@ -522,6 +522,34 @@ describe("Html5AudioAdapter", () => {
     }
   });
 
+  it("republishes playing when the active element fires playing before time advances", async () => {
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    const previousDescriptor = Object.getOwnPropertyDescriptor(navigator, "mediaSession");
+    const mediaSession = {
+      playbackState: "paused",
+      setActionHandler: vi.fn(),
+    };
+    Object.defineProperty(navigator, "mediaSession", {
+      configurable: true,
+      value: mediaSession,
+    });
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
+      canonicalStream("playing_event", "https://audio.example.com/playing_event.m4a", 180),
+    );
+    primaryAudio.play = vi.fn().mockResolvedValue(undefined);
+
+    try {
+      await adapter.loadVideo("playing_event");
+      mediaSession.playbackState = "paused";
+      emitMediaEvent(primaryAudio, "playing", { currentTime: 0, duration: 180, paused: false });
+
+      expect(mediaSession.playbackState).toBe("playing");
+    } finally {
+      if (previousDescriptor) Object.defineProperty(navigator, "mediaSession", previousDescriptor);
+      else Reflect.deleteProperty(navigator, "mediaSession");
+    }
+  });
+
   it("observes readiness events fired during source assignment", async () => {
     const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
     vi.mocked(fetchInvidiousStream).mockResolvedValue(
