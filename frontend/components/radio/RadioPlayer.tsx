@@ -63,7 +63,26 @@ const IconShuffle = () => (
 
 // ─── Vinyl Album Art ──────────────────────────────────────────────────────────
 
-function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }) {
+function VinylArt({
+  src,
+  fallbackSrc,
+  isPlaying,
+}: {
+  src: string | null;
+  fallbackSrc: string | null;
+  isPlaying: boolean;
+}) {
+  const [imageFailures, setImageFailures] = useState<{
+    source: string | null;
+    failed: Set<string>;
+  }>({ source: null, failed: new Set() });
+  const failedSources = imageFailures.source === src ? imageFailures.failed : new Set<string>();
+  const imageSrc = src && !failedSources.has(src)
+    ? src
+    : fallbackSrc && !failedSources.has(fallbackSrc)
+      ? fallbackSrc
+      : null;
+
   return (
     <div
       className="relative w-14 h-14 sm:w-20 sm:h-20 shrink-0 rounded-full"
@@ -101,8 +120,20 @@ function VinylArt({ src, isPlaying }: { src: string | null; isPlaying: boolean }
           animation: isPlaying ? "vinylSpin 4s linear infinite" : "none",
         }}
       >
-        {src ? (
-          <img src={src} alt="" className="w-full h-full object-cover" />
+        {imageSrc ? (
+          <img
+            key={imageSrc}
+            src={imageSrc}
+            alt=""
+            className="w-full h-full object-cover"
+            loading="eager"
+            decoding="async"
+            onError={() => setImageFailures((current) => {
+              const failed = current.source === src ? new Set(current.failed) : new Set<string>();
+              failed.add(imageSrc);
+              return { source: src, failed };
+            })}
+          />
         ) : (
           <div className="w-full h-full bg-[#3a1a08] flex items-center justify-center text-orange-400/70 text-[10px]">
             🪔
@@ -645,6 +676,7 @@ export default function RadioPlayer({
   const handlePlaySong = useCallback(async (songsList: Song[], index: number, song: Song) => {
     const state = useRadioStore.getState();
     if (!state.adapter) return;
+    const wasPlaying = state.userIntent === "playing";
     state.adapter.primeAudio?.();
     useRadioStore.setState({
       queue: songsList,
@@ -653,7 +685,7 @@ export default function RadioPlayer({
       userIntent: "playing",
       error: null,
     });
-    updateMediaSessionMetadata(song, true);
+    updateMediaSessionMetadata(song, wasPlaying);
     try {
       await state.adapter.loadVideo(song.youtube_video_id);
     } catch (err: any) {
@@ -666,7 +698,10 @@ export default function RadioPlayer({
   }, []);
 
   const albumArt = currentSong
-    ? `https://i.ytimg.com/vi/${currentSong.youtube_video_id}/mqdefault.jpg`
+    ? `/yt-thumb?v=${encodeURIComponent(currentSong.youtube_video_id)}`
+    : null;
+  const fallbackAlbumArt = currentSong
+    ? `https://i.ytimg.com/vi/${encodeURIComponent(currentSong.youtube_video_id)}/mqdefault.jpg`
     : null;
 
   return (
@@ -720,7 +755,7 @@ export default function RadioPlayer({
           {/* Main row */}
           <div className="flex items-center justify-between gap-1.5 sm:gap-3 px-3.5 sm:px-5 pt-2.5 sm:pt-3 pb-2 min-w-0">
             {/* Vinyl art */}
-              <VinylArt src={albumArt} isPlaying={isActuallyPlaying} />
+              <VinylArt src={albumArt} fallbackSrc={fallbackAlbumArt} isPlaying={isActuallyPlaying} />
 
             {/* Controls */}
             <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">

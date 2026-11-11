@@ -185,12 +185,39 @@ describe("MediaSession Module", () => {
     }
   });
 
+  it("returns immediately from lock-screen actions while async track work continues", () => {
+    const fakeMediaSession = {
+      setActionHandler: vi.fn(),
+      metadata: null,
+      playbackState: "playing",
+    };
+    const onNext = vi.fn(() => new Promise<void>(() => {}));
+    Object.defineProperty(navigator, "mediaSession", {
+      value: fakeMediaSession,
+      configurable: true,
+      writable: true,
+    });
+
+    registerMediaSessionHandlers({
+      onPlay: vi.fn(),
+      onPause: vi.fn(),
+      onNext,
+      onPrev: vi.fn(),
+    });
+
+    const nextHandler = fakeMediaSession.setActionHandler.mock.calls
+      .find(([action]) => action === "nexttrack")?.[1];
+
+    expect(nextHandler?.({})).toBeUndefined();
+    expect(onNext).toHaveBeenCalledOnce();
+  });
+
   it("can update metadata with a valid song and null", () => {
     expect(() => updateMediaSessionMetadata(dummySong, true)).not.toThrow();
     expect(() => updateMediaSessionMetadata(null, false)).not.toThrow();
   });
 
-  it("uses the song's thumbnail for artwork and never substitutes the app icon", () => {
+  it("uses the same-origin thumbnail without advertising false image dimensions", () => {
     let capturedInit: any = null;
     (globalThis as any).MediaMetadata = class MockMediaMetadata {
       constructor(init?: any) {
@@ -202,13 +229,10 @@ describe("MediaSession Module", () => {
 
     expect(capturedInit).not.toBeNull();
     const artwork = (capturedInit?.artwork as any[]) || [];
-    expect(artwork.length).toBeGreaterThan(0);
-    // Every artwork entry must point to the song's thumbnail or proxy, NOT the app icon
-    for (const img of artwork) {
-      expect(img.src).toContain(dummySong.youtube_video_id);
-      expect(img.src).not.toContain("icon-512.png");
-      expect(img.src).not.toContain("icon-192.png");
-    }
+    expect(artwork).toHaveLength(1);
+    expect(artwork[0].src).toContain(`/yt-thumb?v=${dummySong.youtube_video_id}`);
+    expect(artwork[0].sizes).toBeUndefined();
+    expect(artwork[0].type).toBe("image/jpeg");
   });
 
   it("can set playback state without errors", () => {

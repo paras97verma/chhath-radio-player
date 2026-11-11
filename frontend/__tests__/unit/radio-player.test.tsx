@@ -155,6 +155,23 @@ describe("RadioPlayer recovery and accessible state", () => {
     await waitFor(() => expect(adapter.currentVideoId).toBe(songs[1].youtube_video_id));
   });
 
+  it("loads vinyl artwork through the same-origin proxy and falls back when an image fails", () => {
+    render(<RadioPlayer hasTunedIn />);
+
+    const vinylImage = document.querySelector(".radio-player-vinyl img") as HTMLImageElement;
+    expect(vinylImage.getAttribute("src")).toBe(`/yt-thumb?v=${songs[0].youtube_video_id}`);
+
+    fireEvent.error(vinylImage);
+    const fallbackImage = document.querySelector(".radio-player-vinyl img") as HTMLImageElement;
+    expect(fallbackImage.getAttribute("src")).toBe(
+      `https://i.ytimg.com/vi/${songs[0].youtube_video_id}/mqdefault.jpg`,
+    );
+
+    fireEvent.error(fallbackImage);
+    expect(document.querySelector(".radio-player-vinyl img")).toBeNull();
+    expect(document.body).toHaveTextContent("🪔");
+  });
+
   it("seeks from the progress bar when a touch pointer is released", () => {
     render(<RadioPlayer hasTunedIn />);
     const seek = screen.getByRole("slider", { name: "Seek" });

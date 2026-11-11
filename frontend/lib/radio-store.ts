@@ -607,34 +607,41 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   },
 
   pausePlayback: async () => {
-    const { adapter, duration, currentTime } = get();
-    set({ userIntent: "paused" });
-    onPlaybackStateChange(false);
-    setMediaSessionPlaybackState("paused");
+    const { adapter, userIntent: previousUserIntent } = get();
     if (!adapter) return;
+
+    set({ userIntent: "paused" });
     try {
       await adapter.pause();
-      const dur = duration || adapter.getDuration();
-      const cur = adapter.getCurrentTime() || currentTime;
-      if (dur > 0) {
-        updateMediaSessionPositionState(cur, dur, 0);
-      }
     } catch {
-      /* ignore */
+      set({ userIntent: previousUserIntent });
+      if (previousUserIntent === "playing") onPlaybackStateChange(true);
+      return;
     }
+
+    // A newer play/track action may have arrived while pause was in flight. Do not
+    // overwrite the active lock-screen session with that stale pause completion.
+    if (get().userIntent !== "paused") return;
+
+    const { duration, currentTime, queue, currentIndex } = get();
+    const dur = duration || adapter.getDuration();
+    const cur = adapter.getCurrentTime() || currentTime;
     set({ playState: "PAUSED" });
+    updateMediaSessionMetadata(queue[currentIndex] ?? null, false, dur, cur);
+    onPlaybackStateChange(false);
   },
 
   nextSong: async () => {
-    const { queue, currentIndex, adapter, isShuffleEnabled, duration } = get();
+    const { queue, currentIndex, adapter, isShuffleEnabled, duration, userIntent } = get();
     if (!adapter || queue.length === 0) return;
+    const wasPlaying = userIntent === "playing";
 
     primeAudioForUserGesture(adapter);
     const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
 
     set({ currentIndex: nextIndex, playState: "BUFFERING", userIntent: "playing", error: null });
     resetMediaSessionPositionForTrackChange(adapter, duration);
-    updateMediaSessionMetadata(queue[nextIndex], false);
+    updateMediaSessionMetadata(queue[nextIndex], wasPlaying);
     try {
       await adapter.loadVideo(queue[nextIndex].youtube_video_id);
       reassertMediaSessionHandlers();
@@ -646,8 +653,9 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   },
 
   prevSong: async () => {
-    const { queue, currentIndex, adapter, currentTime, duration } = get();
+    const { queue, currentIndex, adapter, currentTime, duration, userIntent } = get();
     if (!adapter || queue.length === 0) return;
+    const wasPlaying = userIntent === "playing";
 
     primeAudioForUserGesture(adapter);
     // If current song has played more than 3 seconds, restart the song from beginning
@@ -662,7 +670,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
     const prevIndex = currentIndex > 0 ? currentIndex - 1 : queue.length - 1;
     set({ currentIndex: prevIndex, playState: "BUFFERING", userIntent: "playing", error: null });
     resetMediaSessionPositionForTrackChange(adapter, duration);
-    updateMediaSessionMetadata(queue[prevIndex], false);
+    updateMediaSessionMetadata(queue[prevIndex], wasPlaying);
     try {
       await adapter.loadVideo(queue[prevIndex].youtube_video_id);
       reassertMediaSessionHandlers();
@@ -674,8 +682,9 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   },
 
   playSongAtIndex: async (index: number) => {
-    const { queue, adapter, duration } = get();
+    const { queue, adapter, duration, userIntent } = get();
     if (!adapter || index < 0 || index >= queue.length) return;
+    const wasPlaying = userIntent === "playing";
     const targetSong = queue[index];
     primeAudioForUserGesture(adapter);
     set({
@@ -686,7 +695,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       consecutiveErrors: 0,
     });
     resetMediaSessionPositionForTrackChange(adapter, duration);
-    updateMediaSessionMetadata(targetSong, false);
+    updateMediaSessionMetadata(targetSong, wasPlaying);
     try {
       await adapter.loadVideo(targetSong.youtube_video_id);
       reassertMediaSessionHandlers();
@@ -700,13 +709,14 @@ export const useRadioStore = create<RadioState>((set, get) => ({
   },
 
   playSong: async (song: Song) => {
-    const { queue, playSongAtIndex } = get();
+    const { queue, playSongAtIndex, userIntent } = get();
     const idx = queue.findIndex(
       (s) => s.id === song.id || s.youtube_video_id === song.youtube_video_id
     );
     if (idx !== -1) {
       await playSongAtIndex(idx);
     } else {
+      const wasPlaying = userIntent === "playing";
       const newQueue = [song, ...queue];
       set({ queue: newQueue });
       const { adapter, duration } = get();
@@ -720,7 +730,7 @@ export const useRadioStore = create<RadioState>((set, get) => ({
         consecutiveErrors: 0,
       });
       resetMediaSessionPositionForTrackChange(adapter, duration);
-      updateMediaSessionMetadata(song, false);
+      updateMediaSessionMetadata(song, wasPlaying);
       try {
         await adapter.loadVideo(song.youtube_video_id);
         reassertMediaSessionHandlers();
@@ -768,13 +778,16 @@ export const useRadioStore = create<RadioState>((set, get) => ({
       case "PAUSED": {
         set({ playState: "PAUSED" });
         setMediaSessionPlaybackState("paused");
+        reassertMediaSessionHandlers();
         onPlaybackStateChange(false);
         break;
       }
 
       case "BUFFERING":
         set({ playState: "BUFFERING" });
-        setMediaSessionPlaybackState("paused");
+        // Preserve a currently active session during a track/source transition. Initial
+        // playback explicitly publishes paused metadata until the adapter reports PLAYING.
+        if (userIntent !== "playing") setMediaSessionPlaybackState("paused");
         break;
 
       case "ENDED": {
@@ -782,10 +795,11 @@ export const useRadioStore = create<RadioState>((set, get) => ({
         if (get().playState === "BUFFERING") return;
         if (queue.length > 0) {
           const { isShuffleEnabled } = get();
+          const wasPlaying = userIntent === "playing";
           const nextIndex = getNextIndex(currentIndex, queue.length, isShuffleEnabled);
           set({ currentIndex: nextIndex, playState: "BUFFERING", userIntent: "playing", error: null });
           resetMediaSessionPositionForTrackChange(adapter, get().duration);
-          updateMediaSessionMetadata(queue[nextIndex], false);
+          updateMediaSessionMetadata(queue[nextIndex], wasPlaying);
           try {
             await adapter?.loadVideo(queue[nextIndex].youtube_video_id);
             reassertMediaSessionHandlers();
