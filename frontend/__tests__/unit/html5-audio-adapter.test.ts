@@ -450,6 +450,78 @@ describe("Html5AudioAdapter", () => {
     expect(states).toContain("PLAYING");
   });
 
+  it("restores the playing session after pausing the outgoing element during handoff", async () => {
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    const previousDescriptor = Object.getOwnPropertyDescriptor(navigator, "mediaSession");
+    const mediaSession = {
+      playbackState: "playing",
+      setActionHandler: vi.fn(),
+    };
+    Object.defineProperty(navigator, "mediaSession", {
+      configurable: true,
+      value: mediaSession,
+    });
+    primaryAudio.pause = vi.fn(() => {
+      // Model the stale paused state seen by the native controls at handoff.
+      mediaSession.playbackState = "paused";
+    });
+    primaryAudio.load = vi.fn();
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
+      canonicalStream("ios_handoff", "https://audio.example.com/ios_handoff.m4a", 180),
+    );
+    primaryAudio.play = vi.fn().mockResolvedValue(undefined);
+    secondaryAudio.play = vi.fn().mockResolvedValue(undefined);
+
+    try {
+      await adapter.preloadNextSong({
+        id: "ios-handoff-song",
+        youtube_video_id: "ios_handoff",
+        title: "iOS Handoff",
+        artist: "Singer",
+        youtube_url: null,
+        category: null,
+        enabled: true,
+        sort_order: 1,
+      });
+      secondaryAudio.dispatchEvent(new Event("canplay"));
+
+      await adapter.loadVideo("ios_handoff");
+
+      expect(primaryAudio.pause).toHaveBeenCalledOnce();
+      expect(mediaSession.playbackState).toBe("playing");
+    } finally {
+      if (previousDescriptor) Object.defineProperty(navigator, "mediaSession", previousDescriptor);
+      else Reflect.deleteProperty(navigator, "mediaSession");
+    }
+  });
+
+  it("sets the lock-screen state to playing after the active source starts", async () => {
+    const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
+    const previousDescriptor = Object.getOwnPropertyDescriptor(navigator, "mediaSession");
+    const mediaSession = {
+      playbackState: "paused",
+      setActionHandler: vi.fn(),
+    };
+    Object.defineProperty(navigator, "mediaSession", {
+      configurable: true,
+      value: mediaSession,
+    });
+    vi.mocked(fetchInvidiousStream).mockResolvedValue(
+      canonicalStream("started_source", "https://audio.example.com/started_source.m4a", 180),
+    );
+    primaryAudio.play = vi.fn().mockResolvedValue(undefined);
+
+    try {
+      await adapter.loadVideo("started_source");
+
+      expect(primaryAudio.play).toHaveBeenCalledOnce();
+      expect(mediaSession.playbackState).toBe("playing");
+    } finally {
+      if (previousDescriptor) Object.defineProperty(navigator, "mediaSession", previousDescriptor);
+      else Reflect.deleteProperty(navigator, "mediaSession");
+    }
+  });
+
   it("observes readiness events fired during source assignment", async () => {
     const { fetchInvidiousStream } = await import("@/lib/piped/piped-client");
     vi.mocked(fetchInvidiousStream).mockResolvedValue(

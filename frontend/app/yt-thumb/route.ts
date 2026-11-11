@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (compatible; ChhathRadio/1.0; +https://chhath-radio-ten.vercel.app)",
-        Accept: "image/webp,image/jpeg,image/*,*/*;q=0.8",
+        Accept: "image/jpeg",
       },
       // Don't cache the upstream fetch — Next.js will handle caching via headers
       cache: "no-store",

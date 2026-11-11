@@ -22,6 +22,29 @@ export interface MediaSessionCallbacks {
 
 let registeredCallbacks: MediaSessionCallbacks | null = null;
 
+function dispatchMediaSessionAction(
+  callback: (() => Promise<void> | void) | undefined,
+): void {
+  if (!callback) return;
+
+  try {
+    const result = callback();
+    if (result && typeof result.then === "function") {
+      void Promise.resolve(result).catch((error) => {
+        console.warn(
+          "[MediaSession] Action failed:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+      });
+    }
+  } catch (error) {
+    console.warn(
+      "[MediaSession] Action failed:",
+      error instanceof Error ? error.name : "UnknownError",
+    );
+  }
+}
+
 export function isMediaSessionSupported(): boolean {
   return typeof navigator !== "undefined" && "mediaSession" in navigator;
 }
@@ -56,35 +79,15 @@ export function reassertMediaSessionHandlers(): void {
     }
   };
 
-  safeSetHandler("play", async () => {
-    if (registeredCallbacks?.onPlay) {
-      await registeredCallbacks.onPlay();
-    }
-  });
+  safeSetHandler("play", () => dispatchMediaSessionAction(registeredCallbacks?.onPlay));
 
-  safeSetHandler("pause", async () => {
-    if (registeredCallbacks?.onPause) {
-      await registeredCallbacks.onPause();
-    }
-  });
+  safeSetHandler("pause", () => dispatchMediaSessionAction(registeredCallbacks?.onPause));
 
-  safeSetHandler("previoustrack", async () => {
-    if (registeredCallbacks?.onPrev) {
-      await registeredCallbacks.onPrev();
-    }
-  });
+  safeSetHandler("previoustrack", () => dispatchMediaSessionAction(registeredCallbacks?.onPrev));
 
-  safeSetHandler("nexttrack", async () => {
-    if (registeredCallbacks?.onNext) {
-      await registeredCallbacks.onNext();
-    }
-  });
+  safeSetHandler("nexttrack", () => dispatchMediaSessionAction(registeredCallbacks?.onNext));
 
-  safeSetHandler("stop", async () => {
-    if (registeredCallbacks?.onPause) {
-      await registeredCallbacks.onPause();
-    }
-  });
+  safeSetHandler("stop", () => dispatchMediaSessionAction(registeredCallbacks?.onPause));
 
   safeSetHandler("seekto", (details) => {
     if (typeof details.seekTime === "number" && registeredCallbacks?.onSeekTo) {
@@ -146,62 +149,13 @@ export function updateMediaSessionMetadata(
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const videoId = song.youtube_video_id;
 
-  // The rotating vinyl in the UI displays: https://i.ytimg.com/vi/${videoId}/mqdefault.jpg
-  // For the lock screen and notification centers, provide high-quality album art
-  // across all requested standard dimensions (512x512, 384x384, 256x256, 192x192, 128x128, 96x96).
-  // Strictly omit the app icons (/icons/icon-512.png) so iOS never picks the app icon
-  // over the song's real album art.
-  const hqUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-  const mqUrl = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
-  const proxyHqUrl = origin ? `${origin}/yt-thumb?v=${videoId}` : hqUrl;
-
-  const artwork: MediaImage[] = [
-    {
-      src: hqUrl,
-      sizes: "512x512",
-      type: "image/jpeg",
-    },
-    {
-      src: hqUrl,
-      sizes: "384x384",
-      type: "image/jpeg",
-    },
-    {
-      src: hqUrl,
-      sizes: "256x256",
-      type: "image/jpeg",
-    },
-    {
-      src: mqUrl,
-      sizes: "192x192",
-      type: "image/jpeg",
-    },
-    {
-      src: mqUrl,
-      sizes: "128x128",
-      type: "image/jpeg",
-    },
-    {
-      src: mqUrl,
-      sizes: "96x96",
-      type: "image/jpeg",
-    },
-    {
-      src: hqUrl,
-      sizes: "480x360",
-      type: "image/jpeg",
-    },
-    {
-      src: mqUrl,
-      sizes: "320x180",
-      type: "image/jpeg",
-    },
-    {
-      src: proxyHqUrl,
-      sizes: "512x512",
-      type: "image/jpeg",
-    },
-  ];
+  // Use the same-origin proxy so mobile platform surfaces and the player share one
+  // cacheable source. The endpoint returns a landscape thumbnail, so omit `sizes`
+  // instead of claiming it is several different square assets.
+  const artworkUrl = origin
+    ? `${origin}/yt-thumb?v=${encodeURIComponent(videoId)}`
+    : `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`;
+  const artwork: MediaImage[] = [{ src: artworkUrl, type: "image/jpeg" }];
 
   try {
     ms.metadata = new MediaMetadata({

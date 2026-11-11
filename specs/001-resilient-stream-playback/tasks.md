@@ -160,6 +160,12 @@ Tasks grouped by independently testable user story. Tests included because the f
 
 - [x] T050 [US2] Audit every enabled catalog song against Layerbase records; rotate bounded resolver attempts across all configured healthy Invidious origins so retries are not pinned to the first two; preserve retries for unresolved IDs and report aggregate per-mode coverage without exposing stream URLs or credentials.
 
+## Phase 14: Mobile lock-screen and artwork continuity
+
+**Purpose**: Keep native playback controls responsive and synchronized through pause/resume and track transitions, and provide correctly described artwork on mobile.
+
+- [x] T051 [US3] Dispatch Media Session actions without waiting for playback I/O; preserve active playback state and action handlers through track changes and pause/resume, including re-publishing the playing state after iOS media-element handoff; use valid same-origin album artwork for the rotating vinyl and lock-screen metadata, with regression coverage in `frontend/lib/media-session.ts`, `frontend/lib/radio-store.ts`, `frontend/components/radio/RadioPlayer.tsx`, and their unit/browser tests.
+
 ## Dependencies and parallelism
 
 T001-T003 precede T004-T006. US1 and US2 share foundational contract. US3 depends on US1 source state machine. US4 depends on explicit store recovery states. Release follows all stories.

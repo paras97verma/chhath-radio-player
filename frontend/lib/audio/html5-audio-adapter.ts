@@ -18,7 +18,10 @@ import {
   isCurrentCanonicalSource,
   isMimeTypeSupportedByAudioElement,
 } from "../piped/stream-selector";
-import { updateMediaSessionPositionState } from "../media-session";
+import {
+  setMediaSessionPlaybackState,
+  updateMediaSessionPositionState,
+} from "../media-session";
 
 type ActivePlaybackAttempt = {
   id: number;
@@ -857,6 +860,9 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
           oldPrimary.removeAttribute("src");
           oldPrimary.load();
         }
+        // Reassert after outgoing-element cleanup so the final session state follows
+        // the source that is now playing.
+        setMediaSessionPlaybackState("playing");
         return;
       }
     }
@@ -968,6 +974,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     try {
       await this.primaryAudio.play();
       if (!this._isCurrentAttempt(requestId, attempt.id)) return;
+      setMediaSessionPlaybackState("playing");
     } catch (playErr: any) {
       if (!this._isCurrentAttempt(requestId, attempt.id)) return;
       this._clearRecoveryWatchdog();
@@ -1029,7 +1036,9 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
         lastPosition,
       );
       await this.primaryAudio.play();
-      return this._isCurrentAttempt(requestId, attempt.id);
+      const isCurrentAttempt = this._isCurrentAttempt(requestId, attempt.id);
+      if (isCurrentAttempt) setMediaSessionPlaybackState("playing");
+      return isCurrentAttempt;
     } catch (err) {
       console.warn(`[Html5AudioAdapter] Recovery failed for ${videoId}:`, err);
       if (this.activeRequestId === requestId && !this.isDestroyed) {
@@ -1082,6 +1091,7 @@ export class Html5AudioAdapter implements AudioPlayerAdapter {
     if (this.primaryAudio) {
       try {
         await this.primaryAudio.play();
+        setMediaSessionPlaybackState("playing");
       } catch (err) {
         console.warn("[Html5AudioAdapter] Play was prevented by browser policy:", err);
         throw err;
